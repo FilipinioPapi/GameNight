@@ -110,8 +110,8 @@ def plug_pads():
     return dead, pad
 
 
-def start_app(mode):
-    env = dict(os.environ, GAMENIGHT_E2E=mode, GAMENIGHT_E2E_ROOT=str(ROOT), GAMENIGHT_UPDATE_URL="http://127.0.0.1:9/")
+def start_app(mode, reader=""):
+    env = dict(os.environ, GAMENIGHT_E2E=mode, GAMENIGHT_E2E_READER=reader, GAMENIGHT_E2E_ROOT=str(ROOT), GAMENIGHT_UPDATE_URL="http://127.0.0.1:9/")
     app = subprocess.Popen([EXE], env=env)
     # Wait for the menus to start and reach the main menu.
     for _ in range(60):
@@ -194,9 +194,10 @@ NES = [
 ]
 
 
-def game(idle_pad):
-    """Plays the test game. idle_pad: also plug an idle pad first (like Jayden's PC), or just the one we use."""
-    tag = "two-pads" if idle_pad else "one-pad"
+def game(idle_pad, reader=""):
+    """Plays the test game. idle_pad: also plug an idle pad first (like Jayden's PC), or just the one we use.
+    reader "dinput": make RetroArch use its "dinput" reader, which Game Night picks on Jayden's PC."""
+    tag = ("two-pads" if idle_pad else "one-pad") + (f"-{reader}" if reader else "")
     say(f"\n##### game test, {tag} #####")
     if idle_pad:
         dead, pad = plug_pads()
@@ -206,7 +207,7 @@ def game(idle_pad):
         say(f"one pretend Xbox pad plugged in, index {pad.get_index()}")
     for f in (CACHE / "player" / "logs" / "retroarch.log",):
         f.unlink(missing_ok=True)
-    app = start_app("padgame")
+    app = start_app("padgame", reader)
     try:
         say("pressing A in the menus on the pad we use (Game Night then starts the test game)")
         press(pad, B.XUSB_GAMEPAD_A)
@@ -266,6 +267,7 @@ def game(idle_pad):
 def games():
     game(idle_pad=False)
     game(idle_pad=True)
+    game(idle_pad=True, reader="dinput")
     return "the game's player 1 got every button, right, from the pad used in the menus"
 
 

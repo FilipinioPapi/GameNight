@@ -471,6 +471,12 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         fs::read_to_string(&pad_file).ok().as_deref(),
     );
     pads.joypad_driver = crate::retroports::joypad_driver(&scan);
+    // CI's controller test only (the "e2e" build): try RetroArch's "dinput" reader, the one Jayden's PC
+    // gets (CI's pretend pads never trigger the switch by themselves).
+    #[cfg(feature = "e2e")]
+    if std::env::var("GAMENIGHT_E2E_READER").as_deref() == Ok("dinput") {
+        pads.joypad_driver = "dinput";
+    }
     let sound: usize = fs::read_to_string(&sound_file).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0).min(SOUND_WAYS.len());
     let paths = ConfigPaths {
         player: player.clone(),

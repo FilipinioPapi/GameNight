@@ -183,8 +183,29 @@ def hold_and_read(pad, button, name):
     return p1, p2
 
 
-def game():
-    dead, pad = plug_pads()
+# What each Xbox button should be in an NES game with RetroArch's standard layout (the test game keeps
+# player 1's NES buttons in $10: A=0x80 B=0x40 Select=0x20 Start=0x10 Up=0x08 Down=0x04 Left=0x02 Right=0x01).
+# Xbox A is the bottom face button, which is the NES B spot, and Xbox B is the NES A spot.
+NES = [
+    ("A", "XUSB_GAMEPAD_A", 0x40), ("B", "XUSB_GAMEPAD_B", 0x80),
+    ("View", "XUSB_GAMEPAD_BACK", 0x20), ("Menu", "XUSB_GAMEPAD_START", 0x10),
+    ("Up", "XUSB_GAMEPAD_DPAD_UP", 0x08), ("Down", "XUSB_GAMEPAD_DPAD_DOWN", 0x04),
+    ("Left", "XUSB_GAMEPAD_DPAD_LEFT", 0x02), ("Right", "XUSB_GAMEPAD_DPAD_RIGHT", 0x01),
+]
+
+
+def game(idle_pad):
+    """Plays the test game. idle_pad: also plug an idle pad first (like Jayden's PC), or just the one we use."""
+    tag = "two-pads" if idle_pad else "one-pad"
+    say(f"\n##### game test, {tag} #####")
+    if idle_pad:
+        dead, pad = plug_pads()
+    else:
+        dead, pad = None, vg.VX360Gamepad(vid=0x045E, pid=0x02FF)
+        time.sleep(2)
+        say(f"one pretend Xbox pad plugged in, index {pad.get_index()}")
+    for f in (CACHE / "player" / "logs" / "retroarch.log",):
+        f.unlink(missing_ok=True)
     app = start_app("padgame")
     try:
         say("pressing A in the menus on the pad we use (Game Night then starts the test game)")
@@ -209,15 +230,19 @@ def game():
         p1, p2, raw = buttons()
         say(f"--- nothing pressed: player 1 {p1}, player 2 {p2} ({raw})")
         if p1 is None:
-            failures.append(f"couldn't ask the game what it sees ({raw})")
+            failures.append(f"{tag}: couldn't ask the game what it sees ({raw})")
         else:
-            a1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_A, "game-1-hold-a")
-            r1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_DPAD_RIGHT, "game-2-hold-right")
-            hold_and_read(dead, B.XUSB_GAMEPAD_A, "game-3-idle-pad-a")
-            if a1 != 0x80:
-                failures.append(f"holding A on the pad we use: the game's player 1 saw {a1!r}, wanted 0x80 (A)")
-            if r1 != 0x01:
-                failures.append(f"holding Right on the pad we use: the game's player 1 saw {r1!r}, wanted 0x01 (Right)")
+            wrong = []
+            for name, button, want in NES:
+                got, _ = hold_and_read(pad, getattr(B, button), f"game-{tag}-hold-{name}")
+                if got != want:
+                    wrong.append(f"{name} gave {got if got is None else f'{got:#04x}'} (wanted {want:#04x})")
+            if dead is not None:
+                hold_and_read(dead, B.XUSB_GAMEPAD_A, f"game-{tag}-idle-pad-A")
+            if wrong:
+                failures.append(f"{tag}: player 1's buttons in the game are wrong: " + "; ".join(wrong))
+            else:
+                say(f"  ok: every button reached player 1 as the right NES button ({tag})")
         ask_game("QUIT")
         try:
             app.wait(30)
@@ -234,12 +259,19 @@ def game():
                 if any(k in line for k in ("Input", "input", "Autoconf", "joypad", "XInput", "DInput", "Network", "command")):
                     say(f"  | {line}")
         dump_log("\nwhole pads.txt:")
-    return "the game's player 1 got the presses from the pad used in the menus"
+        del pad, dead
+        time.sleep(2)
+
+
+def games():
+    game(idle_pad=False)
+    game(idle_pad=True)
+    return "the game's player 1 got every button, right, from the pad used in the menus"
 
 
 def main():
     SHOTS.mkdir(parents=True, exist_ok=True)
-    done = {"menus": menus, "game": game}[MODE]()
+    done = {"menus": menus, "game": games}[MODE]()
     if failures:
         for f in failures:
             print(f"::error::controller test ({MODE}): {f}", flush=True)

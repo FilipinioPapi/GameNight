@@ -79,7 +79,17 @@ jobs:
           if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Get-Content $log -Tail 60; throw "ViGEmBus didn't install" }
           $env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = 'true'
           pip install --no-deps $tgz
-          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend pad plugged in, index', p.get_index())"
+          # Evidence first: is Windows' own Xbox 360 pad driver (xusb22) on this machine, and what did the bus make?
+          Write-Host "--- Xbox 360 pad driver files:"
+          Get-ChildItem C:\Windows\INF\xusb22.inf, C:\Windows\System32\drivers\xusb22.sys -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.FullName)" }
+          Get-ChildItem C:\Windows\System32\DriverStore\FileRepository -Filter 'xusb22*' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  store: $($_.Name)" }
+          Write-Host "--- Windows version: $((Get-CimInstance Win32_OperatingSystem).Caption)"
+          python -c "import vgamepad; p = vgamepad.VDS4Gamepad(); print('pretend PlayStation pad plugged in OK')"
+          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend Xbox pad plugged in, index', p.get_index())"
+          $xboxOk = $LASTEXITCODE -eq 0
+          Write-Host "--- devices the bus made:"
+          pnputil /enum-devices /connected | Select-String -Context 0,6 -Pattern 'ViGEm|Xbox|XUSB|USB\\VID_045E|Gamepad' | ForEach-Object { Write-Host $_ }
+          if (-not $xboxOk) { throw "the pretend Xbox pad couldn't be plugged in" }
       - run: npm ci
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         run: python ../tools/player/fetch_player.py src-tauri/player

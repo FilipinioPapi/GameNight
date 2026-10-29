@@ -76,7 +76,14 @@ export function captureNext(fn: Capture | null) {
   capture = fn;
 }
 
-type Dir = "up" | "down" | "left" | "right";
+/** A screen can take some buttons for itself (the Library: Y favourites, X searches). True = handled. */
+type ScreenButtons = (input: PadInput) => boolean;
+let screenButtons: ScreenButtons | null = null;
+export function useScreenButtons(fn: ScreenButtons | null) {
+  screenButtons = fn;
+}
+
+export type Dir = "up" | "down" | "left" | "right";
 
 /** What the controller can move to: everything clickable that's showing, only inside an open pop-up. */
 function focusables(): HTMLElement[] {
@@ -90,8 +97,8 @@ function center(r: DOMRect) {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
-/** Moves to the nearest thing on screen in that direction (like a games console menu). */
-function moveFocus(dir: Dir) {
+/** Moves to the nearest thing on screen in that direction (like a games console menu). The arrow keys use it too. */
+export function moveFocus(dir: Dir) {
   const list = focusables();
   if (!list.length) return;
   const current = document.activeElement as HTMLElement | null;
@@ -184,6 +191,7 @@ function onPress(index: number) {
     fn(input);
     return;
   }
+  if (input && input !== "dpad" && screenButtons?.(input)) return;
   if (DIRS[index]) moveFocus(DIRS[index]);
   else if (index === 0) {
     const el = document.activeElement as HTMLElement | null;

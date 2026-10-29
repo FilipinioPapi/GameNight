@@ -59,6 +59,15 @@ if ($seconds -lt 8) { Fail "600 frames took only $seconds s: the game runs too f
 Write-Host "the game ran at real speed ($seconds s for 600 frames)"
 Remove-Item Env:GAMENIGHT_E2E, Env:GAMENIGHT_E2E_ROOT
 
+Step "Drive the menus with a pretend Xbox controller"
+# Settings as if the first-time setup was done, so the app opens on the main menu.
+New-Item -ItemType Directory $config -Force | Out-Null
+@{ settings = @{ firstRunDone = $true; romsFolder = $root; mappings = @{}; presets = @{}; consoles = @{}; steamTipSeen = $true } } |
+  ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $config 'settings.json')
+$shots = Join-Path $env:RUNNER_TEMP 'screens'
+python (Join-Path $Tools 'pad_test.py') $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the pretend controller couldn't drive the menus (screenshots are in the 'screens' download)" }
+
 Step "Update to $NewVersion through the app's own updater"
 $site = Join-Path $env:RUNNER_TEMP 'updates'
 $key = (python (Join-Path $Tools 'make_update.py') $NewSetup $NewVersion $site).Trim()

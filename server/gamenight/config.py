@@ -20,7 +20,7 @@ class Config:
     discord_client_secret: str
     guild_id: str                # Jayden's Discord server
     role_id: str                 # the "Game Night" role
-    romm_url: str                # RomM on the private Docker network, e.g. http://romm:8080
+    romm_url: str                # RomM on the home network, e.g. http://192.168.1.33:8084
     romm_token: str              # a read-only RomM API token (preferred)
     romm_user: str               # or a Viewer user + password
     romm_password: str
@@ -50,7 +50,7 @@ def load() -> Config:
         discord_client_secret=_get("DISCORD_CLIENT_SECRET", required=True),
         guild_id=_get("DISCORD_GUILD_ID", required=True),
         role_id=_get("DISCORD_ROLE_ID", required=True),
-        romm_url=_get("ROMM_URL", "http://romm:8080").rstrip("/"),
+        romm_url=_get("ROMM_URL", "http://192.168.1.33:8084").rstrip("/"),
         romm_token=_get("ROMM_TOKEN"),
         romm_user=_get("ROMM_USER"),
         romm_password=_get("ROMM_PASSWORD"),

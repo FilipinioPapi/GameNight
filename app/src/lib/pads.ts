@@ -45,5 +45,6 @@ export function glyph(pad: PadType, input: PadInput): Glyph {
 /** Guess the pad type from the name Windows gives it. */
 export function padTypeFromId(id: string): PadType {
   const s = id.toLowerCase();
-  return /dualsense|wireless controller|054c|sony|playstation/.test(s) ? "dualsense" : "xbox";
+  if (/xbox|xinput|045e/.test(s)) return "xbox";
+  return /dualsense|dualshock|wireless controller|054c|sony|playstation|ps5|ps4/.test(s) ? "dualsense" : "xbox";
 }

@@ -27,8 +27,11 @@ class Play {
     await listen<{ id: string; done: number; total: number }>("download-progress", (e) => {
       if (this.progress[e.payload.id]) this.progress[e.payload.id] = { done: e.payload.done, total: e.payload.total };
     });
-    await listen<{ id: string; ok: boolean }>("game-closed", () => {
+    await listen<{ id: string; ok: boolean; silent?: boolean }>("game-closed", (e) => {
       this.playing = null;
+      if (e.payload.silent) {
+        this.errors[e.payload.id] = "The game's sound didn't start on this PC. Game Night will try another way next time you play.";
+      }
     });
   }
 

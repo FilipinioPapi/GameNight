@@ -284,15 +284,25 @@ fn player_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 
 pub struct ConfigPaths {
     pub player: PathBuf,
+    pub logs: PathBuf,
     pub saves: PathBuf,
     pub states: PathBuf,
     pub system: PathBuf,
     pub cache: PathBuf,
 }
 
+/// Ways RetroArch can play sound on Windows, best first. If one doesn't start on a PC
+/// (RetroArch says so in its log), the next game uses the next one.
+pub const SOUND_WAYS: [&str; 3] = ["xaudio", "wasapi", "dsound"];
+
+/// RetroArch writes this to its log when it couldn't start the sound.
+pub fn sound_failed(log: &str) -> bool {
+    log.contains("Failed to initialize audio driver")
+}
+
 /// RetroArch's settings for one game. Menus, online features and anything that could take a player
 /// out of the game are switched off. Quitting: Esc, or L1 + R1 + Start + Select on a controller.
-pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings) -> String {
+pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize) -> String {
     let path = |p: &Path| p.to_string_lossy().replace('"', "");
     let yes = |b: bool| if b { "true" } else { "false" };
     let (aspect, integer) = match s.screen.as_str() {
@@ -322,7 +332,13 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings) -> String {
         ("auto_overrides_enable", "false".into()),
         ("auto_remaps_enable", "false".into()),
         ("auto_shaders_enable", "false".into()),
-        ("log_to_file", "false".into()),
+        // A short log on this PC only, so problems like "no sound" can be spotted.
+        ("log_to_file", "true".into()),
+        ("log_to_file_timestamp", "false".into()),
+        ("log_verbosity", "true".into()),
+        ("frontend_log_level", "1".into()),
+        ("libretro_log_level", "2".into()),
+        ("log_dir", path(&p.logs)),
         // Quitting goes straight back to Game Night.
         ("input_exit_emulator", "escape".into()),
         ("quit_press_twice", "false".into()),
@@ -337,6 +353,17 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings) -> String {
         ("video_shader_enable", yes(s.picture == "scanlines").into()),
         ("fps_show", yes(s.show_fps).into()),
         ("video_font_enable", "true".into()),
+        // Sound, and normal speed. RetroArch keeps games at their real speed by pacing them with
+        // the sound, so without sound they race at the screen's refresh rate (e.g. 144 Hz).
+        ("audio_enable", "true".into()),
+        ("audio_mute_enable", "false".into()),
+        ("audio_driver", SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)].into()),
+        ("audio_device", "".into()),
+        ("audio_wasapi_exclusive_mode", "false".into()),
+        ("audio_sync", "true".into()),
+        ("video_vsync", "true".into()),
+        // Last resort when no sound way works: a plain speed limit instead.
+        ("vrr_runloop_enable", yes(sound >= SOUND_WAYS.len()).into()),
         // Rewind and fast forward (keyboard: R and Space; controllers come with controller setup)
         ("rewind_enable", yes(s.rewind).into()),
         ("input_rewind", if s.rewind { "r" } else { "nul" }.into()),
@@ -385,19 +412,25 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     }
 
     let cfg_dir = app.path().app_config_dir().map_err(|_| "No settings folder.")?.join("player");
+    let cache = app.path().app_cache_dir().map_err(|_| "No cache folder.")?.join("player");
+    let sound_file = cfg_dir.join("sound.txt");
+    let sound: usize = fs::read_to_string(&sound_file).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0).min(SOUND_WAYS.len());
     let paths = ConfigPaths {
         player: player.clone(),
+        logs: cache.join("logs"),
         saves: root.join("saves").join(&entry.console),
         states: root.join("states").join(&entry.console),
         system: root.join("bios"),
-        cache: app.path().app_cache_dir().map_err(|_| "No cache folder.")?.join("player"),
+        cache,
     };
+    let log_file = paths.logs.join("retroarch.log");
     let started = (|| -> Result<std::process::Child, String> {
-        for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache] {
+        for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache, &paths.logs] {
             fs::create_dir_all(d).map_err(|_| "Couldn't make the saves folder.")?;
         }
         let cfg = cfg_dir.join("retroarch.cfg");
-        fs::write(&cfg, retroarch_config(&paths, &settings)).map_err(|_| "Couldn't write the player settings.")?;
+        let _ = fs::remove_file(&log_file);
+        fs::write(&cfg, retroarch_config(&paths, &settings, sound)).map_err(|_| "Couldn't write the player settings.")?;
         let mut cmd = std::process::Command::new(&exe);
         cmd.current_dir(&player).arg("--config").arg(&cfg).arg("-L").arg(&core_path).arg("--fullscreen");
         if settings.picture == "scanlines" {
@@ -417,7 +450,12 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     std::thread::spawn(move || {
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
         *handle.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok }));
+        // No sound this time? Try the next way next time.
+        let silent = sound < SOUND_WAYS.len() && fs::read_to_string(&log_file).map(|l| sound_failed(&l)).unwrap_or(false);
+        if silent {
+            let _ = fs::write(&sound_file, (sound + 1).to_string());
+        }
+        let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
         if let Some(w) = handle.get_webview_window("main") {
             let _ = w.unminimize();
             let _ = w.set_focus();
@@ -470,14 +508,20 @@ mod tests {
     fn player_settings_lock_the_menus() {
         let p = ConfigPaths {
             player: PathBuf::from("/p"),
+            logs: PathBuf::from("/c/logs"),
             saves: PathBuf::from("/g/saves/nes"),
             states: PathBuf::from("/g/states/nes"),
             system: PathBuf::from("/g/bios"),
             cache: PathBuf::from("/c"),
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false };
-        let cfg = retroarch_config(&p, &s);
+        let cfg = retroarch_config(&p, &s, 0);
         for want in [
+            "audio_driver = \"xaudio\"",
+            "audio_sync = \"true\"",
+            "audio_mute_enable = \"false\"",
+            "vrr_runloop_enable = \"false\"",
+            "log_dir = \"/c/logs\"",
             "input_menu_toggle = \"nul\"",
             "input_menu_toggle_gamepad_combo = \"0\"",
             "input_desktop_menu_toggle = \"nul\"",
@@ -491,7 +535,12 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         let pixel = PlaySettings { screen: "pixel".into(), picture: "sharp".into(), ..s };
-        let cfg = retroarch_config(&p, &pixel);
+        let cfg = retroarch_config(&p, &pixel, 1);
+        assert!(cfg.contains("audio_driver = \"wasapi\"") && cfg.contains("audio_wasapi_exclusive_mode = \"false\""));
+        let last = retroarch_config(&p, &pixel, 9);
+        assert!(last.contains("audio_driver = \"dsound\"") && last.contains("vrr_runloop_enable = \"true\""));
+        assert!(sound_failed("[ERROR] Failed to initialize audio driver. Will continue without audio.\n"));
+        assert!(!sound_failed("[INFO] [Audio]: Started synchronous audio driver.\n"));
         assert!(cfg.contains("aspect_ratio_index = \"22\"") && cfg.contains("video_scale_integer = \"true\""));
         assert!(cfg.contains("video_shader_enable = \"false\""));
     }

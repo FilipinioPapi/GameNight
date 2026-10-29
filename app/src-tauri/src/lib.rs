@@ -10,6 +10,7 @@
 mod account;
 mod covers;
 mod games;
+mod pads;
 mod updater;
 
 use serde::Serialize;
@@ -205,6 +206,7 @@ pub fn run() {
             // The installer registers gamenight:// links; this covers test builds.
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
             let _ = app.deep_link().register_all();
+            pads::start(app.handle().clone());
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for link in event.urls() {

@@ -1,6 +1,6 @@
 [package]
 name = "game-night"
-version = "0.3.0"
+version = "0.3.1"
 description = "Game Night: play Jayden's retro game library with friends"
 edition = "2021"
 publish = false
@@ -39,3 +39,4 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+gilrs = "0.11"

@@ -5,6 +5,27 @@
 import { app } from "./state.svelte";
 import { play } from "./play.svelte";
 import { BUTTON_INDEX, padTypeFromId, type PadInput } from "./pads";
+import { inTauri } from "./settings";
+
+/** One controller reading: the same shape whether it came from Windows or the browser. */
+type Reading = { id: string; buttons: boolean[]; axes: number[] };
+
+// In the app, Windows tells us about the controller (the web page can't see it there).
+let native: Reading | null = null;
+async function listenNative() {
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<{ connected: boolean; name: string; buttons: boolean[]; axes: number[] }>("pad", (e) => {
+    const p = e.payload;
+    native = p.connected ? { id: p.name || "Controller", buttons: p.buttons, axes: p.axes } : null;
+  });
+}
+
+function readPad(): Reading | null {
+  if (native) return native;
+  const pads = navigator.getGamepads?.() ?? [];
+  const pad = pads.find((p) => p && p.connected) ?? null;
+  return pad ? { id: pad.id, buttons: pad.buttons.map((b) => b.pressed), axes: [...pad.axes] } : null;
+}
 
 type Capture = (input: PadInput) => void;
 let capture: Capture | null = null;
@@ -149,8 +170,7 @@ function repeat(key: string, active: boolean, now: number, fire: () => void) {
 }
 
 function tick() {
-  const pads = navigator.getGamepads?.() ?? [];
-  const pad = pads.find((p) => p && p.connected) ?? null;
+  const pad = readPad();
   // While a game is running, the controller belongs to the game.
   if (!pad || play.playing) {
     if (!pad && app.pad.connected) app.pad = { ...app.pad, connected: false };
@@ -163,8 +183,7 @@ function tick() {
     app.viewPad = type;
   }
   const now = performance.now();
-  pad.buttons.forEach((b, i) => {
-    const down = b.pressed;
+  pad.buttons.forEach((down, i) => {
     if (down && !prevButtons[i]) onPress(i);
     if (DIRS[i] && !capture) repeat("b" + i, down, now, () => moveFocus(DIRS[i]));
     prevButtons[i] = down;
@@ -202,5 +221,6 @@ if (typeof window !== "undefined") {
 }
 
 export function startGamepad() {
+  if (inTauri) listenNative().catch(() => {});
   requestAnimationFrame(tick);
 }

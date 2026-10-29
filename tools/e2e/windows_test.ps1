@@ -65,8 +65,12 @@ New-Item -ItemType Directory $config -Force | Out-Null
 @{ settings = @{ firstRunDone = $true; romsFolder = $root; mappings = @{}; presets = @{}; consoles = @{}; steamTipSeen = $true } } |
   ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $config 'settings.json')
 $shots = Join-Path $env:RUNNER_TEMP 'screens'
-python (Join-Path $Tools 'pad_test.py') $exe $root $shots
+python (Join-Path $Tools 'pad_test.py') menus $exe $root $shots
 if ($LASTEXITCODE -ne 0) { Fail "the pretend controller couldn't drive the menus (screenshots are in the 'screens' download)" }
+
+Step "Play the test game with the pretend Xbox controller"
+python (Join-Path $Tools 'pad_test.py') game $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the game didn't get the pretend controller on Player 1 (screenshots are in the 'screens' download)" }
 
 Step "Update to $NewVersion through the app's own updater"
 $site = Join-Path $env:RUNNER_TEMP 'updates'

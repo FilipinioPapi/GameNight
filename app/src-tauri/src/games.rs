@@ -300,6 +300,19 @@ pub fn sound_failed(log: &str) -> bool {
     log.contains("Failed to initialize audio driver")
 }
 
+/// CI's Windows tests only (the "e2e" build, never shipped): which test is running. Always None otherwise.
+fn e2e_mode() -> Option<&'static str> {
+    #[cfg(feature = "e2e")]
+    {
+        match std::env::var("GAMENIGHT_E2E").as_deref() {
+            Ok("play") => return Some("play"),
+            Ok("padgame") => return Some("padgame"),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// RetroArch's settings for one game. Menus, online features and anything that could take a player
 /// out of the game are switched off. Quitting: Esc, or L1 + R1 + Start + Select on a controller.
 pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &crate::controllers::Plan) -> String {
@@ -322,7 +335,8 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("desktop_menu_enable", "false".into()),
         ("menu_show_online_updater", "false".into()),
         ("menu_show_core_updater", "false".into()),
-        ("network_cmd_enable", "false".into()),
+        // Off, except in CI's controller-in-a-game test (the "e2e" build), which asks the game what it sees.
+        ("network_cmd_enable", yes(e2e_mode() == Some("padgame")).into()),
         ("stdin_cmd_enable", "false".into()),
         ("netplay_nat_traversal", "false".into()),
         ("cheevos_enable", "false".into()),
@@ -483,10 +497,16 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         if settings.picture == "scanlines" {
             cmd.arg("--set-shader").arg(player.join("shaders").join("scanlines.slangp"));
         }
-        // CI's Windows game test only (the "e2e" build): play 600 frames (10 seconds at real speed), then quit.
-        #[cfg(feature = "e2e")]
-        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
-            cmd.arg("--max-frames=600");
+        // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
+        // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
+        match e2e_mode() {
+            Some("play") => {
+                cmd.arg("--max-frames=600");
+            }
+            Some("padgame") => {
+                cmd.arg("--max-frames=3600");
+            }
+            _ => {}
         }
         cmd.arg(&rom);
         cmd.spawn().map_err(|_| "Couldn't start the game.".to_string())
@@ -513,7 +533,7 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         }
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
         #[cfg(feature = "e2e")]
-        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
+        if e2e_mode().is_some() {
             let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file });
             let _ = fs::write(root.join("e2e-result.json"), result.to_string());
             handle.exit(0);
@@ -529,10 +549,28 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
 /// CI's Windows game test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=play the app starts
 /// game "1" from the Game Night folder in GAMENIGHT_E2E_ROOT exactly as the Play button would.
 #[cfg(feature = "e2e")]
+/// With GAMENIGHT_E2E=padgame it first waits (up to 90 s) for a button press in the menus, the way a
+/// player would pick their controller, then starts the game.
 pub fn e2e_play<R: Runtime>(app: AppHandle<R>) {
-    if std::env::var("GAMENIGHT_E2E").as_deref() != Ok("play") {
-        return;
+    match e2e_mode() {
+        Some("play") => e2e_start(app),
+        Some("padgame") => {
+            std::thread::spawn(move || {
+                for _ in 0..900 {
+                    if crate::pads::LAST_USED.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                e2e_start(app);
+            });
+        }
+        _ => {}
     }
+}
+
+#[cfg(feature = "e2e")]
+fn e2e_start<R: Runtime>(app: AppHandle<R>) {
     let root = std::env::var("GAMENIGHT_E2E_ROOT").unwrap_or_default();
     let settings: PlaySettings = serde_json::from_value(serde_json::json!({
         "screen": "4:3", "picture": "scanlines", "rewind": false, "fastForward": false, "showFps": true

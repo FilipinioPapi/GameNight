@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """CI only (GitHub's Windows machine): drives the real Game Night app with a pretend Xbox controller.
 
-    python pad_test.py <GameNight.exe> <Game Night folder> <screenshot folder>
+    python pad_test.py menus <GameNight.exe> <Game Night folder> <screenshot folder>
+    python pad_test.py game  <GameNight.exe> <Game Night folder> <screenshot folder>
 
 Uses ViGEmBus (installed on the CI machine only) through vgamepad. Like Jayden's PC, two pads are
 plugged in: a "dead" one in the first slot that is never pressed (his Razer keyboard's hidden pad),
 and the one we press in the second slot (his real Xbox pad). Each step presses a button, then reads
 Game Night's own pads.txt log to see what the menus did, and takes a screenshot.
+"menus" drives the main menu. "game" presses a button in the menus (the way a player picks their
+controller), lets Game Night start the test game, then holds buttons and asks the game itself (through
+RetroArch's local command port, on in this test build only) which player's buttons are down.
 Any step that doesn't do what it should fails the test.
 """
 import ctypes
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -18,7 +23,7 @@ from pathlib import Path
 
 import vgamepad as vg
 
-EXE, ROOT, SHOTS = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+MODE, EXE, ROOT, SHOTS = sys.argv[1], sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
 TOOLS = Path(__file__).parent
 CACHE = Path(os.environ["LOCALAPPDATA"]) / "xyz.jjsnas.gamenight"
 PADS_LOG = CACHE / "player" / "logs" / "pads.txt"
@@ -86,9 +91,8 @@ def step(pad, name, button, index, want_screen, want_focus=None):
         say(f"  FAIL: wanted screen {want_screen}, focus {want_focus!r}")
 
 
-def main():
-    SHOTS.mkdir(parents=True, exist_ok=True)
-    say("plugging in two pretend Xbox pads (first one stays idle, like Jayden's Razer keyboard)")
+def plug_pads():
+    """Two pretend pads, like Jayden's PC: an idle one first, then the one we press."""
     def plug(vid, pid):
         # Windows' Xbox 360 driver may only accept the standard Xbox 360 id (045e:028e).
         try:
@@ -97,42 +101,150 @@ def main():
             say(f"  couldn't plug a pad with id {vid:04x}:{pid:04x} ({e}); using 045e:028e")
             return vg.VX360Gamepad()
 
+    say("plugging in two pretend Xbox pads (first one stays idle, like Jayden's Razer keyboard)")
     dead = plug(0x046D, 0xC21D)
     time.sleep(1)
     pad = plug(0x045E, 0x02FF)
     time.sleep(2)
     say(f"pads plugged: idle one index {dead.get_index()}, pressed one index {pad.get_index()}")
+    return dead, pad
 
-    env = dict(os.environ, GAMENIGHT_E2E="menus", GAMENIGHT_UPDATE_URL="http://127.0.0.1:9/")
+
+def start_app(mode):
+    env = dict(os.environ, GAMENIGHT_E2E=mode, GAMENIGHT_E2E_ROOT=str(ROOT), GAMENIGHT_UPDATE_URL="http://127.0.0.1:9/")
     app = subprocess.Popen([EXE], env=env)
-    try:
-        # Wait for the menus to start and reach the main menu.
-        for _ in range(60):
-            time.sleep(1)
-            if any("first pad_state answer" in l for l in log_lines()):
-                break
-        time.sleep(4)
-        say(f"window in front once open: {in_front()}")
-        say("pads.txt so far:")
-        for line in log_lines():
-            say(f"  | {line}")
-        screenshot("0-main-menu")
+    # Wait for the menus to start and reach the main menu.
+    for _ in range(60):
+        time.sleep(1)
+        if any("first pad_state answer" in l for l in log_lines()):
+            break
+    time.sleep(4)
+    say(f"window in front once open: {in_front()}")
+    return app
 
+
+def dump_log(title):
+    say(title)
+    for line in log_lines():
+        say(f"  | {line}")
+
+
+def menus():
+    dead, pad = plug_pads()
+    app = start_app("menus")
+    try:
+        dump_log("pads.txt so far:")
+        screenshot("0-main-menu")
         step(pad, "1-dpad-down", B.XUSB_GAMEPAD_DPAD_DOWN, 13, "menu", "settings")
         step(pad, "2-dpad-up", B.XUSB_GAMEPAD_DPAD_UP, 12, "menu", "play")
         step(pad, "3-a-opens-play", B.XUSB_GAMEPAD_A, 0, "library")
         step(pad, "4-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu")
     finally:
         app.kill()
-        say("\nwhole pads.txt:")
-        for line in log_lines():
-            say(f"  | {line}")
+        dump_log("\nwhole pads.txt:")
+    return "the pretend controller drove the main menu: down, up, A opens Play, B goes back"
 
+
+def ask_game(command):
+    """One RetroArch command on this PC's local command port; returns its answer (or '')."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(2)
+        s.sendto(command.encode(), ("127.0.0.1", 55355))
+        try:
+            return s.recv(4096).decode(errors="replace").strip()
+        except OSError as e:
+            return f"(no answer: {e})"
+
+
+def buttons():
+    """The test game's RAM: $10 = player 1's buttons, $11 = player 2's (A=0x80 ... Right=0x01)."""
+    for cmd in ("READ_CORE_MEMORY 10 2", "READ_CORE_RAM 10 2"):
+        answer = ask_game(cmd)
+        parts = answer.split()
+        if len(parts) == 4 and parts[0] == cmd.split()[0]:
+            try:
+                return int(parts[2], 16), int(parts[3], 16), answer
+            except ValueError:
+                pass
+        say(f"  ({cmd} -> {answer})")
+    return None, None, answer
+
+
+def hold_and_read(pad, button, name):
+    pad.press_button(button=button)
+    pad.update()
+    time.sleep(0.6)
+    p1, p2, raw = buttons()
+    screenshot(name)
+    pad.release_button(button=button)
+    pad.update()
+    time.sleep(0.4)
+    say(f"--- {name}: player 1 {p1 if p1 is None else f'{p1:#04x}'}, player 2 {p2 if p2 is None else f'{p2:#04x}'} ({raw}); in front {in_front()}")
+    return p1, p2
+
+
+def game():
+    dead, pad = plug_pads()
+    app = start_app("padgame")
+    try:
+        say("pressing A in the menus on the pad we use (Game Night then starts the test game)")
+        press(pad, B.XUSB_GAMEPAD_A)
+        for _ in range(30):  # wait for the game to answer on its command port
+            time.sleep(1)
+            if not ask_game("VERSION").startswith("(no answer"):
+                break
+        time.sleep(3)
+        say(f"game version answer: {ask_game('VERSION')}; in front {in_front()}")
+        controllers = CACHE / "player" / "logs" / "controllers.txt"
+        say("controllers.txt (what Game Night told the game):")
+        for line in controllers.read_text(errors="replace").splitlines() if controllers.exists() else ["(missing)"]:
+            say(f"  | {line}")
+        cfg = Path(os.environ["APPDATA"]) / "xyz.jjsnas.gamenight" / "player" / "retroarch.cfg"
+        if cfg.exists():
+            say("controller lines in retroarch.cfg:")
+            for line in cfg.read_text(errors="replace").splitlines():
+                if line.startswith(("input_player", "input_joypad_driver", "input_max_users", "network_cmd")):
+                    say(f"  | {line}")
+
+        p1, p2, raw = buttons()
+        say(f"--- nothing pressed: player 1 {p1}, player 2 {p2} ({raw})")
+        if p1 is None:
+            failures.append(f"couldn't ask the game what it sees ({raw})")
+        else:
+            a1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_A, "game-1-hold-a")
+            r1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_DPAD_RIGHT, "game-2-hold-right")
+            hold_and_read(dead, B.XUSB_GAMEPAD_A, "game-3-idle-pad-a")
+            if a1 != 0x80:
+                failures.append(f"holding A on the pad we use: the game's player 1 saw {a1!r}, wanted 0x80 (A)")
+            if r1 != 0x01:
+                failures.append(f"holding Right on the pad we use: the game's player 1 saw {r1!r}, wanted 0x01 (Right)")
+        ask_game("QUIT")
+        try:
+            app.wait(30)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        if app.poll() is None:
+            app.kill()
+        subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+        log = CACHE / "player" / "logs" / "retroarch.log"
+        if log.exists():
+            say("RetroArch's controller lines:")
+            for line in log.read_text(errors="replace").splitlines():
+                if any(k in line for k in ("Input", "input", "Autoconf", "joypad", "XInput", "DInput", "Network", "command")):
+                    say(f"  | {line}")
+        dump_log("\nwhole pads.txt:")
+    return "the game's player 1 got the presses from the pad used in the menus"
+
+
+def main():
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    done = {"menus": menus, "game": game}[MODE]()
     if failures:
         for f in failures:
-            print(f"::error::controller test: {f}", flush=True)
+            print(f"::error::controller test ({MODE}): {f}", flush=True)
         sys.exit(1)
-    say("\nthe pretend controller drove the main menu: down, up, A opens Play, B goes back")
+    say(f"\n{done}")
 
 
 main()

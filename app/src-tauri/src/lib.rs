@@ -231,6 +231,8 @@ pub fn run() {
             controllers::list_controllers,
             controllers::save_controllers,
             controllers::steam_running,
+            pads::pad_state,
+            pads::pad_note,
             covers::clear_cover_cache,
             suggest_folders,
             games_folder,

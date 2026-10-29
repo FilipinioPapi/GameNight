@@ -10,14 +10,53 @@ import { inTauri } from "./settings";
 /** One controller reading: the same shape whether it came from Windows or the browser. */
 type Reading = { id: string; usb?: string; buttons: boolean[]; axes: number[] };
 
-// In the app, Windows tells us about the controller (the web page can't see it there).
+// In the app, Windows tells us about the controller (the web page can't see it there). The app sends a
+// "pad" event when it changes, and the menus also ask for it every frame, so a missed event can't
+// leave the menus deaf.
+type NativePad = { connected: boolean; name: string; id: string; buttons: boolean[]; axes: number[] };
 let native: Reading | null = null;
+function useNative(p: NativePad) {
+  native = p.connected ? { id: p.name || "Controller", usb: p.id, buttons: p.buttons, axes: p.axes } : null;
+}
+
+/** A line for Game Night's pads.txt log (the first few only), to see what the menus got. */
+let notes = 0;
+async function note(text: string) {
+  if (!inTauri || notes >= 60) return;
+  notes++;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("pad_note", { text });
+  } catch {
+    // Logging is best-effort.
+  }
+}
+
+let events = 0;
 async function listenNative() {
   const { listen } = await import("@tauri-apps/api/event");
-  await listen<{ connected: boolean; name: string; id: string; buttons: boolean[]; axes: number[] }>("pad", (e) => {
-    const p = e.payload;
-    native = p.connected ? { id: p.name || "Controller", usb: p.id, buttons: p.buttons, axes: p.axes } : null;
+  await listen<NativePad>("pad", (e) => {
+    if (events++ === 0) void note("first pad event arrived");
+    useNative(e.payload);
   });
+  void note("listening for pad events");
+}
+
+let asking = false;
+let answers = 0;
+async function askNative() {
+  if (asking) return;
+  asking = true;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const p = await invoke<NativePad>("pad_state");
+    if (answers++ === 0) void note(`first pad_state answer: ${p.connected ? p.name + " " + p.id : "no controller"}`);
+    useNative(p);
+  } catch (e) {
+    if (answers++ === 0) void note(`pad_state failed: ${String(e).slice(0, 120)}`);
+  } finally {
+    asking = false;
+  }
 }
 
 function readPad(): Reading | null {
@@ -129,8 +168,15 @@ function usePadLook() {
   document.body.classList.add("pad-mode");
 }
 
+function describe(el: Element | null) {
+  if (!el) return "nothing";
+  const text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 30);
+  return `${el.tagName.toLowerCase()} "${text}"`;
+}
+
 function onPress(index: number) {
   usePadLook();
+  void note(`button ${index} pressed; focused: ${describe(document.activeElement)}; page has focus: ${document.hasFocus()}`);
   const input = BUTTON_INDEX[index] ?? (index >= 12 && index <= 15 ? "dpad" : undefined);
   if (capture && input) {
     const fn = capture;
@@ -170,6 +216,7 @@ function repeat(key: string, active: boolean, now: number, fire: () => void) {
 }
 
 function tick() {
+  if (inTauri) void askNative();
   const pad = readPad();
   // While a game is running, the controller belongs to the game.
   if (!pad || play.playing) {
@@ -221,6 +268,18 @@ if (typeof window !== "undefined") {
 }
 
 export function startGamepad() {
-  if (inTauri) listenNative().catch(() => {});
+  if (inTauri) {
+    void note(`menus started (${navigator.userAgent.slice(0, 80)})`);
+    listenNative().catch((e) => void note(`couldn't listen for pad events: ${String(e).slice(0, 120)}`));
+  }
   requestAnimationFrame(tick);
+  // If the screen stops drawing frames, this shows it in the log.
+  if (inTauri) setTimeout(() => void note(`frames after 5 s: ${frames}`), 5000);
 }
+
+let frames = 0;
+function countFrame() {
+  frames++;
+  requestAnimationFrame(countFrame);
+}
+if (typeof window !== "undefined") requestAnimationFrame(countFrame);

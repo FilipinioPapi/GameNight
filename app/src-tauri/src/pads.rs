@@ -14,6 +14,45 @@ use std::sync::Mutex;
 /// (Jayden's Razer Huntsman does exactly that).
 pub static LAST_USED: Mutex<Option<(u16, u16)>> = Mutex::new(None);
 
+/// The latest reading, for the menus to ask for (as well as the "pad" event).
+static LATEST: Mutex<Option<PadState>> = Mutex::new(None);
+
+/// pads.txt: a short note of what the menus can see, next to RetroArch's log, so problems can be
+/// spotted. Started fresh each time Game Night opens, and kept short.
+static LOG: Mutex<(Option<std::path::PathBuf>, usize)> = Mutex::new((None, 0));
+
+fn note(line: &str) {
+    use std::io::Write;
+    let mut g = LOG.lock().unwrap_or_else(|e| e.into_inner());
+    let (Some(path), count) = &mut *g else { return };
+    if *count >= 500 {
+        return;
+    }
+    if *count == 0 {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&*path, "");
+    }
+    *count += 1;
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&*path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+/// The controller as the menus should see it right now.
+#[tauri::command]
+pub fn pad_state() -> PadState {
+    LATEST.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+/// A line from the menus' side for pads.txt (what they received and did), kept short and plain.
+#[tauri::command]
+pub fn pad_note(text: String) {
+    let clean: String = text.chars().filter(|c| !c.is_control()).take(200).collect();
+    note(&format!("menus: {clean}"));
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PadState {
@@ -66,7 +105,6 @@ pub fn xinput_axis(v: i16) -> f32 {
 #[cfg(windows)]
 pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
-    use std::io::Write;
     use std::time::Duration;
     use tauri::{Emitter, Manager};
     use windows::Win32::UI::Input::XboxController::XINPUT_STATE;
@@ -120,25 +158,10 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         (r == 0).then_some(st)
     };
 
-    // A short note of what the menus can see, next to RetroArch's log, so problems can be spotted.
-    let log_path = app.path().app_cache_dir().ok().map(|d| d.join("player").join("logs").join("pads.txt"));
-    let mut log_lines = 0usize;
-    let mut note = move |line: String| {
-        let Some(path) = &log_path else { return };
-        if log_lines >= 400 {
-            return;
-        }
-        if log_lines == 0 {
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = std::fs::write(path, "");
-        }
-        log_lines += 1;
-        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(path) {
-            let _ = writeln!(f, "{line}");
-        }
-    };
+    if let Ok(d) = app.path().app_cache_dir() {
+        *LOG.lock().unwrap_or_else(|e| e.into_inner()) = (Some(d.join("player").join("logs").join("pads.txt")), 0);
+    }
+    let note = |line: String| note(&line);
 
     std::thread::spawn(move || {
         let mut gilrs = match Gilrs::new() {
@@ -321,6 +344,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 None => PadState::default(),
             };
             if now != last {
+                *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
                 let _ = app.emit("pad", &now);
                 last = now;
             }

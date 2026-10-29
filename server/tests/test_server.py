@@ -67,7 +67,7 @@ async def test_full_sign_in_and_games(client, monkeypatch):
     assert (await (await client.get("/api/me", headers=h)).json())["id"] == "123"
     games = (await (await client.get("/api/games", headers=h)).json())["games"]
     assert games == [{"id": "7", "title": "Super Mario Bros.", "console": "nes", "players": "1-2",
-                      "sizeBytes": 40976, "description": "Plumbers.", "hasCover": False}]
+                      "sizeBytes": 40976, "description": "Plumbers.", "hasCover": False, "coverVersion": None}]
     # the code only works once
     r = await client.post("/api/session", json={"code": code, "verifier": VERIFIER})
     assert r.status == 401
@@ -170,3 +170,9 @@ async def test_cover_arrives_whole(aiohttp_client, aiohttp_server, monkeypatch):
     r = await c.get("/api/games/7/cover", headers={"Authorization": f"Bearer {token}"})
     assert r.status == 200 and r.headers["Content-Type"] == "image/png"
     assert await r.read() == picture
+
+
+def test_cover_version_follows_the_cover():
+    a = Game(1, "A", "nes", "1", 1, "", "/assets/c.png?ts=1", "a.nes").public()["coverVersion"]
+    b = Game(1, "A", "nes", "1", 1, "", "/assets/c.png?ts=2", "a.nes").public()["coverVersion"]
+    assert a and b and a != b and len(a) == 12 and all(c in "0123456789abcdef" for c in a)

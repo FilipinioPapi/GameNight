@@ -1,2 +1,3 @@
-Box art shows in full
-Covers keep their real box shape
+Box art is saved on your PC, so the library opens fast
+Clear saved box art in Settings, Storage
+More reliable updates

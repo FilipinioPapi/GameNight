@@ -63,8 +63,12 @@ let cached: { at: number; lib: Promise<Library> } | null = null;
 async function fromServer(): Promise<Library> {
   const { invoke, convertFileSrc } = await import("@tauri-apps/api/core");
   try {
-    const r = await invoke<{ games: (Game & { hasCover?: boolean })[]; offline: boolean }>("fetch_games");
-    const games = (r.games ?? []).map(({ hasCover, ...g }) => ({ ...g, cover: hasCover ? convertFileSrc(g.id, "gncover") : undefined }));
+    const r = await invoke<{ games: (Game & { hasCover?: boolean; coverVersion?: string | null })[]; offline: boolean }>("fetch_games");
+    // The cover address carries its version, so a cover saved on this PC is replaced when it changes in RomM.
+    const games = (r.games ?? []).map(({ hasCover, coverVersion, ...g }) => ({
+      ...g,
+      cover: hasCover ? convertFileSrc(`${g.id}-${coverVersion || "0"}`, "gncover") : undefined,
+    }));
     return { games, source: r.offline ? "offline" : "server" };
   } catch (e) {
     cached = null;

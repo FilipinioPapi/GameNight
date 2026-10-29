@@ -10,7 +10,7 @@
   import { CONSOLES, consoleById, type ConsoleId } from "../lib/consoles";
   import { LAYOUTS } from "../lib/controllers";
   import { PAD_NAME } from "../lib/pads";
-  import { clearGames, folderSize, formatGB, gamesFolder, pickFolder } from "../lib/native";
+  import { clearCoverCache, clearGames, coverCacheSize, folderSize, formatGB, gamesFolder, pickFolder } from "../lib/native";
   import { formatSize } from "../lib/library";
 
   type Tab = Extract<Route, { name: "settings" }>["tab"];
@@ -30,9 +30,19 @@
 
   let used = $state(0);
   let confirmClear = $state(false);
+  let artUsed = $state(0);
+  let artCleared = $state(false);
   $effect(() => {
     folderSize(app.settings.romsFolder).then((n) => (used = n));
   });
+  $effect(() => {
+    if (tab === "storage") coverCacheSize().then((n) => (artUsed = n));
+  });
+  async function clearArt() {
+    await clearCoverCache();
+    artUsed = await coverCacheSize();
+    artCleared = true;
+  }
 
   const info = $derived(consoleById(cid));
   const cs = $derived(app.consoleSettings(cid));
@@ -151,6 +161,10 @@
               {:else}
                 <button class="btn small danger" onclick={() => (confirmClear = true)}>Clear all games</button>
               {/if}
+            </div>
+            <div class="row">
+              <div class="t"><b>Saved box art</b><span>Covers are kept on this PC so the library opens fast, even offline. {artCleared ? "Cleared. Covers download again as you browse." : artUsed ? formatSize(artUsed) + " used." : "Nothing saved yet."}</span></div>
+              <button class="btn small" onclick={clearArt} disabled={!artUsed}>Clear box art</button>
             </div>
           </div>
         {:else if tab === "account"}

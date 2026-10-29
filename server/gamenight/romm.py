@@ -5,6 +5,7 @@ RomM stays private: only this server talks to it, with a read-only token (or a V
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import time
 from urllib.parse import quote
@@ -47,6 +48,9 @@ class Game:
         return {
             "id": str(self.id), "title": self.title, "console": self.console, "players": self.players,
             "sizeBytes": self.size, "description": self.summary or None, "hasCover": bool(self.cover),
+            # Changes when the cover changes in RomM (its address carries a timestamp), so the app
+            # knows to fetch the new one instead of using the copy it saved.
+            "coverVersion": hashlib.sha256(self.cover.encode()).hexdigest()[:12] if self.cover else None,
         }
 
 

@@ -44,6 +44,18 @@ export async function clearGames(path: string): Promise<void> {
   await invoke("clear_games", { path });
 }
 
+/** Space used by box art saved on this PC, in bytes. */
+export async function coverCacheSize(): Promise<number> {
+  if (!inTauri) return 0;
+  return invoke<number>("cover_cache_size");
+}
+
+/** Deletes saved box art. It downloads again as you browse. */
+export async function clearCoverCache(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("clear_cover_cache");
+}
+
 export async function quitApp(): Promise<void> {
   if (!inTauri) return;
   const { getCurrentWindow } = await import("@tauri-apps/api/window");

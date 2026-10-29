@@ -363,22 +363,6 @@ pub async fn fetch_games<R: Runtime>(app: AppHandle<R>, account: tauri::State<'_
     }
 }
 
-/// Box art, through the "gncover" address the window is allowed to show images from.
-pub async fn cover<R: Runtime>(app: &AppHandle<R>, path: &str) -> Option<(String, Vec<u8>)> {
-    let id = path.trim_start_matches('/');
-    if id.is_empty() || id.len() > 12 || !id.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let account = app.state::<Account>();
-    let resp = account.get(app, &format!("/api/games/{id}/cover")).await.ok()?;
-    let ctype = resp.headers().get("content-type")?.to_str().ok()?.to_string();
-    if !ctype.starts_with("image/") || ctype.contains("svg") {
-        return None;
-    }
-    let bytes = resp.bytes().await.ok()?;
-    (bytes.len() <= 8 * 1024 * 1024).then(|| (ctype, bytes.to_vec()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

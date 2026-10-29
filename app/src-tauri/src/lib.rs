@@ -9,6 +9,7 @@
 
 mod account;
 mod covers;
+mod games;
 mod updater;
 
 use serde::Serialize;
@@ -20,7 +21,7 @@ use sysinfo::Disks;
 const FOLDER_NAME: &str = "Game Night";
 
 /// The only folders "Clear my games" may delete: one per console, plus unfinished downloads.
-const CONSOLE_FOLDERS: &[&str] = &[
+pub(crate) const CONSOLE_FOLDERS: &[&str] = &[
     "nes",
     "snes",
     "gen",
@@ -157,7 +158,7 @@ fn clear_games(path: String) -> Result<(), String> {
 }
 
 /// True only for a full path whose last part is "Game Night" and that isn't a drive root.
-fn is_ours(p: &Path) -> bool {
+pub(crate) fn is_ours(p: &Path) -> bool {
     p.is_absolute()
         && !p.components().any(|c| matches!(c, Component::ParentDir))
         && p.file_name()
@@ -183,6 +184,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(account::Account::default())
         .manage(updater::Updates::default())
+        .manage(games::Games::default())
         // Box art: the window may only show pictures from here, which only fetches from our server.
         .register_asynchronous_uri_scheme_protocol("gncover", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -213,6 +215,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             covers::cover_cache_size,
+            games::installed_games,
+            games::download_game,
+            games::cancel_download,
+            games::remove_game,
+            games::play_game,
             covers::clear_cover_cache,
             suggest_folders,
             games_folder,

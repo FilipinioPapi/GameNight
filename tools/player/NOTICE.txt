@@ -1,0 +1,12 @@
+Game Night plays games with RetroArch and two of its emulators ("cores"), copied unchanged from
+RetroArch's official Windows build, version 1.22.2:
+https://buildbot.libretro.com/stable/1.22.2/windows/x86_64/
+
+RetroArch: GNU General Public License v3. Source: https://github.com/libretro/RetroArch/tree/v1.22.2
+FCEUmm (NES): GNU General Public License v2. Source: https://github.com/libretro/libretro-fceumm
+Snes9x (SNES): Snes9x license, free for non-commercial use. Source: https://github.com/libretro/snes9x
+zfast_crt shader: GNU General Public License v2 or later. Source: https://github.com/libretro/slang-shaders
+The DLLs next to retroarch.exe come with RetroArch's build (Qt, SDL2, FFmpeg and their libraries)
+under their own open source licenses.
+
+Game Night is free and shared only with friends. It is not sold.

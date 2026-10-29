@@ -12,6 +12,7 @@
   import { PAD_NAME } from "../lib/pads";
   import { clearCoverCache, clearGames, coverCacheSize, folderSize, formatGB, gamesFolder, pickFolder } from "../lib/native";
   import { formatSize } from "../lib/library";
+  import { play } from "../lib/play.svelte";
 
   type Tab = Extract<Route, { name: "settings" }>["tab"];
   let { tab, console: cid }: { tab: Tab; console: ConsoleId } = $props();
@@ -58,6 +59,7 @@
   }
   async function doClear() {
     await clearGames(app.settings.romsFolder);
+    await play.refresh();
     used = await folderSize(app.settings.romsFolder);
     confirmClear = false;
   }
@@ -72,7 +74,7 @@
     <main>
       <aside>
         {#each NAV as n (n.tab)}
-          <button class="nav" class:on={tab === n.tab} onclick={() => go(n.tab)}><Icon svg={n.icon} />{n.name}</button>
+          <button class="nav" data-tab class:on={tab === n.tab} onclick={() => go(n.tab)}><Icon svg={n.icon} />{n.name}</button>
         {/each}
         <div class="storage-card">
           <div class="label">STORAGE</div>
@@ -154,7 +156,7 @@
               <button class="btn small" onclick={moveFolder}>Change folder</button>
             </div>
             <div class="row">
-              <div class="t"><b>Clear my games</b><span>Deletes every downloaded game from this PC. Your saves are safe on the Game Night server, and you can download games again any time.</span></div>
+              <div class="t"><b>Clear my games</b><span>Deletes every downloaded game from this PC. Your saves are kept, and you can download games again any time.</span></div>
               {#if confirmClear}
                 <button class="btn small" onclick={() => (confirmClear = false)}>Cancel</button>
                 <button class="btn small danger" onclick={doClear}>Yes, delete them</button>

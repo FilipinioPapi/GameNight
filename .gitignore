@@ -2,6 +2,8 @@ node_modules/
 dist/
 app/src-tauri/target/
 app/src-tauri/gen/
+# Built by tools/player/fetch_player.py (RetroArch, downloaded at build time)
+app/src-tauri/player/
 *.log
 .DS_Store
 .env

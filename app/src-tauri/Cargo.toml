@@ -1,6 +1,6 @@
 [package]
 name = "game-night"
-version = "0.2.2"
+version = "0.3.0"
 description = "Game Night: play Jayden's retro game library with friends"
 edition = "2021"
 publish = false

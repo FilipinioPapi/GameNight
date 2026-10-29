@@ -80,7 +80,7 @@ mod imp {
         let f = (*CAPS_EX.get_or_init(|| unsafe {
             let dll = LoadLibraryW(windows::core::w!("xinput1_4.dll")).ok()?;
             let f = GetProcAddress(dll, PCSTR(108usize as *const u8))?;
-            Some(std::mem::transmute::<_, GetCapsEx>(f))
+            Some(std::mem::transmute::<unsafe extern "system" fn() -> isize, GetCapsEx>(f))
         }))?;
         let mut c = CapabilitiesEx::default();
         (unsafe { f(1, slot, 0, &mut c) } == OK).then_some((c.vendor_id, c.product_id))

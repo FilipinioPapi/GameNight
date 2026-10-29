@@ -102,17 +102,22 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
 
     // XInputGetStateEx (xinput1_4.dll ordinal 100) also reads the Xbox button; plain XInputGetState if not.
     type GetState = unsafe extern "system" fn(u32, *mut XINPUT_STATE) -> u32;
-    let get_state: GetState = unsafe {
+    let get_state_ex: Option<GetState> = unsafe {
         use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
         LoadLibraryW(windows::core::w!("xinput1_4.dll"))
             .ok()
             .and_then(|dll| GetProcAddress(dll, windows::core::PCSTR(100usize as *const u8)))
-            .map(|f| std::mem::transmute::<_, GetState>(f))
-            .unwrap_or(windows::Win32::UI::Input::XboxController::XInputGetState as GetState)
+            .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, GetState>(f))
     };
     let read_slot = move |slot: usize| -> Option<XINPUT_STATE> {
         let mut st = XINPUT_STATE::default();
-        (unsafe { get_state(slot as u32, &mut st) } == 0).then_some(st)
+        let r = unsafe {
+            match get_state_ex {
+                Some(f) => f(slot as u32, &mut st),
+                None => windows::Win32::UI::Input::XboxController::XInputGetState(slot as u32, &mut st),
+            }
+        };
+        (r == 0).then_some(st)
     };
 
     // A short note of what the menus can see, next to RetroArch's log, so problems can be spotted.
@@ -165,7 +170,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 note(format!("Game Night window in front: {focused}"));
                 was_focused = Some(focused);
             }
-            if tick % 125 == 0 {
+            if tick.is_multiple_of(125) {
                 off = crate::controllers::disabled_ids(&app);
                 for (i, id) in slot_ids.iter_mut().enumerate() {
                     present[i] = read_slot(i).is_some();
@@ -335,7 +340,7 @@ fn window_in_front() -> bool {
             return false;
         }
         let mut pid = 0u32;
-        GetWindowThreadProcessId(w, Some(&mut pid));
+        GetWindowThreadProcessId(w, Some(&mut pid as *mut u32));
         pid == std::process::id()
     }
 }

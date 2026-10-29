@@ -6,9 +6,9 @@ name: Windows app
 on:
   push:
     branches: [main, "claude/**"]
-    paths: ["app/**", "tools/player/**", ".github/workflows/app.yml"]
+    paths: ["app/**", "tools/player/**", "tools/e2e/**", ".github/workflows/app.yml"]
   pull_request:
-    paths: ["app/**", "tools/player/**", ".github/workflows/app.yml"]
+    paths: ["app/**", "tools/player/**", "tools/e2e/**", ".github/workflows/app.yml"]
   workflow_dispatch:
 
 permissions:
@@ -32,6 +32,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - run: npm ci
+      - run: node scripts/check-version.mjs
       - run: npm run check
       - run: npm run build
       - name: Install Linux build libraries (for the Rust tests)
@@ -64,6 +65,23 @@ jobs:
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         run: python ../tools/player/fetch_player.py src-tauri/player
       - run: npx tauri build
+      - name: Keep the new installer aside
+        shell: pwsh
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          "GN_VERSION=$v" | Out-File $env:GITHUB_ENV -Append
+          Copy-Item (Get-ChildItem src-tauri/target/release/bundle/nsis/*_${v}_*-setup.exe).FullName "$env:RUNNER_TEMP/new-setup.exe"
+      # A test-only build (version 0.0.1, never released) that CI can drive by itself, to test updating and playing.
+      - name: Build the old test version
+        shell: pwsh
+        run: |
+          '{"version":"0.0.1"}' | Out-File -Encoding ascii "$env:RUNNER_TEMP/e2e.conf.json"
+          npx tauri build --features e2e --config "$env:RUNNER_TEMP/e2e.conf.json"
+          Copy-Item (Get-ChildItem src-tauri/target/release/bundle/nsis/*_0.0.1_*-setup.exe).FullName "$env:RUNNER_TEMP/old-setup.exe"
+          Remove-Item src-tauri/target/release/bundle/nsis/*_0.0.1_*-setup.exe
+      - name: Test on Windows (install, play a game, update, reopen)
+        shell: pwsh
+        run: ../tools/e2e/windows_test.ps1 -OldSetup "$env:RUNNER_TEMP/old-setup.exe" -NewSetup "$env:RUNNER_TEMP/new-setup.exe" -NewVersion $env:GN_VERSION -Tools (Resolve-Path ../tools/e2e)
       - uses: actions/upload-artifact@v4
         with:
           name: Game-Night-windows
@@ -96,5 +114,6 @@ jobs:
             exit 0
           fi
           setup=$(ls dist/*-setup.exe | head -1)
+          tail -n +2 app/UPDATE_NOTES.txt > notes.txt  # line 1 is "# <version>", for the version check
           cp "$setup" GameNightSetup.exe
-          gh release create "v$version" GameNightSetup.exe --title "Game Night $version" --notes-file app/UPDATE_NOTES.txt --target "$GITHUB_SHA"
+          gh release create "v$version" GameNightSetup.exe --title "Game Night $version" --notes-file notes.txt --target "$GITHUB_SHA"

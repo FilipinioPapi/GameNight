@@ -7,6 +7,7 @@
 
 use serde::Serialize;
 
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PadState {
     pub connected: bool,
@@ -15,6 +16,7 @@ pub struct PadState {
     pub axes: Vec<f32>,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 /// Small stick wobbles are ignored, and values are rounded so a resting stick doesn't spam events.
 pub fn tidy_axis(v: f32) -> f32 {
     if !v.is_finite() || v.abs() < 0.15 {

@@ -1,3 +1,4 @@
-Download and play NES and SNES games
-Full controller navigation (D-pad, LB/RB for tabs)
-Clear my games now works
+# 0.3.2
+Controller now works in the menus (read straight from Windows)
+Games have sound and run at normal speed
+The version on screen is now correct

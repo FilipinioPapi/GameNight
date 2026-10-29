@@ -19,18 +19,19 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub const UPDATES: &str = "https://updates.jjsnas.xyz/gamenight/";
 
-/// Test builds only: GAMENIGHT_UPDATE_URL points at a test server. Release builds always use UPDATES.
+/// Test builds only (debug, or the "e2e" build CI uses for its Windows update test, never shipped):
+/// GAMENIGHT_UPDATE_URL points at a test server. Release builds always use UPDATES.
 fn base() -> String {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "e2e"))]
     if let Ok(u) = std::env::var("GAMENIGHT_UPDATE_URL") {
         return u;
     }
     UPDATES.to_string()
 }
 
-/// Test builds only: GAMENIGHT_UPDATE_KEY swaps in a throwaway key. Release builds always use PUBLIC_KEY.
+/// Test builds only (as above): GAMENIGHT_UPDATE_KEY swaps in a throwaway key. Release builds always use PUBLIC_KEY.
 fn key() -> String {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "e2e"))]
     if let Ok(k) = std::env::var("GAMENIGHT_UPDATE_KEY") {
         return k;
     }
@@ -145,24 +146,29 @@ fn current_version<R: Runtime>(app: &AppHandle<R>) -> String {
     app.package_info().version.to_string()
 }
 
-/// Asks the update server. None = up to date, offline, or nothing trustworthy there.
-#[tauri::command]
-pub async fn check_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<Option<UpdateInfo>, String> {
+/// The newest signed update, if it's newer than this app. None = up to date, offline, or nothing trustworthy.
+async fn find_update<R: Runtime>(app: &AppHandle<R>) -> Option<Manifest> {
     let resp = match http().get(format!("{}latest.json", base())).timeout(Duration::from_secs(20)).send().await {
         Ok(r) if r.status().is_success() => r,
-        _ => return Ok(None), // no internet or no server: just no update
+        _ => return None, // no internet or no server: just no update
     };
-    let text = resp.text().await.map_err(|_| "unreadable update list")?;
+    let text = resp.text().await.ok()?;
     let m = match parse_signed(&text, &key()) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("update ignored: {e}");
-            return Ok(None);
+            return None;
         }
     };
-    if !newer(&m.version, &current_version(&app)) {
+    newer(&m.version, &current_version(app)).then_some(m)
+}
+
+/// Asks the update server. None = up to date, offline, or nothing trustworthy there.
+#[tauri::command]
+pub async fn check_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<Option<UpdateInfo>, String> {
+    let Some(m) = find_update(&app).await else {
         return Ok(None);
-    }
+    };
     let info = UpdateInfo { version: m.version.clone(), notes: m.notes.iter().take(3).cloned().collect(), size: m.file.size };
     *updates.found.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
     Ok(Some(info))
@@ -172,6 +178,34 @@ pub async fn check_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'
 #[tauri::command]
 pub async fn install_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<(), String> {
     let m = updates.found.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("No update to install.")?;
+    install(&app, &m).await
+}
+
+/// CI's Windows update test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=update the app
+/// finds and installs the update by itself, exactly as if the Update button had been pressed.
+#[cfg(feature = "e2e")]
+pub fn e2e_autoupdate<R: Runtime>(app: AppHandle<R>) {
+    if std::env::var("GAMENIGHT_E2E").as_deref() != Ok("update") {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        match find_update(&app).await {
+            Some(m) => {
+                if let Err(e) = install(&app, &m).await {
+                    eprintln!("e2e update failed: {e}");
+                    app.exit(3);
+                }
+            }
+            None => {
+                eprintln!("e2e: no update found");
+                app.exit(2);
+            }
+        }
+    });
+}
+
+async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), String> {
+    let app = app.clone();
     let dir = app.path().app_cache_dir().map_err(|_| "No folder for the download.")?.join("update");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|_| "Couldn't make the download folder.")?;

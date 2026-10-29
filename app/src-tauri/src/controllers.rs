@@ -74,7 +74,7 @@ fn tidy(mut p: Prefs) -> Prefs {
     p.disabled = p.disabled.into_iter().filter(ok).map(trim).take(MOST_DISABLED).collect();
     p.disabled.dedup();
     if let Some(p1) = &p.player1 {
-        if p.disabled.iter().any(|d| d.ra == p1.ra && d.usb == p1.usb) {
+        if p.disabled.iter().any(|d| d.ra == p1.ra) {
             p.player1 = None;
         }
     }
@@ -95,20 +95,21 @@ pub fn prefs<R: Runtime>(app: &AppHandle<R>) -> Prefs {
     g.clone().unwrap_or_default()
 }
 
-/// USB ids of the turned-off controllers, for the menus to skip.
+/// Ids of the turned-off controllers (both ids each), for the menus to skip.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn disabled_usb<R: Runtime>(app: &AppHandle<R>) -> Vec<(u16, u16)> {
-    prefs(app).disabled.iter().filter_map(|d| parse_id(&d.usb)).collect()
+pub fn disabled_ids<R: Runtime>(app: &AppHandle<R>) -> Vec<(u16, u16)> {
+    prefs(app).disabled.iter().flat_map(|d| [parse_id(&d.ra), parse_id(&d.usb)]).flatten().collect()
 }
 
 /// Every controller plugged in now, plus saved ones that are unplugged (so they can be turned back on).
 #[tauri::command]
 pub fn list_controllers<R: Runtime>(app: AppHandle<R>) -> Vec<Row> {
     let p = prefs(&app);
-    let is_off = |x: &Pad| p.disabled.iter().any(|d| d.ra == x.ra && d.usb == x.usb);
-    let is_p1 = |x: &Pad| p.player1.as_ref().is_some_and(|d| d.ra == x.ra && d.usb == x.usb);
+    // Matched by RetroArch's id: older versions saved a wrong menu id for Xbox pads.
+    let is_off = |x: &Pad| p.disabled.iter().any(|d| d.ra == x.ra);
+    let is_p1 = |x: &Pad| p.player1.as_ref().is_some_and(|d| d.ra == x.ra);
     let mut rows: Vec<Row> = Vec::new();
-    for d in retroports::devices() {
+    for d in retroports::scan().devices {
         let pad = pad_of(&d);
         if rows.iter().any(|r| r.pad == pad) {
             continue; // two identical controllers show once: the setting applies to both
@@ -116,7 +117,7 @@ pub fn list_controllers<R: Runtime>(app: AppHandle<R>) -> Vec<Row> {
         rows.push(Row { disabled: is_off(&pad), player1: is_p1(&pad), pad, connected: true });
     }
     for pad in p.disabled.iter().chain(p.player1.iter()) {
-        if !rows.iter().any(|r| r.pad.ra == pad.ra && r.pad.usb == pad.usb) {
+        if !rows.iter().any(|r| r.pad.ra == pad.ra) {
             rows.push(Row { disabled: is_off(pad), player1: is_p1(pad), pad: pad.clone(), connected: false });
         }
     }
@@ -143,10 +144,12 @@ pub struct Plan {
     pub player1: Option<String>,
     /// RetroArch ids parked on unused players (5, 6, ...) so no game sees them.
     pub parked: Vec<String>,
+    /// RetroArch's controller reader: "xinput", or "dinput" when "xinput" would read the wrong slot.
+    pub joypad_driver: &'static str,
 }
 
 /// Works out Player 1 and the parked controllers from what's plugged in.
-/// `last_used`: USB id of the controller last pressed in Game Night's menus.
+/// `last_used`: id of the controller last pressed in Game Night's menus (either of its ids).
 pub fn plan(prefs: &Prefs, plugged: &[Device], last_used: Option<(u16, u16)>, remembered: Option<&str>) -> Plan {
     let parked: Vec<String> = prefs
         .disabled
@@ -164,12 +167,12 @@ pub fn plan(prefs: &Prefs, plugged: &[Device], last_used: Option<(u16, u16)>, re
         .as_ref()
         .filter(|p| plugged.iter().any(|d| id(d.ra) == p.ra))
         .map(|p| p.ra.clone());
-    let pressed = last_used.and_then(|u| plugged.iter().find(|d| d.usb == u)).map(|d| id(d.ra));
+    let pressed = last_used.and_then(|u| plugged.iter().find(|d| d.usb == u || d.ra == u)).map(|d| id(d.ra));
     let player1 = chosen
         .or(pressed)
         .or(remembered.and_then(parse_id).map(id))
         .filter(|ra| usable(ra));
-    Plan { player1, parked }
+    Plan { player1, parked, joypad_driver: "xinput" }
 }
 
 /// True when Steam is running (it writes its process number here while it's open).
@@ -241,6 +244,19 @@ mod tests {
         assert_eq!(plan(&prefs, &jaydens(), Some((0x1532, 0x02a7)), None).player1.as_deref(), Some("045e:02ff"));
         // Unplugged: back to the one pressed in the menus.
         assert_eq!(plan(&prefs, &jaydens()[..1], Some((0x1532, 0x02a7)), None).player1.as_deref(), Some("1532:02a7"));
+    }
+
+    #[test]
+    fn a_press_read_straight_from_windows_uses_retroarchs_id() {
+        let p = plan(&Prefs::default(), &jaydens(), Some((0x045e, 0x02ff)), None);
+        assert_eq!(p.player1.as_deref(), Some("045e:02ff"));
+    }
+
+    #[test]
+    fn an_old_save_with_a_wrong_menu_id_still_matches() {
+        // 0.3.3 saved Jayden's pad with the hidden controller's id as its menu id.
+        let prefs = tidy(Prefs { player1: Some(pad("Xbox", "045e:02ff", "046d:0000")), disabled: vec![] });
+        assert_eq!(plan(&prefs, &jaydens(), None, None).player1.as_deref(), Some("045e:02ff"));
     }
 
     #[test]

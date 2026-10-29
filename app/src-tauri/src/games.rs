@@ -370,7 +370,9 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("input_hold_fast_forward", if s.fast_forward { "space" } else { "nul" }.into()),
         ("input_toggle_fast_forward", "nul".into()),
         // Controllers
-        ("input_joypad_driver", "xinput".into()),
+        // "xinput" normally; "dinput" when an extra hidden Xbox-style slot would make "xinput" read
+        // the wrong one (see retroports.rs).
+        ("input_joypad_driver", if pads.joypad_driver == "dinput" { "dinput" } else { "xinput" }.into()),
         ("input_autodetect_enable", "true".into()),
         ("joypad_autoconfig_dir", path(&p.player.join("autoconfig"))),
         ("input_max_users", crate::controllers::PLAYERS.to_string()),
@@ -408,7 +410,12 @@ fn describe(plugged: &[crate::retroports::Device], pads: &crate::controllers::Pl
     for d in plugged {
         t.push_str(&format!("{} ({} / usb {})\n", d.name, crate::controllers::id(d.ra), crate::controllers::id(d.usb)));
     }
-    t.push_str(&format!("player 1: {}\nturned off: {}\n", pads.player1.as_deref().unwrap_or("not set (RetroArch's own order)"), pads.parked.join(", ")));
+    t.push_str(&format!(
+        "player 1: {}\nturned off: {}\nreader: {}\n",
+        pads.player1.as_deref().unwrap_or("not set (RetroArch's own order)"),
+        pads.parked.join(", "),
+        pads.joypad_driver
+    ));
     t
 }
 
@@ -441,13 +448,15 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     // one remembered from last time. Turned-off controllers are parked.
     let pad_file = cfg_dir.join("controller.txt");
     let last_used = *crate::pads::LAST_USED.lock().unwrap_or_else(|e| e.into_inner());
-    let plugged = crate::retroports::devices();
-    let pads = crate::controllers::plan(
+    let scan = crate::retroports::scan();
+    let plugged = &scan.devices;
+    let mut pads = crate::controllers::plan(
         &crate::controllers::prefs(&app),
-        &plugged,
+        plugged,
         last_used,
         fs::read_to_string(&pad_file).ok().as_deref(),
     );
+    pads.joypad_driver = crate::retroports::joypad_driver(&scan);
     let sound: usize = fs::read_to_string(&sound_file).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0).min(SOUND_WAYS.len());
     let paths = ConfigPaths {
         player: player.clone(),
@@ -467,7 +476,7 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         if let Some(id) = &pads.player1 {
             let _ = fs::write(&pad_file, id);
         }
-        let _ = fs::write(paths.logs.join("controllers.txt"), describe(&plugged, &pads));
+        let _ = fs::write(paths.logs.join("controllers.txt"), describe(plugged, &pads));
         fs::write(&cfg, retroarch_config(&paths, &settings, sound, &pads)).map_err(|_| "Couldn't write the player settings.")?;
         let mut cmd = std::process::Command::new(&exe);
         cmd.current_dir(&player).arg("--config").arg(&cfg).arg("-L").arg(&core_path).arg("--fullscreen");
@@ -586,7 +595,7 @@ mod tests {
             cache: PathBuf::from("/c"),
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false };
-        let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()] };
+        let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
         let cfg = retroarch_config(&p, &s, 0, &pads);
         for want in [
             "audio_driver = \"xaudio\"",
@@ -595,6 +604,7 @@ mod tests {
             "input_player1_reserved_device = \"045e:02ff\"",
             "input_player5_device_reservation_type = \"2\"",
             "input_player5_reserved_device = \"1532:02a7\"",
+            "input_joypad_driver = \"dinput\"",
             "audio_sync = \"true\"",
             "audio_mute_enable = \"false\"",
             "vrr_runloop_enable = \"false\"",
@@ -614,6 +624,7 @@ mod tests {
         let pixel = PlaySettings { screen: "pixel".into(), picture: "sharp".into(), ..s };
         let cfg = retroarch_config(&p, &pixel, 1, &Default::default());
         assert!(cfg.contains("input_player1_device_reservation_type = \"0\""));
+        assert!(cfg.contains("input_joypad_driver = \"xinput\""));
         assert!(cfg.contains("audio_driver = \"wasapi\"") && cfg.contains("audio_wasapi_exclusive_mode = \"false\""));
         let last = retroarch_config(&p, &pixel, 9, &Default::default());
         assert!(last.contains("audio_driver = \"dsound\"") && last.contains("vrr_runloop_enable = \"true\""));

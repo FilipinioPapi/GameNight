@@ -6,9 +6,9 @@ name: Windows app
 on:
   push:
     branches: [main, "claude/**"]
-    paths: ["app/**", ".github/workflows/app.yml"]
+    paths: ["app/**", "tools/player/**", ".github/workflows/app.yml"]
   pull_request:
-    paths: ["app/**", ".github/workflows/app.yml"]
+    paths: ["app/**", "tools/player/**", ".github/workflows/app.yml"]
   workflow_dispatch:
 
 permissions:
@@ -61,6 +61,8 @@ jobs:
         with:
           workspaces: app/src-tauri
       - run: npm ci
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        run: python ../tools/player/fetch_player.py src-tauri/player
       - run: npx tauri build
       - uses: actions/upload-artifact@v4
         with:

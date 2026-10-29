@@ -218,6 +218,33 @@ impl Account {
         Ok(resp)
     }
 
+    /// Starts a game download from the server, from byte `from` onward (to finish a stopped download).
+    /// No overall time limit, since a big game can take a while; it gives up if nothing arrives for 2 minutes.
+    pub async fn download<R: Runtime>(&self, app: &AppHandle<R>, path: &str, from: u64) -> Result<reqwest::Response, String> {
+        let (server, token) = self.creds(app);
+        let token = token.ok_or("signed-out")?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .read_timeout(Duration::from_secs(120))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(concat!("GameNight/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|_| "offline".to_string())?;
+        let mut req = client.get(format!("{server}{path}")).bearer_auth(token);
+        if from > 0 {
+            req = req.header("Range", format!("bytes={from}-"));
+        }
+        let resp = req.send().await.map_err(|_| "offline".to_string())?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.signed_out(app);
+            return Err("signed-out".into());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("server-{}", resp.status().as_u16()));
+        }
+        Ok(resp)
+    }
+
     /// Called when Windows hands us a gamenight:// link.
     pub fn handle_link<R: Runtime>(&self, app: &AppHandle<R>, link: &Url) {
         if link.scheme() != "gamenight" || link.host_str() != Some("signed-in") {

@@ -3,33 +3,113 @@
 // when you're changing a button.
 
 import { app } from "./state.svelte";
+import { play } from "./play.svelte";
 import { BUTTON_INDEX, padTypeFromId, type PadInput } from "./pads";
 
 type Capture = (input: PadInput) => void;
 let capture: Capture | null = null;
 let prevButtons: boolean[] = [];
 let prevAxes: number[] = [];
-let lastMove = 0;
 
 /** The next button or stick push goes to this function instead of the menus. */
 export function captureNext(fn: Capture | null) {
   capture = fn;
 }
 
-const focusables = () =>
-  Array.from(document.querySelectorAll<HTMLElement>("button:not(:disabled), [tabindex='0'], input, select"))
-    .filter((el) => el.offsetParent !== null);
+type Dir = "up" | "down" | "left" | "right";
 
-function moveFocus(dir: 1 | -1) {
+/** What the controller can move to: everything clickable that's showing, only inside an open pop-up. */
+function focusables(): HTMLElement[] {
+  const dialogs = document.querySelectorAll<HTMLElement>("[aria-modal='true']");
+  const scope: ParentNode = dialogs.length ? dialogs[dialogs.length - 1] : document;
+  return Array.from(scope.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], [tabindex='0'], input:not(:disabled), select:not(:disabled)"))
+    .filter((el) => el.offsetParent !== null && el.getClientRects().length > 0);
+}
+
+function center(r: DOMRect) {
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+/** Moves to the nearest thing on screen in that direction (like a games console menu). */
+function moveFocus(dir: Dir) {
   const list = focusables();
   if (!list.length) return;
-  const i = list.indexOf(document.activeElement as HTMLElement);
-  const next = list[(i + dir + list.length) % list.length] ?? list[0];
+  const current = document.activeElement as HTMLElement | null;
+  if (!current || !list.includes(current)) {
+    (list.find((el) => el.hasAttribute("data-autofocus")) ?? list[0]).focus();
+    return;
+  }
+  // Left and right on a drop-down list change its choice.
+  if (current instanceof HTMLSelectElement && (dir === "left" || dir === "right")) {
+    const i = current.selectedIndex + (dir === "right" ? 1 : -1);
+    if (i >= 0 && i < current.options.length) {
+      current.selectedIndex = i;
+      current.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return;
+  }
+  const from = current.getBoundingClientRect();
+  const c = center(from);
+  let best: HTMLElement | null = null;
+  let bestScore = Infinity;
+  for (const el of list) {
+    if (el === current) continue;
+    const r = el.getBoundingClientRect();
+    const t = center(r);
+    // Distance along the direction (must be ahead of us) and how far off to the side.
+    let along: number, side: number;
+    if (dir === "right") { along = r.left - from.right; side = Math.abs(t.y - c.y); if (t.x <= c.x) continue; }
+    else if (dir === "left") { along = from.left - r.right; side = Math.abs(t.y - c.y); if (t.x >= c.x) continue; }
+    else if (dir === "down") { along = r.top - from.bottom; side = Math.abs(t.x - c.x); if (t.y <= c.y) continue; }
+    else { along = from.top - r.bottom; side = Math.abs(t.x - c.x); if (t.y >= c.y) continue; }
+    // Only things roughly in that direction: side by side with us, or within a cone ahead.
+    const overlaps = dir === "left" || dir === "right"
+      ? r.top < from.bottom && r.bottom > from.top
+      : r.left < from.right && r.right > from.left;
+    if (!overlaps && side > Math.max(along, 0) * 1.5) continue;
+    const score = Math.max(along, 0) + side * 2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = el;
+    }
+  }
+  if (best) {
+    best.focus();
+    best.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+}
+
+/** LB / RB: step through a row of tabs (consoles, settings pages) and open it. */
+function switchTab(step: 1 | -1) {
+  const tabs = Array.from(document.querySelectorAll<HTMLElement>("[data-tab]")).filter((el) => el.offsetParent !== null);
+  if (!tabs.length) return;
+  let i = tabs.findIndex((el) => el.classList.contains("on"));
+  if (i < 0) i = 0;
+  const next = tabs[(i + step + tabs.length) % tabs.length];
+  next.click();
   next.focus();
-  next.scrollIntoView({ block: "nearest" });
+  next.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** The right stick scrolls whatever list you're in. */
+function scrollBy(dy: number) {
+  let el: HTMLElement | null = document.activeElement as HTMLElement | null;
+  while (el && el !== document.body) {
+    const st = getComputedStyle(el);
+    if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight) break;
+    el = el.parentElement;
+  }
+  (el && el !== document.body ? el : document.querySelector<HTMLElement>(".scroll, main"))?.scrollBy({ top: dy });
+}
+
+const DIRS: Record<number, Dir> = { 12: "up", 13: "down", 14: "left", 15: "right" };
+
+function usePadLook() {
+  document.body.classList.add("pad-mode");
 }
 
 function onPress(index: number) {
+  usePadLook();
   const input = BUTTON_INDEX[index] ?? (index >= 12 && index <= 15 ? "dpad" : undefined);
   if (capture && input) {
     const fn = capture;
@@ -37,46 +117,88 @@ function onPress(index: number) {
     fn(input);
     return;
   }
-  if (index === 0) (document.activeElement as HTMLElement | null)?.click();
-  else if (index === 1) app.back();
-  else if (index === 12 || index === 14) moveFocus(-1);
-  else if (index === 13 || index === 15) moveFocus(1);
+  if (DIRS[index]) moveFocus(DIRS[index]);
+  else if (index === 0) {
+    const el = document.activeElement as HTMLElement | null;
+    if (el instanceof HTMLInputElement && el.type !== "checkbox") el.select();
+    else el?.click();
+  } else if (index === 1) {
+    const el = document.activeElement as HTMLElement | null;
+    if (el instanceof HTMLInputElement) el.blur();
+    else app.back();
+  } else if (index === 3) document.querySelector<HTMLElement>("[data-search]")?.focus();
+  else if (index === 4) switchTab(-1);
+  else if (index === 5) switchTab(1);
+}
+
+// Holding a direction repeats it, like a console menu.
+let held: { key: string; since: number; last: number } | null = null;
+function repeat(key: string, active: boolean, now: number, fire: () => void) {
+  if (!active) {
+    if (held?.key === key) held = null;
+    return;
+  }
+  if (!held || held.key !== key) {
+    held = { key, since: now, last: now };
+    return; // the first press is handled as a normal press
+  }
+  if (now - held.since > 380 && now - held.last > 110) {
+    held.last = now;
+    fire();
+  }
 }
 
 function tick() {
   const pads = navigator.getGamepads?.() ?? [];
   const pad = pads.find((p) => p && p.connected) ?? null;
-  if (!pad) {
-    if (app.pad.connected) app.pad = { ...app.pad, connected: false };
-  } else {
-    if (!app.pad.connected || app.pad.name !== pad.id) {
-      const type = padTypeFromId(pad.id);
-      app.pad = { connected: true, type, name: pad.id };
-      app.viewPad = type;
-    }
-    pad.buttons.forEach((b, i) => {
-      const down = b.pressed;
-      if (down && !prevButtons[i]) onPress(i);
-      prevButtons[i] = down;
-    });
-    // Sticks: a strong push counts as a direction press (for changing a stick row, and menus).
-    const now = performance.now();
-    pad.axes.forEach((a, i) => {
-      const strong = Math.abs(a) > 0.7;
-      if (strong && Math.abs(prevAxes[i] ?? 0) <= 0.7) {
-        if (capture) {
-          const fn = capture;
-          capture = null;
-          fn(i < 2 ? "ls" : "rs");
-        } else if (now - lastMove > 180) {
-          moveFocus(a > 0 ? 1 : -1);
-          lastMove = now;
-        }
-      }
-      prevAxes[i] = a;
-    });
+  // While a game is running, the controller belongs to the game.
+  if (!pad || play.playing) {
+    if (!pad && app.pad.connected) app.pad = { ...app.pad, connected: false };
+    requestAnimationFrame(tick);
+    return;
   }
+  if (!app.pad.connected || app.pad.name !== pad.id) {
+    const type = padTypeFromId(pad.id);
+    app.pad = { connected: true, type, name: pad.id };
+    app.viewPad = type;
+  }
+  const now = performance.now();
+  pad.buttons.forEach((b, i) => {
+    const down = b.pressed;
+    if (down && !prevButtons[i]) onPress(i);
+    if (DIRS[i] && !capture) repeat("b" + i, down, now, () => moveFocus(DIRS[i]));
+    prevButtons[i] = down;
+  });
+  // Left stick: a strong push counts as a direction press (for changing a stick row, and menus).
+  const [lx = 0, ly = 0, , ry = 0] = pad.axes;
+  const stickDir: Dir | null = Math.abs(lx) > 0.7 || Math.abs(ly) > 0.7
+    ? (Math.abs(lx) > Math.abs(ly) ? (lx > 0 ? "right" : "left") : ly > 0 ? "down" : "up")
+    : null;
+  const wasStrong = Math.abs(prevAxes[0] ?? 0) > 0.7 || Math.abs(prevAxes[1] ?? 0) > 0.7;
+  if (stickDir && !wasStrong) {
+    usePadLook();
+    if (capture) {
+      const fn = capture;
+      capture = null;
+      fn("ls");
+    } else moveFocus(stickDir);
+  } else if (stickDir && !capture) {
+    repeat("ls", true, now, () => moveFocus(stickDir));
+  } else repeat("ls", false, now, () => {});
+  if (capture && pad.axes.slice(2, 4).some((a, j) => Math.abs(a) > 0.7 && Math.abs(prevAxes[j + 2] ?? 0) <= 0.7)) {
+    const fn = capture;
+    capture = null;
+    fn("rs");
+  } else if (Math.abs(ry) > 0.3) {
+    scrollBy(ry * 18);
+  }
+  prevAxes = [...pad.axes];
   requestAnimationFrame(tick);
+}
+
+// Using the mouse hides the controller highlight again.
+if (typeof window !== "undefined") {
+  window.addEventListener("mousemove", () => document.body.classList.remove("pad-mode"), { passive: true });
 }
 
 export function startGamepad() {

@@ -3,6 +3,8 @@
   import { app } from "../lib/state.svelte";
   import { consoleById, PLAYABLE_NOW } from "../lib/consoles";
   import { formatSize, isCoop, listGames, localInfo, type Game } from "../lib/library";
+  import { play } from "../lib/play.svelte";
+  import { inTauri } from "../lib/settings";
   import { remember, shapeOf } from "../lib/boxart.svelte";
 
   let { id }: { id: string } = $props();
@@ -16,8 +18,25 @@
   const local = $derived(localInfo(id));
   const playable = $derived(!!game && PLAYABLE_NOW.includes(game.console));
 
-  function play() {
-    notice = "Playing switches on in milestone 4, once games come from your RomM library. This build is a preview of the screens.";
+  $effect(() => {
+    play.refresh();
+  });
+  const error = $derived(play.errors[id] ?? "");
+  const running = $derived(play.playing === id);
+
+  async function start() {
+    notice = "";
+    if (!game) return;
+    if (!inTauri) {
+      notice = "This is the screen preview. Downloading and playing work in the Windows app.";
+      return;
+    }
+    if (!app.settings.romsFolder) {
+      notice = "Pick a folder for your games in Settings, Storage first.";
+      return;
+    }
+    if (!local.onPC && !(await play.download(game))) return;
+    await play.play(game);
   }
   let broken = $state(false);
 </script>
@@ -49,26 +68,36 @@
         <p class="desc">{game.description ?? "No description yet. It will come from RomM's game info."}</p>
 
         <div class="actions">
-          <button class="btn primary big" onclick={play} disabled={!playable}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>
-            {local.onPC ? "Play solo" : `Download and play · ${formatSize(game.sizeBytes)}`}
-          </button>
-          {#if isCoop(game) && c.coop}
-            <button class="btn big" disabled title="Coming in step 2">Start couch co-op</button>
-          {/if}
-          {#if local.onPC}
-            <button class="btn big icon" title="Remove from this PC" aria-label="Remove from this PC" onclick={() => (notice = "Removing games switches on in milestone 4.")}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+          {#if local.downloading !== undefined}
+            <div class="dlbox">
+              <div class="dltext">Downloading… {Math.round(local.downloading * 100)}%</div>
+              <div class="dlbar"><div style="width:{local.downloading * 100}%"></div></div>
+            </div>
+            <button class="btn big" onclick={() => play.cancel(game!.id)}>Stop</button>
+          {:else}
+            <button class="btn primary big" onclick={start} disabled={!playable || !!play.playing}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>
+              {running ? "Playing now" : local.onPC ? "Play solo" : `Download and play · ${formatSize(game.sizeBytes)}`}
             </button>
+            {#if isCoop(game) && c.coop}
+              <button class="btn big" disabled title="Coming in step 2">Start couch co-op</button>
+            {/if}
+            {#if local.onPC && !running}
+              <button class="btn big icon" title="Remove from this PC" aria-label="Remove from this PC" onclick={() => play.remove(game!.id)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+              </button>
+            {/if}
           {/if}
         </div>
         {#if !playable}<p class="soon">{c.name} games can't be played yet. NES and SNES come first, then the other consoles.</p>{/if}
+        {#if running}<p class="playing">Playing now. To come back, press <b>Esc</b>, or press <b>LB + RB + Start + Select</b> together on your controller.</p>{/if}
+        {#if error}<p class="notice">{error}</p>{/if}
         {#if notice}<p class="notice">{notice}</p>{/if}
 
         <div class="label sect">YOUR SOLO SAVE</div>
         <div class="box">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FF8A8F" stroke-width="2" aria-hidden="true"><path d="M5 3h11l3 3v15H5z" /><path d="M8 3v6h8V3M8 21v-7h8v7" /></svg>
-          <div class="box-text"><b>No save yet</b><span>Your progress saves automatically and is backed up to the Game Night server.</span></div>
+          <div class="box-text"><b>Saves on this PC</b><span>Your progress saves automatically in your Game Night folder. Backing it up to the Game Night server comes with couch co-op.</span></div>
         </div>
       </div>
     </main>
@@ -93,6 +122,11 @@
   .icon { width: 52px; padding: 0; }
   .soon, .notice { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
   .notice { color: var(--amber); }
+  .playing { font-size: 13px; color: var(--text-2); margin: 12px 0 0; }
+  .dlbox { display: flex; flex-direction: column; justify-content: center; gap: 8px; width: 320px; }
+  .dltext { font-size: 14px; color: var(--amber); font-weight: 600; }
+  .dlbar { height: 8px; border-radius: 4px; background: var(--btn); overflow: hidden; }
+  .dlbar div { height: 100%; background: var(--amber); transition: width 0.15s; }
   .sect { margin: 28px 0 10px; }
   .box { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); }
   .box-text { display: flex; flex-direction: column; gap: 3px; }

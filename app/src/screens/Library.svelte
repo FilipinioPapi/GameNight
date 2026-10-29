@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { play } from "../lib/play.svelte";
   import TopBar from "../components/TopBar.svelte";
   import Icon from "../components/Icon.svelte";
   import { app } from "../lib/state.svelte";
@@ -30,6 +31,9 @@
   const open = (g: Game) => app.go({ name: "game", id: g.id });
   // Covers that failed to load fall back to the title.
   let broken = $state<Record<string, boolean>>({});
+  $effect(() => {
+    play.refresh();
+  });
 </script>
 
 <div class="page">
@@ -37,7 +41,7 @@
     {#snippet right()}
       <div class="search">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F7A7C" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg>
-        <input type="text" placeholder="Search {games.length} games…" bind:value={search} aria-label="Search games" />
+        <input type="text" data-search placeholder="Search {games.length} games…" bind:value={search} aria-label="Search games" />
       </div>
     {/snippet}
   </TopBar>
@@ -45,19 +49,19 @@
   <main>
     <aside class="scroll">
       <div class="label side-label">CONSOLES</div>
-      <button class="side" class:on={current === "all"} onclick={() => pick("all")}>
+      <button class="side" data-tab class:on={current === "all"} onclick={() => pick("all")}>
         <Icon svg='<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' />
         <span class="all">All games</span><span class="n">{games.length}</span>
       </button>
       {#each CONSOLES.filter((c) => c.coop) as c (c.id)}
-        <button class="side" class:on={current === c.id} onclick={() => pick(c.id)}>
+        <button class="side" data-tab class:on={current === c.id} onclick={() => pick(c.id)}>
           <Icon svg={c.icon} /><span class={c.font} style="font-size:{c.navSize}px">{c.short}</span><span class="n">{count(c.id)}</span>
         </button>
       {/each}
       <div class="rule"></div>
       <div class="label side-label">SOLO ONLY FOR NOW</div>
       {#each CONSOLES.filter((c) => !c.coop) as c (c.id)}
-        <button class="side" class:on={current === c.id} onclick={() => pick(c.id)}>
+        <button class="side" data-tab class:on={current === c.id} onclick={() => pick(c.id)}>
           <Icon svg={c.icon} /><span class={c.font} style="font-size:{c.navSize}px">{c.short}</span><span class="n">{count(c.id)}</span>
         </button>
       {/each}
@@ -168,6 +172,8 @@
   .card .art { width: 100%; border: 2px solid transparent; outline: 1px solid var(--line); outline-offset: -1px; }
   .card:hover .art, .card:focus-visible .art { border-color: var(--red); outline-color: transparent; }
   .card:focus-visible { outline: none; }
+  :global(.pad-mode) .card:focus .art { border-color: var(--red); outline-color: transparent; }
+  :global(.pad-mode) .card:focus { outline: none; }
   .state { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--btn); border: 1px solid var(--line-2); }
   .state.ok { background: var(--green-bg); border-color: var(--green-bg); }
   .dl { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--btn); }

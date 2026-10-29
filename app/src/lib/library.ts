@@ -3,6 +3,7 @@
 
 import type { ConsoleId } from "./consoles";
 import { inTauri } from "./settings";
+import { play } from "./play.svelte";
 
 export interface Game {
   id: string;
@@ -88,9 +89,11 @@ export async function listGames(): Promise<Game[]> {
   return (await loadLibrary()).games;
 }
 
-/** Downloaded or not. Real downloads arrive in milestone 4; the preview pretends a few are. */
+/** Downloaded or not, and download progress. The screen preview pretends a few are. */
 export function localInfo(id: string): LocalInfo {
-  return (inTauri ? undefined : SAMPLE_LOCAL[id]) ?? { onPC: false };
+  if (!inTauri) return SAMPLE_LOCAL[id] ?? { onPC: false };
+  const p = play.progress[id];
+  return { onPC: play.onPC(id), downloading: p ? (p.total ? Math.min(1, p.done / p.total) : 0) : undefined };
 }
 
 export function formatSize(bytes: number): string {

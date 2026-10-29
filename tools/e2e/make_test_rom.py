@@ -16,10 +16,12 @@ code = bytes([
     0xA9, 0x00, 0x8D, 0x16, 0x40,  # LDA #0, STA $4016
     0xA2, 0x08,                    # LDX #8
     0xAD, 0x16, 0x40, 0x4A,        # LDA $4016, LSR A    (player 1's next button into carry)
-    0x26, 0x10, 0xCA, 0xD0, 0xF7,  # ROL $10, DEX, BNE   ($10 = player 1: A B Select Start Up Down Left Right)
-    0xA2, 0x08,                    # LDX #8
+    0x26, 0x12, 0xCA, 0xD0, 0xF7,  # ROL $12, DEX, BNE   (build the byte in $12 ...)
+    0xA5, 0x12, 0x85, 0x10,        # LDA $12, STA $10    (... then store it in one go, so a reader never sees half a byte)
+    0xA2, 0x08,                    # LDX #8              ($10 = player 1: A B Select Start Up Down Left Right)
     0xAD, 0x17, 0x40, 0x4A,        # LDA $4017, LSR A
-    0x26, 0x11, 0xCA, 0xD0, 0xF7,  # ROL $11, DEX, BNE   ($11 = player 2)
+    0x26, 0x13, 0xCA, 0xD0, 0xF7,  # ROL $13, DEX, BNE
+    0xA5, 0x13, 0x85, 0x11,        # LDA $13, STA $11    ($11 = player 2)
     0x4C, 0x14, 0xC0,              # JMP $C014
 ])
 prg[0:len(code)] = code

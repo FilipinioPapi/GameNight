@@ -14,7 +14,7 @@ export type Route =
   | { name: "menu" }
   | { name: "library"; console: ConsoleId | "all" }
   | { name: "game"; id: string }
-  | { name: "settings"; tab: "controllers" | "screen" | "consoles" | "storage" | "account"; console: ConsoleId };
+  | { name: "settings"; tab: "controllers" | "devices" | "screen" | "consoles" | "storage" | "account"; console: ConsoleId };
 
 export type { User } from "./account";
 type User = account.User;
@@ -25,7 +25,7 @@ class AppState {
   user = $state<User | null>(null);
   settings = $state<Settings>({ ...DEFAULTS });
   ready = $state(false);
-  pad = $state<{ connected: boolean; type: PadType; name: string }>({ connected: false, type: "xbox", name: "" });
+  pad = $state<{ connected: boolean; type: PadType; name: string; usb: string }>({ connected: false, type: "xbox", name: "", usb: "" });
   /** The pad type the controller screen is showing (follows the plugged-in pad unless changed). */
   viewPad = $state<PadType>("xbox");
 

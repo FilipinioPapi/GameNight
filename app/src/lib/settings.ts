@@ -20,6 +20,8 @@ export interface Settings {
   mappings: Partial<Record<ConsoleId, Partial<Record<PadType, Record<string, PadInput>>>>>;
   presets: Partial<Record<ConsoleId, Partial<Record<PadType, string>>>>;
   consoles: Partial<Record<ConsoleId, ConsoleSettings>>;
+  /** The "stop Steam opening on the Xbox button" tip has been shown and closed. */
+  steamTipSeen?: boolean;
 }
 
 export const DEFAULT_CONSOLE: ConsoleSettings = { screen: "4:3", picture: "scanlines", rewind: true, fastForward: true, showFps: false };

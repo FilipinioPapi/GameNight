@@ -8,15 +8,15 @@ import { BUTTON_INDEX, padTypeFromId, type PadInput } from "./pads";
 import { inTauri } from "./settings";
 
 /** One controller reading: the same shape whether it came from Windows or the browser. */
-type Reading = { id: string; buttons: boolean[]; axes: number[] };
+type Reading = { id: string; usb?: string; buttons: boolean[]; axes: number[] };
 
 // In the app, Windows tells us about the controller (the web page can't see it there).
 let native: Reading | null = null;
 async function listenNative() {
   const { listen } = await import("@tauri-apps/api/event");
-  await listen<{ connected: boolean; name: string; buttons: boolean[]; axes: number[] }>("pad", (e) => {
+  await listen<{ connected: boolean; name: string; id: string; buttons: boolean[]; axes: number[] }>("pad", (e) => {
     const p = e.payload;
-    native = p.connected ? { id: p.name || "Controller", buttons: p.buttons, axes: p.axes } : null;
+    native = p.connected ? { id: p.name || "Controller", usb: p.id, buttons: p.buttons, axes: p.axes } : null;
   });
 }
 
@@ -177,9 +177,9 @@ function tick() {
     requestAnimationFrame(tick);
     return;
   }
-  if (!app.pad.connected || app.pad.name !== pad.id) {
-    const type = padTypeFromId(pad.id);
-    app.pad = { connected: true, type, name: pad.id };
+  if (!app.pad.connected || app.pad.name !== pad.id || app.pad.usb !== (pad.usb ?? "")) {
+    const type = padTypeFromId(`${pad.id} ${pad.usb ?? ""}`);
+    app.pad = { connected: true, type, name: pad.id, usb: pad.usb ?? "" };
     app.viewPad = type;
   }
   const now = performance.now();

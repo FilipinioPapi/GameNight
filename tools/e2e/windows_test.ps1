@@ -47,6 +47,10 @@ while ($runs -lt 4) {
   if (Test-Path $log) {
     Get-Content $log | Select-String -Pattern 'audio|Audio|Content|Core|Video|error|ERROR' | Select-Object -First 40 | ForEach-Object { Write-Host "  | $_" }
   } else { Fail "RetroArch wrote no log" }
+  $pads = Join-Path $cache 'player\logs\controllers.txt'
+  if (Test-Path $pads) { Write-Host "controllers:"; Get-Content $pads | ForEach-Object { Write-Host "  | $_" } } else { Fail "no controllers note was written" }
+  $cfgFile = Join-Path $config 'player\retroarch.cfg'
+  if (-not (Select-String -Path $cfgFile -Pattern 'input_max_users = "4"' -Quiet)) { Fail "the player settings are missing the controller lines" }
   if (-not $result.silent) { break }
 }
 if (-not $result.ok) { Fail "RetroArch exited with an error" }

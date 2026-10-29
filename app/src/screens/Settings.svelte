@@ -10,7 +10,7 @@
   import { CONSOLES, consoleById, type ConsoleId } from "../lib/consoles";
   import { LAYOUTS } from "../lib/controllers";
   import { PAD_NAME } from "../lib/pads";
-  import { clearCoverCache, clearGames, coverCacheSize, folderSize, formatGB, gamesFolder, pickFolder } from "../lib/native";
+  import { clearCoverCache, clearGames, coverCacheSize, folderSize, formatGB, gamesFolder, listControllers, pickFolder, saveControllers, steamRunning, type PadRow } from "../lib/native";
   import { formatSize } from "../lib/library";
   import { play } from "../lib/play.svelte";
 
@@ -19,6 +19,7 @@
 
   const NAV: { tab: Tab; name: string; icon: string }[] = [
     { tab: "controllers", name: "Controllers", icon: '<rect x="2" y="8" width="20" height="10" rx="5"/><path d="M7 11v4M5 13h4"/><circle cx="16" cy="12" r="1"/><circle cx="18.5" cy="14" r="1"/>' },
+    { tab: "devices", name: "My controllers", icon: '<rect x="3" y="6" width="18" height="12" rx="6"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M2 2l20 20"/>' },
     { tab: "consoles", name: "Consoles", icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
     { tab: "storage", name: "Storage", icon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
     { tab: "account", name: "Account", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>' },
@@ -64,6 +65,39 @@
     confirmClear = false;
   }
   const signOut = () => app.signOut();
+
+  // My controllers: pick Player 1 and turn off anything that isn't really a controller.
+  let pads = $state<PadRow[]>([]);
+  let steam = $state(false);
+  let padError = $state("");
+  async function loadPads() {
+    pads = await listControllers().catch(() => []);
+    steam = await steamRunning();
+  }
+  // Opening this tab, or plugging a controller in or out refreshes the list.
+  $effect(() => {
+    if (tab === "devices") {
+      void app.pad.connected;
+      void app.pad.usb;
+      loadPads();
+    }
+  });
+  async function savePads(next: PadRow[]) {
+    const strip = ({ name, ra, usb }: PadRow) => ({ name, ra, usb });
+    const p1 = next.find((r) => r.player1 && !r.disabled);
+    try {
+      await saveControllers({ player1: p1 ? strip(p1) : null, disabled: next.filter((r) => r.disabled).map(strip) });
+      padError = "";
+    } catch (e) {
+      padError = String(e);
+    }
+    await loadPads();
+  }
+  const same = (a: PadRow, b: PadRow) => a.ra === b.ra && a.usb === b.usb;
+  const setPlayer1 = (r: PadRow | null) => savePads(pads.map((x) => ({ ...x, player1: r !== null && same(x, r) })));
+  const setOn = (r: PadRow, on: boolean) =>
+    savePads(pads.map((x) => (same(x, r) ? { ...x, disabled: !on, player1: on && x.player1 } : x)));
+  const inUse = (r: PadRow) => app.pad.connected && app.pad.usb === r.usb;
 </script>
 
 {#if tab === "controllers"}
@@ -139,7 +173,7 @@
                 <b>Your controller for {info.short}</b>
                 <span class="found" class:none={!app.pad.connected}>{app.pad.connected ? `${PAD_NAME[app.pad.type]} controller found` : "No controller plugged in"}</span>
               </div>
-              <img class="thumb" src="/ctl/{LAYOUTS[cid].front.img}.webp" alt="" />
+              <img class="thumb" src="/ctl/clean/{LAYOUTS[cid].front.img}.webp" alt="" />
               <div class="maplist">
                 {#each LAYOUTS[cid].buttons.slice(0, 8) as b (b.key)}
                   <div class="ml"><span>{info.short} {b.label}</span>{#if map[b.key]}<PadGlyph {pad} input={map[b.key]} />{/if}</div>
@@ -148,6 +182,44 @@
               <button class="btn primary wide" onclick={() => go("controllers")}>Change buttons</button>
             </div>
           </div>
+        {:else if tab === "devices"}
+          <div class="panel">
+            <div class="phead"><b class="h">My controllers</b><span class="emu">Everything Windows sees as a controller</span></div>
+            <div class="row">
+              <div class="t"><b>Automatic Player 1</b><span>Player 1 is whichever controller you last pressed a button on in Game Night.</span></div>
+              <button class="btn small" class:primary={!pads.some((r) => r.player1)} onclick={() => setPlayer1(null)}>{pads.some((r) => r.player1) ? "Use automatic" : "In use"}</button>
+            </div>
+            {#each pads as r (r.ra + r.usb)}
+              <div class="row" class:off={r.disabled}>
+                <div class="t">
+                  <b class="pname">{r.name || "Controller"}</b>
+                  <span>
+                    {#if r.disabled}Turned off: Game Night and games ignore it.
+                    {:else if !r.connected}Not plugged in right now.
+                    {:else if inUse(r)}<span class="live">You're using this one now.</span>
+                    {:else}Plugged in.{/if}
+                  </span>
+                </div>
+                {#if !r.disabled}
+                  <button class="btn small" class:primary={r.player1} disabled={r.player1} onclick={() => setPlayer1(r)}>{r.player1 ? "Always Player 1" : "Make Player 1"}</button>
+                {/if}
+                <span class="onoff">{r.disabled ? "Off" : "On"}</span>
+                <Toggle label="Use {r.name || 'this controller'}" on={!r.disabled} onchange={(v) => setOn(r, v)} />
+              </div>
+            {:else}
+              <div class="row"><div class="t"><b>No controllers found</b><span>Plug one in and it shows up here.</span></div></div>
+            {/each}
+            {#if padError}<div class="row"><div class="t"><span class="warn">{padError}</span></div></div>{/if}
+            <div class="pfoot">
+              <span>Turn off anything that isn't really a controller (some keyboards and mice pretend to be one). This is saved on this PC and applies every time you play.</span>
+            </div>
+          </div>
+          {#if steam}
+            <div class="panel">
+              <div class="phead"><b class="h">Stop the Xbox button opening Steam</b></div>
+              <div class="row"><div class="t"><span>Steam is open on this PC. To keep the Xbox / PS button for Game Night: in Steam, open <b>Settings</b>, then <b>Controller</b>, and turn off <b>"Guide Button Focuses Steam"</b>.</span></div></div>
+            </div>
+          {/if}
         {:else if tab === "storage"}
           <div class="panel">
             <div class="phead"><b class="h">Where games are kept</b></div>
@@ -225,4 +297,8 @@
   .maplist { display: flex; flex-direction: column; gap: 6px; }
   .ml { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-2); }
   .wide { width: 100%; height: 46px; margin-top: auto; }
+  .row.off .pname { color: var(--muted-2); text-decoration: line-through; }
+  .live { color: var(--green) !important; }
+  .warn { color: var(--amber) !important; }
+  .onoff { font-size: 12px; color: var(--muted); width: 24px; text-align: right; }
 </style>

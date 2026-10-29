@@ -66,3 +66,26 @@ export function formatGB(bytes: number): string {
   const gb = bytes / 1024 ** 3;
   return gb >= 1000 ? `${(gb / 1024).toFixed(gb >= 10240 ? 0 : 1)} TB` : `${Math.round(gb)} GB`;
 }
+
+/** A controller as Game Night and the game player know it ("vvvv:pppp" ids). */
+export interface PadDevice { name: string; ra: string; usb: string; }
+export interface PadRow extends PadDevice { connected: boolean; disabled: boolean; player1: boolean; }
+export interface PadPrefs { player1: PadDevice | null; disabled: PadDevice[]; }
+
+/** Every controller plugged in, plus saved ones that are unplugged. */
+export async function listControllers(): Promise<PadRow[]> {
+  if (inTauri) return invoke<PadRow[]>("list_controllers");
+  return [
+    { name: "Razer Huntsman V3 Pro Tenkeyless", ra: "1532:02a7", usb: "1532:02a7", connected: true, disabled: false, player1: false },
+    { name: "Controller (Xbox One For Windows)", ra: "045e:02ff", usb: "045e:0b12", connected: true, disabled: false, player1: false },
+  ];
+}
+
+export async function saveControllers(prefs: PadPrefs): Promise<void> {
+  if (inTauri) await invoke("save_controllers", { prefs });
+}
+
+/** True when Steam is open on this PC. */
+export async function steamRunning(): Promise<boolean> {
+  return inTauri ? invoke<boolean>("steam_running").catch(() => false) : false;
+}

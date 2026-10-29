@@ -8,9 +8,11 @@
 //!   (nes, snes, ...), never anything else, and never follows shortcuts/links out of it.
 
 mod account;
+mod controllers;
 mod covers;
 mod games;
 mod pads;
+mod retroports;
 mod updater;
 
 use serde::Serialize;
@@ -226,6 +228,9 @@ pub fn run() {
             games::cancel_download,
             games::remove_game,
             games::play_game,
+            controllers::list_controllers,
+            controllers::save_controllers,
+            controllers::steam_running,
             covers::clear_cover_cache,
             suggest_folders,
             games_folder,

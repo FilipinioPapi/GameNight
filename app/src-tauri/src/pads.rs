@@ -6,12 +6,20 @@
 //! Only reads input; nothing is ever sent to the controller.
 
 use serde::Serialize;
+use std::sync::Mutex;
+
+/// The controller someone last pressed a button on in Game Night (USB vendor and product id). The game
+/// gives Player 1 to it, so a keyboard or other device posing as a controller can't take Player 1
+/// (Jayden's Razer Huntsman does exactly that).
+pub static LAST_USED: Mutex<Option<(u16, u16)>> = Mutex::new(None);
 
 #[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PadState {
     pub connected: bool,
     pub name: String,
+    /// USB id, "vvvv:pppp", so Settings can show which controller is in use.
+    pub id: String,
     pub buttons: Vec<bool>,
     pub axes: Vec<f32>,
 }
@@ -27,7 +35,7 @@ pub fn tidy_axis(v: f32) -> f32 {
 
 #[cfg(windows)]
 pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
-    use gilrs::{Axis, Button, Gilrs};
+    use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -71,13 +79,42 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
             Err(_) => return,
         };
         let mut last = PadState::default();
+        // The menus follow whichever controller was pressed last, not just the first one Windows lists.
+        let mut active: Option<GamepadId> = None;
+        // Controllers turned off in Settings are ignored completely. Re-read about once a second.
+        let mut off: Vec<(u16, u16)> = Vec::new();
+        let mut tick = 0u32;
+        let usb = |p: &gilrs::Gamepad| p.vendor_id().zip(p.product_id());
         loop {
-            while gilrs.next_event().is_some() {}
+            if tick % 125 == 0 {
+                off = crate::controllers::disabled_usb(&app);
+                if active.is_some_and(|id| usb(&gilrs.gamepad(id)).is_some_and(|u| off.contains(&u))) {
+                    active = None;
+                }
+            }
+            tick = tick.wrapping_add(1);
+            let allowed = |p: &gilrs::Gamepad| !usb(p).is_some_and(|u| off.contains(&u));
             let focused = focused.load(Ordering::Relaxed);
-            let now = match gilrs.gamepads().find(|(_, p)| p.is_connected()) {
-                Some((_, p)) => PadState {
+            while let Some(ev) = gilrs.next_event() {
+                match ev.event {
+                    EventType::ButtonPressed(..) if focused && allowed(&gilrs.gamepad(ev.id)) => {
+                        active = Some(ev.id);
+                        if let Some(u) = usb(&gilrs.gamepad(ev.id)) {
+                            *LAST_USED.lock().unwrap_or_else(|e| e.into_inner()) = Some(u);
+                        }
+                    }
+                    EventType::Disconnected if active == Some(ev.id) => active = None,
+                    _ => {}
+                }
+            }
+            let pad = active
+                .and_then(|id| gilrs.connected_gamepad(id))
+                .or_else(|| gilrs.gamepads().find(|(_, p)| p.is_connected() && allowed(p)).map(|(_, p)| p));
+            let now = match pad {
+                Some(p) => PadState {
                     connected: true,
                     name: p.name().chars().take(80).collect(),
+                    id: usb(&p).map(crate::controllers::id).unwrap_or_default(),
                     buttons: BUTTONS.iter().map(|b| focused && p.is_pressed(*b)).collect(),
                     axes: [Axis::LeftStickX, Axis::LeftStickY, Axis::RightStickX, Axis::RightStickY]
                         .iter()

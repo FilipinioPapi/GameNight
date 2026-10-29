@@ -1,6 +1,6 @@
 [package]
 name = "game-night"
-version = "0.3.2"
+version = "0.3.3"
 description = "Game Night: play Jayden's retro game library with friends"
 edition = "2021"
 publish = false
@@ -44,3 +44,5 @@ strip = true
 [target."cfg(windows)".dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 gilrs = "0.11"
+# Reads which controllers are plugged in (as the game player sees them) and whether Steam is open.
+windows = { version = "0.61", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_UI_Input", "Win32_UI_Input_XboxController", "Win32_System_LibraryLoader", "Win32_Foundation", "Win32_System_Registry"] }

@@ -1,0 +1,99 @@
+/* Game Night look: the same colours as the Watch Party site. */
+:root {
+  --bg: #120c0c;
+  --bg-side: #150e0e;
+  --panel: #1e1415;
+  --line: #3a2526;
+  --line-2: #4a2f31;
+  --line-soft: #2c1c1d;
+  --btn: #2c1c1d;
+  --text: #f6e9e9;
+  --text-2: #e3d2d3;
+  --muted: #bfa7a8;
+  --muted-2: #8f7a7c;
+  --red: #ec282e;
+  --red-2: #ce1a22;
+  --link: #ff8a8f;
+  --green: #7fd69a;
+  --green-bg: #2f6b45;
+  --amber: #f2b45a;
+  --discord: #5865f2;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--link); }
+a:hover { color: #ffb3b6; }
+button, input, select { font-family: inherit; }
+button { cursor: pointer; color: inherit; }
+button:disabled { cursor: default; opacity: 0.5; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+/* Console title fonts (stand-ins for each console's look) */
+.f-nes { font-family: "Press Start 2P", monospace; }
+.f-snes { font-family: "Pixelify Sans", sans-serif; font-weight: 700; }
+.f-gen { font-family: Orbitron, sans-serif; font-weight: 900; letter-spacing: 0.06em; }
+.f-gb { font-family: Silkscreen, monospace; }
+.f-arc { font-family: Monoton, sans-serif; }
+.f-ps { font-family: Audiowide, sans-serif; }
+.f-n64 { font-family: "Russo One", sans-serif; }
+.f-gc { font-family: Righteous, sans-serif; }
+.f-ps2 { font-family: Michroma, sans-serif; }
+
+.lucky {
+  font-family: "Luckiest Guy", Inter, sans-serif;
+  letter-spacing: 0.04em;
+  -webkit-text-stroke: 5px #000;
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 #000;
+}
+
+.label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--muted-2); }
+.muted { color: var(--muted); }
+
+.badge {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px;
+  border-radius: 999px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--line-2); color: var(--text-2); white-space: nowrap;
+}
+.badge.coop { border-color: var(--green-bg); color: var(--green); }
+
+.btn {
+  height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-2);
+  background: transparent; color: var(--text); font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn:hover:not(:disabled) { background: var(--btn); }
+.btn.primary {
+  border: 2px solid #000; background: var(--red-2); color: #fff; font-weight: 700;
+  box-shadow: 0 3px 0 #000;
+}
+.btn.primary:hover:not(:disabled) { background: var(--red); }
+.btn.small { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 8px; }
+
+.pill {
+  height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); font-size: 13px;
+}
+.pill.on { border-color: transparent; background: var(--btn); color: var(--text); font-weight: 600; }
+
+/* Box art placeholder until RomM art is wired up */
+.art {
+  border-radius: 10px; border: 1px solid var(--line); position: relative; overflow: hidden;
+  display: flex; align-items: flex-end; padding: 10px;
+  background: linear-gradient(160deg, #4a2f31, #1e1415);
+}
+.art img.cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+.scroll { overflow-y: auto; }
+.scroll::-webkit-scrollbar { width: 10px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; border: 2px solid var(--bg); }

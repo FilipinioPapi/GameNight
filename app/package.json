@@ -1,0 +1,38 @@
+{
+  "name": "game-night",
+  "version": "0.1.0",
+  "description": "Game Night: play Jayden's retro game library with friends",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fontsource/audiowide": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/luckiest-guy": "^5.3.0",
+    "@fontsource/michroma": "^5.3.0",
+    "@fontsource/monoton": "^5.3.0",
+    "@fontsource/orbitron": "^5.3.0",
+    "@fontsource/pixelify-sans": "^5.3.0",
+    "@fontsource/press-start-2p": "^5.3.0",
+    "@fontsource/righteous": "^5.3.0",
+    "@fontsource/russo-one": "^5.3.0",
+    "@fontsource/silkscreen": "^5.3.0",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-store": "^2.5.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tauri-apps/cli": "^2.12.4",
+    "@tsconfig/svelte": "^5.0.8",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5"
+  },
+  "private": true,
+  "type": "module"
+}

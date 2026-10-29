@@ -4,6 +4,7 @@
   import { inTauri } from "../lib/settings";
   import { setServer, shortAddress } from "../lib/account";
   import { VERSION } from "../lib/version";
+  import { updates } from "../lib/update.svelte";
 
   // Outside the Windows app (only while building screens) there's no Discord: just look around.
   function preview() {
@@ -62,6 +63,7 @@
       {/if}
     {/if}
   </div>
+  {#if updates.info && updates.phase !== "none"}<button class="upd" onclick={() => updates.open()}>Update ready: v{updates.info.version}</button>{/if}
   <div class="foot">Private to friends on Jayden's Discord · v{VERSION}</div>
 </div>
 
@@ -90,5 +92,6 @@
   .server .row { display: flex; gap: 8px; }
   .server input { flex: 1; min-width: 0; height: 34px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; }
   .bad { color: var(--link); }
+  .upd { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--amber); background: #2a1f14; color: #fff; font-size: 13px; font-weight: 600; }
   .foot { font-size: 12px; color: var(--muted-2); }
 </style>

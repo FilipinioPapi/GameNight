@@ -5,6 +5,7 @@ import type { ConsoleId } from "./consoles";
 import { LAYOUTS } from "./controllers";
 import type { PadInput, PadType } from "./pads";
 import * as account from "./account";
+import { updates } from "./update.svelte";
 import { DEFAULT_CONSOLE, DEFAULTS, loadSettings, saveSettings, type ConsoleSettings, type Settings } from "./settings";
 
 export type Route =
@@ -47,6 +48,7 @@ class AppState {
       console.error("Couldn't check sign-in", e);
     }
     this.ready = true;
+    void updates.check(); // also on the sign-in screen, so an old version can always update
   }
 
   /** After Discord says yes (or on start-up, if you signed in before). */

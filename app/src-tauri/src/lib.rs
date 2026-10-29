@@ -8,6 +8,7 @@
 //!   (nes, snes, ...), never anything else, and never follows shortcuts/links out of it.
 
 mod account;
+mod updater;
 
 use serde::Serialize;
 use std::fs;
@@ -180,6 +181,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(account::Account::default())
+        .manage(updater::Updates::default())
         // Box art: the window may only show pictures from here, which only fetches from our server.
         .register_asynchronous_uri_scheme_protocol("gncover", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -217,7 +219,9 @@ pub fn run() {
             account::set_server,
             account::sign_in,
             account::sign_out,
-            account::fetch_games
+            account::fetch_games,
+            updater::check_update,
+            updater::install_update
         ])
         .run(tauri::generate_context!())
         .expect("Game Night couldn't start");

@@ -139,3 +139,34 @@ def test_session_expiry(monkeypatch):
     assert db.check_session(tok) is None
     # only a fingerprint is stored
     assert tok not in str(db.conn.execute("SELECT * FROM sessions").fetchall())
+
+
+async def test_cover_arrives_whole(aiohttp_client, aiohttp_server, monkeypatch):
+    """RomM sends big covers in pieces. The whole picture must come through, not just the first piece."""
+    from aiohttp import web as w
+    from gamenight.romm import RomM
+    picture = b"\x89PNG" + bytes(range(256)) * 2000
+
+    async def cover_file(request):
+        resp = w.StreamResponse(headers={"Content-Type": "image/png"})
+        await resp.prepare(request)
+        for i in range(0, len(picture), 7000):
+            await resp.write(picture[i:i + 7000])
+        await resp.write_eof()
+        return resp
+
+    romm_app = w.Application()
+    romm_app.router.add_get("/assets/romm/resources/roms/7/cover/big.png", cover_file)
+    romm_server = await aiohttp_server(romm_app)
+
+    class OneGame(RomM):
+        async def games(self):
+            return {7: Game(7, "Super Mario Bros.", "nes", "1-2", 1, "", "/assets/romm/resources/roms/7/cover/big.png", "smb.nes")}
+
+    db = Database(":memory:")
+    c = await aiohttp_client(appmod.build(cfg(romm_url=str(romm_server.make_url("")).rstrip("/")), db=db, romm_factory=OneGame))
+    code = await sign_in(c, monkeypatch)
+    token = (await (await c.post("/api/session", json={"code": code, "verifier": VERIFIER})).json())["token"]
+    r = await c.get("/api/games/7/cover", headers={"Authorization": f"Bearer {token}"})
+    assert r.status == 200 and r.headers["Content-Type"] == "image/png"
+    assert await r.read() == picture

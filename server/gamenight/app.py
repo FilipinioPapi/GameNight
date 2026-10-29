@@ -221,10 +221,13 @@ async def cover(request: web.Request) -> web.StreamResponse:
         ctype = upstream.headers.get("Content-Type", "")
         if upstream.status != 200 or not ctype.startswith("image/") or "svg" in ctype:
             raise web.HTTPNotFound()
-        data = await upstream.content.read(8 * 1024 * 1024 + 1)
-        if len(data) > 8 * 1024 * 1024:
-            raise web.HTTPNotFound()
-    resp = web.Response(body=data, content_type=ctype.split(";")[0])
+        # Read the whole picture. A single read() can stop part-way, which showed only the top of each cover.
+        data = bytearray()
+        async for chunk in upstream.content.iter_chunked(64 * 1024):
+            data += chunk
+            if len(data) > 8 * 1024 * 1024:
+                raise web.HTTPNotFound()
+    resp = web.Response(body=bytes(data), content_type=ctype.split(";")[0])
     resp.headers["Cache-Control"] = "private, max-age=86400"
     return resp
 

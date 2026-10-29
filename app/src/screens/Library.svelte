@@ -4,6 +4,7 @@
   import { app } from "../lib/state.svelte";
   import { CONSOLES, consoleById, type ConsoleId } from "../lib/consoles";
   import { formatSize, isCoop, listGames, localInfo, type Game } from "../lib/library";
+  import { remember, shapeOf } from "../lib/boxart.svelte";
 
   let { console: current }: { console: ConsoleId | "all" } = $props();
 
@@ -66,7 +67,7 @@
       {#if featured && !search}
         {@const fc = consoleById(featured.console)}
         <div class="hero">
-          <div class="art hero-art">{#if featured.cover && !broken[featured.id]}<img class="cover" src={featured.cover} alt="" onerror={() => (broken[featured.id] = true)} />{:else}<span class={fc.font} style="font-size:{fc.id === 'nes' ? 8 : 12}px;line-height:1.3">{featured.title}</span>{/if}</div>
+          <div class="art hero-art" style="aspect-ratio:{shapeOf(featured.id)}">{#if featured.cover && !broken[featured.id]}<img class="cover" src={featured.cover} alt="" onload={(e) => remember(featured.id, e.currentTarget)} onerror={() => (broken[featured.id] = true)} />{:else}<span class={fc.font} style="font-size:{fc.id === 'nes' ? 8 : 12}px;line-height:1.3">{featured.title}</span>{/if}</div>
           <div class="hero-text">
             <div class="kicker">{localInfo(featured.id).onPC ? "READY ON THIS PC" : "IN THE LIBRARY"}</div>
             <div class={fc.font} style="font-size:{fc.id === 'nes' ? 24 : 36}px;line-height:1.1">{featured.title}</div>
@@ -106,8 +107,8 @@
           {@const local = localInfo(g.id)}
           {@const art = g.cover && !broken[g.id]}
           <button class="card" onclick={() => open(g)}>
-            <div class="art">
-              {#if art}<img class="cover" src={g.cover} alt="" onerror={() => (broken[g.id] = true)} />{/if}
+            <div class="art" style="aspect-ratio:{shapeOf(g.id)}">
+              {#if art}<img class="cover" src={g.cover} alt="" loading="lazy" decoding="async" onload={(e) => remember(g.id, e.currentTarget)} onerror={() => (broken[g.id] = true)} />{/if}
               {#if local.downloading !== undefined}
                 <div class="dl"><div style="width:{local.downloading * 100}%"></div></div>
               {:else if local.onPC}
@@ -151,7 +152,7 @@
 
   section { flex: 1; min-width: 0; padding: 20px 28px 28px; display: flex; flex-direction: column; gap: 18px; }
   .hero { min-height: 168px; flex-shrink: 0; border-radius: 16px; border: 1px solid var(--line); background: linear-gradient(110deg, #3a1416 0%, #1e1415 60%, #120c0c 100%); display: flex; align-items: center; gap: 24px; padding: 20px 24px; }
-  .hero-art { width: 96px; height: 128px; flex-shrink: 0; padding: 8px; border-radius: 8px; background: linear-gradient(160deg, #5a2224, #2c1c1d); }
+  .hero-art { width: 96px; flex-shrink: 0; padding: 8px; border-radius: 8px; background: linear-gradient(160deg, #5a2224, #2c1c1d); }
   .hero-text { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
   .kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--link); }
   .badges { display: flex; gap: 8px; align-items: center; }
@@ -162,9 +163,9 @@
   .count { font-size: 13px; color: var(--muted-2); }
   .sorts { margin-left: auto; display: flex; gap: 6px; }
   .empty { color: var(--muted); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px 16px; align-items: end; }
   .card { display: flex; flex-direction: column; gap: 8px; border: 0; background: none; padding: 0; text-align: left; }
-  .card .art { height: 178px; border: 2px solid transparent; outline: 1px solid var(--line); outline-offset: -1px; }
+  .card .art { width: 100%; border: 2px solid transparent; outline: 1px solid var(--line); outline-offset: -1px; }
   .card:hover .art, .card:focus-visible .art { border-color: var(--red); outline-color: transparent; }
   .card:focus-visible { outline: none; }
   .state { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--btn); border: 1px solid var(--line-2); }

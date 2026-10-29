@@ -3,6 +3,7 @@
   import { app } from "../lib/state.svelte";
   import { consoleById, PLAYABLE_NOW } from "../lib/consoles";
   import { formatSize, isCoop, listGames, localInfo, type Game } from "../lib/library";
+  import { remember, shapeOf } from "../lib/boxart.svelte";
 
   let { id }: { id: string } = $props();
   let game = $state<Game | null>(null);
@@ -26,8 +27,8 @@
   {#if game && c}
     <main>
       <div class="col-art">
-        <div class="art cover">
-          {#if game.cover && !broken}<img class="cover" src={game.cover} alt="" onerror={() => (broken = true)} />{:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 14 : 22}px;line-height:1.3">{game.title}</span>{/if}
+        <div class="art big-art" style="aspect-ratio:{shapeOf(game.id)}">
+          {#if game.cover && !broken}<img class="cover" src={game.cover} alt="" onload={(e) => remember(game!.id, e.currentTarget)} onerror={() => (broken = true)} />{:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 14 : 22}px;line-height:1.3">{game.title}</span>{/if}
         </div>
         <dl>
           <dt>Console</dt><dd>{c.name}</dd>
@@ -78,7 +79,7 @@
   .page { height: 100%; display: flex; flex-direction: column; background: radial-gradient(ellipse at 0% 0%, #4a1c1e 0%, var(--bg) 45%); }
   main { flex: 1; display: flex; gap: 40px; padding: 28px 48px; min-height: 0; overflow-y: auto; }
   .col-art { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px; }
-  .cover { height: 342px; padding: 16px; border-radius: 14px; }
+  .big-art { width: 100%; padding: 16px; border-radius: 14px; }
   dl { display: grid; grid-template-columns: 68px 1fr; gap: 8px 12px; margin: 0; font-size: 13px; }
   dt { color: var(--muted-2); }
   dd { margin: 0; color: var(--text-2); }

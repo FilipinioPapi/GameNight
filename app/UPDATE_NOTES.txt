@@ -1,3 +1,2 @@
-Updates itself from now on
-Real Discord sign-in
-Your RomM games in the library
+Box art shows in full
+Covers keep their real box shape

@@ -6,6 +6,7 @@
   import Avatar from "../components/Avatar.svelte";
   import Controllers from "./Controllers.svelte";
   import { app, type Route } from "../lib/state.svelte";
+  import { shortAddress } from "../lib/account";
   import { CONSOLES, consoleById, type ConsoleId } from "../lib/consoles";
   import { LAYOUTS } from "../lib/controllers";
   import { PAD_NAME } from "../lib/pads";
@@ -50,11 +51,7 @@
     used = await folderSize(app.settings.romsFolder);
     confirmClear = false;
   }
-  function signOut() {
-    app.user = null;
-    app.history = [];
-    app.route = { name: "login" };
-  }
+  const signOut = () => app.signOut();
 </script>
 
 {#if tab === "controllers"}
@@ -164,6 +161,7 @@
               <div class="t"><b>{app.user?.name}</b><span>Signed in with Discord. Game Night only sees your Discord name and picture.</span></div>
               <button class="btn small" onclick={signOut}>Sign out</button>
             </div>
+            {#if app.server && app.server !== "preview"}<div class="row"><div class="t"><b>Game Night server</b><span>{shortAddress(app.server)}</span></div></div>{/if}
           </div>
         {/if}
       </section>

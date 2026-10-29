@@ -4,13 +4,17 @@
   import PadGlyph from "../components/PadGlyph.svelte";
   import { app } from "../lib/state.svelte";
   import { consoleById } from "../lib/consoles";
-  import { listGames, localInfo, type Game } from "../lib/library";
+  import { loadLibrary, localInfo, type Game, type Library } from "../lib/library";
   import { quitApp } from "../lib/native";
   import { VERSION } from "../lib/version";
 
   let games = $state<Game[]>([]);
+  let lib = $state<Library | null>(null);
   $effect(() => {
-    listGames().then((g) => (games = g));
+    loadLibrary().then((l) => {
+      lib = l;
+      games = l.games;
+    });
   });
   const onPC = $derived(games.filter((g) => localInfo(g.id).onPC).length);
   // A wall of game tiles behind the menu, like the mockup.
@@ -53,7 +57,9 @@
   </div>
 
   <div class="top-right">
-    <span class="chip-pill"><span class="dot"></span>Preview: sample games</span>
+    {#if lib?.source === "sample"}<span class="chip-pill"><span class="dot"></span>Preview: sample games</span>
+    {:else if lib?.error}<span class="chip-pill"><span class="dot"></span>{lib.error}</span>
+    {:else if lib?.source === "offline"}<span class="chip-pill"><span class="dot"></span>Offline: showing the last list</span>{/if}
     {#if app.user}<span class="chip-pill user"><Avatar name={app.user.name} src={app.user.avatar} />{app.user.name}</span>{/if}
   </div>
 

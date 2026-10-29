@@ -4,6 +4,7 @@
 import type { ConsoleId } from "./consoles";
 import { LAYOUTS } from "./controllers";
 import type { PadInput, PadType } from "./pads";
+import * as account from "./account";
 import { DEFAULT_CONSOLE, DEFAULTS, loadSettings, saveSettings, type ConsoleSettings, type Settings } from "./settings";
 
 export type Route =
@@ -14,7 +15,8 @@ export type Route =
   | { name: "game"; id: string }
   | { name: "settings"; tab: "controllers" | "screen" | "consoles" | "storage" | "account"; console: ConsoleId };
 
-export interface User { id: string; name: string; avatar?: string; }
+export type { User } from "./account";
+type User = account.User;
 
 class AppState {
   route = $state<Route>({ name: "login" });
@@ -26,9 +28,53 @@ class AppState {
   /** The pad type the controller screen is showing (follows the plugged-in pad unless changed). */
   viewPad = $state<PadType>("xbox");
 
+  server = $state("");
+  /** Sign-in in progress: "waiting" while the browser is open, or a message if it went wrong. */
+  signIn = $state<{ waiting: boolean; error: string }>({ waiting: false, error: "" });
+
   async init() {
     this.settings = await loadSettings();
+    try {
+      const st = await account.status();
+      this.server = st.server;
+      if (st.user) this.signedIn(st.user);
+      await account.listen({
+        signedIn: (u) => this.signedIn(u),
+        failed: (msg) => (this.signIn = { waiting: false, error: msg }),
+        signedOut: () => this.signedOut(),
+      });
+    } catch (e) {
+      console.error("Couldn't check sign-in", e);
+    }
     this.ready = true;
+  }
+
+  /** After Discord says yes (or on start-up, if you signed in before). */
+  signedIn(u: User) {
+    this.user = u;
+    this.signIn = { waiting: false, error: "" };
+    this.history = [];
+    this.route = this.settings.firstRunDone ? { name: "menu" } : { name: "firstrun", step: 2 };
+  }
+
+  signedOut() {
+    this.user = null;
+    this.history = [];
+    this.route = { name: "login" };
+  }
+
+  async startSignIn() {
+    this.signIn = { waiting: true, error: "" };
+    try {
+      await account.signIn();
+    } catch (e) {
+      this.signIn = { waiting: false, error: String(e) };
+    }
+  }
+
+  async signOut() {
+    await account.signOut();
+    this.signedOut();
   }
 
   go(r: Route) {

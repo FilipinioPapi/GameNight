@@ -6,6 +6,7 @@
   import Library from "./screens/Library.svelte";
   import GamePage from "./screens/GamePage.svelte";
   import Settings from "./screens/Settings.svelte";
+  import UpdateBox from "./components/UpdateBox.svelte";
 
   const r = $derived(app.route);
 </script>
@@ -18,4 +19,5 @@
   {:else if r.name === "game"}<GamePage id={r.id} />
   {:else if r.name === "settings"}<Settings tab={r.tab} console={r.console} />
   {/if}
+  <UpdateBox />
 {/if}

@@ -7,6 +7,7 @@
   import { loadLibrary, localInfo, type Game, type Library } from "../lib/library";
   import { quitApp } from "../lib/native";
   import { VERSION } from "../lib/version";
+  import { updates } from "../lib/update.svelte";
 
   let games = $state<Game[]>([]);
   let lib = $state<Library | null>(null);
@@ -19,6 +20,10 @@
   const onPC = $derived(games.filter((g) => localInfo(g.id).onPC).length);
   // A wall of game tiles behind the menu, like the mockup.
   const wall = $derived(games.slice(0, 12));
+
+  $effect(() => {
+    void updates.check();
+  });
 
   let playBtn: HTMLButtonElement;
   $effect(() => playBtn?.focus());
@@ -57,6 +62,7 @@
   </div>
 
   <div class="top-right">
+    {#if updates.info && updates.phase !== "none"}<button class="chip-pill update" onclick={() => updates.open()}><span class="dot"></span>Update ready: v{updates.info.version}</button>{/if}
     {#if lib?.source === "sample"}<span class="chip-pill"><span class="dot"></span>Preview: sample games</span>
     {:else if lib?.error}<span class="chip-pill"><span class="dot"></span>{lib.error}</span>
     {:else if lib?.source === "offline"}<span class="chip-pill"><span class="dot"></span>Offline: showing the last list</span>{/if}
@@ -100,6 +106,9 @@
   .top-right { position: absolute; right: 44px; top: 36px; display: flex; align-items: center; gap: 12px; }
   .chip-pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); padding: 8px 14px; border-radius: 999px; background: rgba(30, 20, 21, 0.92); border: 1px solid var(--line); }
   .chip-pill.user { padding: 5px 14px 5px 5px; font-size: 14px; gap: 10px; }
+  .update { cursor: pointer; border-color: var(--amber); color: #fff; font-weight: 600; animation: glow 1.6s ease-in-out infinite; }
+  .update:hover, .update:focus-visible { background: #2a1f14; }
+  @keyframes glow { 50% { box-shadow: 0 0 12px 1px rgba(242, 180, 90, 0.45); } }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
 
   footer { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: flex; align-items: center; gap: 28px; padding: 0 80px; border-top: 1px solid var(--line-soft); background: rgba(18, 12, 12, 0.92); font-size: 13px; color: var(--muted); }

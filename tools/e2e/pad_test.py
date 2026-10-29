@@ -89,9 +89,17 @@ def step(pad, name, button, index, want_screen, want_focus=None):
 def main():
     SHOTS.mkdir(parents=True, exist_ok=True)
     say("plugging in two pretend Xbox pads (first one stays idle, like Jayden's Razer keyboard)")
-    dead = vg.VX360Gamepad(vid=0x046D, pid=0xC21D)
+    def plug(vid, pid):
+        # Windows' Xbox 360 driver may only accept the standard Xbox 360 id (045e:028e).
+        try:
+            return vg.VX360Gamepad(vid=vid, pid=pid)
+        except RuntimeError as e:
+            say(f"  couldn't plug a pad with id {vid:04x}:{pid:04x} ({e}); using 045e:028e")
+            return vg.VX360Gamepad()
+
+    dead = plug(0x046D, 0xC21D)
     time.sleep(1)
-    pad = vg.VX360Gamepad(vid=0x045E, pid=0x02FF)
+    pad = plug(0x045E, 0x02FF)
     time.sleep(2)
     say(f"pads plugged: idle one index {dead.get_index()}, pressed one index {pad.get_index()}")
 

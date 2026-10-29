@@ -79,17 +79,27 @@ jobs:
           if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Get-Content $log -Tail 60; throw "ViGEmBus didn't install" }
           $env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = 'true'
           pip install --no-deps $tgz
-          # Evidence first: is Windows' own Xbox 360 pad driver (xusb22) on this machine, and what did the bus make?
-          Write-Host "--- Xbox 360 pad driver files:"
-          Get-ChildItem C:\Windows\INF\xusb22.inf, C:\Windows\System32\drivers\xusb22.sys -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.FullName)" }
-          Get-ChildItem C:\Windows\System32\DriverStore\FileRepository -Filter 'xusb22*' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  store: $($_.Name)" }
-          Write-Host "--- Windows version: $((Get-CimInstance Win32_OperatingSystem).Caption)"
-          python -c "import vgamepad; p = vgamepad.VDS4Gamepad(); print('pretend PlayStation pad plugged in OK')"
-          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend Xbox pad plugged in, index', p.get_index())"
+          # Windows Server (this CI machine) has no Xbox 360 pad driver, so a pretend Xbox pad can't start
+          # (measured 2026-10-29: no xusb22 files, VIGEM_ERROR_TARGET_NOT_PLUGGED_IN, PlayStation pad fine).
+          # Add Microsoft's own one from the Microsoft Update Catalog ("XBOX 360 Controller For Windows",
+          # 2009-08-12), checked against its fixed fingerprint.
+          $cab = Join-Path $env:RUNNER_TEMP 'xusb21.cab'
+          Invoke-WebRequest https://catalog.s.download.windowsupdate.com/msdownload/update/driver/drvs/2013/01/20289581_7385d6be1b053a35955a910f11436729a1d4cb56.cab -OutFile $cab
+          $sha = (Get-FileHash $cab -Algorithm SHA256).Hash.ToLower()
+          if ($sha -ne '49bd427e53f5c63a1a03b791cf6deeefe3a2ac5700dc4db5e39fad98f3070fa6') { throw "Xbox 360 driver download doesn't match its fingerprint ($sha)" }
+          $drv = Join-Path $env:RUNNER_TEMP 'xusb21'
+          New-Item -ItemType Directory $drv -Force | Out-Null
+          expand.exe $cab -F:* $drv | Out-Null
+          Get-ChildItem $drv -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
+          pnputil /add-driver (Join-Path $drv 'xusb21.inf') /install
+          Write-Host "pnputil exit code $LASTEXITCODE"
+          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend Xbox pad (045e:028e) plugged in, index', p.get_index())"
           $xboxOk = $LASTEXITCODE -eq 0
+          python -c "import vgamepad; p = vgamepad.VX360Gamepad(vid=0x045E, pid=0x02FF); print('pretend Xbox pad with 045e:02ff plugged in, index', p.get_index())"
           Write-Host "--- devices the bus made:"
           pnputil /enum-devices /connected | Select-String -Context 0,6 -Pattern 'ViGEm|Xbox|XUSB|USB\\VID_045E|Gamepad' | ForEach-Object { Write-Host $_ }
           if (-not $xboxOk) { throw "the pretend Xbox pad couldn't be plugged in" }
+          exit 0
       - run: npm ci
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         run: python ../tools/player/fetch_player.py src-tauri/player

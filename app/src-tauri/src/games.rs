@@ -436,6 +436,11 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         if settings.picture == "scanlines" {
             cmd.arg("--set-shader").arg(player.join("shaders").join("scanlines.slangp"));
         }
+        // CI's Windows game test only (the "e2e" build): play 600 frames (10 seconds at real speed), then quit.
+        #[cfg(feature = "e2e")]
+        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
+            cmd.arg("--max-frames=600");
+        }
         cmd.arg(&rom);
         cmd.spawn().map_err(|_| "Couldn't start the game.".to_string())
     })();
@@ -451,17 +456,45 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
         *handle.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // No sound this time? Try the next way next time.
-        let silent = sound < SOUND_WAYS.len() && fs::read_to_string(&log_file).map(|l| sound_failed(&l)).unwrap_or(false);
-        if silent {
+        let log = fs::read_to_string(&log_file).ok();
+        let silent = log.as_deref().map(sound_failed).unwrap_or(false);
+        if silent && sound < SOUND_WAYS.len() {
             let _ = fs::write(&sound_file, (sound + 1).to_string());
+        } else if !silent && log.is_some() && sound == SOUND_WAYS.len() {
+            // The last resort had sound after all (e.g. speakers plugged back in): back to normal pacing.
+            let _ = fs::write(&sound_file, (SOUND_WAYS.len() - 1).to_string());
         }
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
+        #[cfg(feature = "e2e")]
+        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
+            let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file });
+            let _ = fs::write(root.join("e2e-result.json"), result.to_string());
+            handle.exit(0);
+        }
         if let Some(w) = handle.get_webview_window("main") {
             let _ = w.unminimize();
             let _ = w.set_focus();
         }
     });
     Ok(())
+}
+
+/// CI's Windows game test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=play the app starts
+/// game "1" from the Game Night folder in GAMENIGHT_E2E_ROOT exactly as the Play button would.
+#[cfg(feature = "e2e")]
+pub fn e2e_play<R: Runtime>(app: AppHandle<R>) {
+    if std::env::var("GAMENIGHT_E2E").as_deref() != Ok("play") {
+        return;
+    }
+    let root = std::env::var("GAMENIGHT_E2E_ROOT").unwrap_or_default();
+    let settings: PlaySettings = serde_json::from_value(serde_json::json!({
+        "screen": "4:3", "picture": "scanlines", "rewind": false, "fastForward": false, "showFps": true
+    }))
+    .expect("settings");
+    if let Err(e) = play_game(app.clone(), root.clone(), "1".into(), settings) {
+        let _ = fs::write(PathBuf::from(&root).join("e2e-result.json"), serde_json::json!({ "error": e }).to_string());
+        app.exit(4);
+    }
 }
 
 #[cfg(test)]

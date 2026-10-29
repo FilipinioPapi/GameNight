@@ -207,6 +207,10 @@ pub fn run() {
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
             let _ = app.deep_link().register_all();
             pads::start(app.handle().clone());
+            #[cfg(feature = "e2e")]
+            updater::e2e_autoupdate(app.handle().clone());
+            #[cfg(feature = "e2e")]
+            games::e2e_play(app.handle().clone());
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for link in event.urls() {

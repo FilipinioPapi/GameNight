@@ -1,6 +1,6 @@
 [package]
 name = "game-night"
-version = "0.3.1"
+version = "0.3.2"
 description = "Game Night: play Jayden's retro game library with friends"
 edition = "2021"
 publish = false
@@ -29,6 +29,10 @@ serde_json = "1"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+
+[features]
+# Only for CI's Windows update test: lets a test server and test key stand in. Never in shipped builds.
+e2e = []
 
 [profile.release]
 codegen-units = 1

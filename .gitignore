@@ -5,3 +5,8 @@ app/src-tauri/gen/
 *.log
 .DS_Store
 .env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

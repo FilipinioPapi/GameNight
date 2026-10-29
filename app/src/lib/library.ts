@@ -1,8 +1,8 @@
-// Where the game list comes from.
-// Milestone 1 uses a built-in sample list. Milestone 3 swaps in the Game Night server,
-// which reads Jayden's RomM library. Screens only ever talk to this file.
+// Where the game list comes from: the Game Night server (which reads Jayden's RomM library),
+// or a built-in sample list in the screen preview. Screens only ever talk to this file.
 
 import type { ConsoleId } from "./consoles";
+import { inTauri } from "./settings";
 
 export interface Game {
   id: string;
@@ -55,12 +55,38 @@ const SAMPLE_LOCAL: Record<string, LocalInfo> = {
   "snes-chrono": { onPC: false, downloading: 0.6 },
 };
 
-export async function listGames(): Promise<Game[]> {
-  return SAMPLE;
+export type Source = "sample" | "server" | "offline";
+export interface Library { games: Game[]; source: Source; error?: string; }
+
+let cached: { at: number; lib: Promise<Library> } | null = null;
+
+async function fromServer(): Promise<Library> {
+  const { invoke, convertFileSrc } = await import("@tauri-apps/api/core");
+  try {
+    const r = await invoke<{ games: (Game & { hasCover?: boolean })[]; offline: boolean }>("fetch_games");
+    const games = (r.games ?? []).map(({ hasCover, ...g }) => ({ ...g, cover: hasCover ? convertFileSrc(g.id, "gncover") : undefined }));
+    return { games, source: r.offline ? "offline" : "server" };
+  } catch (e) {
+    cached = null;
+    const msg = String(e);
+    return { games: [], source: "offline", error: msg.startsWith("server-") ? "The game library is offline right now." : "Couldn't reach the Game Night server." };
+  }
 }
 
+/** The whole library. Asked for again at most once a minute. */
+export function loadLibrary(): Promise<Library> {
+  if (!inTauri) return Promise.resolve({ games: SAMPLE, source: "sample" });
+  if (!cached || Date.now() - cached.at > 60_000) cached = { at: Date.now(), lib: fromServer() };
+  return cached.lib;
+}
+
+export async function listGames(): Promise<Game[]> {
+  return (await loadLibrary()).games;
+}
+
+/** Downloaded or not. Real downloads arrive in milestone 4; the preview pretends a few are. */
 export function localInfo(id: string): LocalInfo {
-  return SAMPLE_LOCAL[id] ?? { onPC: false };
+  return (inTauri ? undefined : SAMPLE_LOCAL[id]) ?? { onPC: false };
 }
 
 export function formatSize(bytes: number): string {

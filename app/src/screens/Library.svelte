@@ -27,6 +27,8 @@
 
   const pick = (c: ConsoleId | "all") => (app.route = { name: "library", console: c });
   const open = (g: Game) => app.go({ name: "game", id: g.id });
+  // Covers that failed to load fall back to the title.
+  let broken = $state<Record<string, boolean>>({});
 </script>
 
 <div class="page">
@@ -64,7 +66,7 @@
       {#if featured && !search}
         {@const fc = consoleById(featured.console)}
         <div class="hero">
-          <div class="art hero-art"><span class={fc.font} style="font-size:{fc.id === 'nes' ? 8 : 12}px;line-height:1.3">{featured.title}</span></div>
+          <div class="art hero-art">{#if featured.cover && !broken[featured.id]}<img class="cover" src={featured.cover} alt="" onerror={() => (broken[featured.id] = true)} />{:else}<span class={fc.font} style="font-size:{fc.id === 'nes' ? 8 : 12}px;line-height:1.3">{featured.title}</span>{/if}</div>
           <div class="hero-text">
             <div class="kicker">{localInfo(featured.id).onPC ? "READY ON THIS PC" : "IN THE LIBRARY"}</div>
             <div class={fc.font} style="font-size:{fc.id === 'nes' ? 24 : 36}px;line-height:1.1">{featured.title}</div>
@@ -102,9 +104,10 @@
         {#each shown as g (g.id)}
           {@const c = consoleById(g.console)}
           {@const local = localInfo(g.id)}
+          {@const art = g.cover && !broken[g.id]}
           <button class="card" onclick={() => open(g)}>
             <div class="art">
-              {#if g.cover}<img class="cover" src={g.cover} alt="" />{/if}
+              {#if art}<img class="cover" src={g.cover} alt="" onerror={() => (broken[g.id] = true)} />{/if}
               {#if local.downloading !== undefined}
                 <div class="dl"><div style="width:{local.downloading * 100}%"></div></div>
               {:else if local.onPC}
@@ -112,7 +115,7 @@
               {:else}
                 <span class="state" title="Download to play"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E3D2D3" stroke-width="2.5" aria-hidden="true"><path d="M12 4v12M6 11l6 6 6-6M5 20h14" /></svg></span>
               {/if}
-              <span class={c.font} style="font-size:{c.id === 'nes' ? 10 : 15}px;line-height:1.2;position:relative">{g.title}</span>
+              {#if !art}<span class={c.font} style="font-size:{c.id === 'nes' ? 10 : 15}px;line-height:1.2;position:relative">{g.title}</span>{/if}
             </div>
             <div class="meta">
               {#if isCoop(g) && c.coop}<span class="badge coop">Co-op</span>{/if}

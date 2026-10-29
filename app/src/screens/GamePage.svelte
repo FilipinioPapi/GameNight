@@ -18,6 +18,7 @@
   function play() {
     notice = "Playing switches on in milestone 4, once games come from your RomM library. This build is a preview of the screens.";
   }
+  let broken = $state(false);
 </script>
 
 <div class="page">
@@ -26,7 +27,7 @@
     <main>
       <div class="col-art">
         <div class="art cover">
-          {#if game.cover}<img class="cover" src={game.cover} alt="" />{:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 14 : 22}px;line-height:1.3">{game.title}</span>{/if}
+          {#if game.cover && !broken}<img class="cover" src={game.cover} alt="" onerror={() => (broken = true)} />{:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 14 : 22}px;line-height:1.3">{game.title}</span>{/if}
         </div>
         <dl>
           <dt>Console</dt><dd>{c.name}</dd>

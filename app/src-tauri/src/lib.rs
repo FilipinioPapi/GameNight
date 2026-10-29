@@ -1,10 +1,13 @@
 //! Game Night's Windows side: the window, plus a few small jobs the screens can't do
-//! themselves (finding drives, measuring and clearing the games folder).
+//! themselves (finding drives, measuring and clearing the games folder, and signing in:
+//! see account.rs).
 //!
 //! Safety rules for files:
 //! - Game Night only ever works inside its own folder, named "Game Night".
 //! - "Clear my games" deletes only the console folders Game Night made in there
 //!   (nes, snes, ...), never anything else, and never follows shortcuts/links out of it.
+
+mod account;
 
 use serde::Serialize;
 use std::fs;
@@ -162,22 +165,59 @@ fn is_ours(p: &Path) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use tauri::Manager;
     tauri::Builder::default()
-        // Only one Game Night window at a time: opening it again focuses the first one.
+        // Only one Game Night window at a time: opening it again (or a gamenight:// link)
+        // goes to the first one.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            use tauri::Manager;
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
         }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .manage(account::Account::default())
+        // Box art: the window may only show pictures from here, which only fetches from our server.
+        .register_asynchronous_uri_scheme_protocol("gncover", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                let resp = match account::cover(&app, &path).await {
+                    Some((ctype, body)) => tauri::http::Response::builder()
+                        .header("Content-Type", ctype)
+                        .header("Cache-Control", "max-age=86400")
+                        .body(body),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(resp.expect("response"));
+            });
+        })
+        .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            // The installer registers gamenight:// links; this covers test builds.
+            #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
+            let _ = app.deep_link().register_all();
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for link in event.urls() {
+                    handle.state::<account::Account>().handle_link(&handle, &link);
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             suggest_folders,
             games_folder,
             folder_size,
-            clear_games
+            clear_games,
+            account::account_status,
+            account::set_server,
+            account::sign_in,
+            account::sign_out,
+            account::fetch_games
         ])
         .run(tauri::generate_context!())
         .expect("Game Night couldn't start");

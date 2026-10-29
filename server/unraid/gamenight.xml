@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>GameNight</Name>
+  <Repository>ghcr.io/filipiniopapi/gamenight-server:latest</Repository>
+  <Registry>https://github.com/FilipinioPapi/GameNight/pkgs/container/gamenight-server</Registry>
+  <Network>romm</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Overview>Game Night server: Discord sign-in (Game Night role only) and the game list from RomM, for the Game Night app. Read-only to RomM.</Overview>
+  <Category>GameServers:</Category>
+  <WebUI></WebUI>
+  <ExtraParams>--read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL</ExtraParams>
+  <Config Name="Port" Target="8094" Default="8094" Mode="tcp" Description="The port the Game Night app talks to" Type="Port" Display="always" Required="true" Mask="false">8094</Config>
+  <Config Name="Public address" Target="PUBLIC_URL" Default="http://192.168.1.33:8094" Mode="" Description="How the app reaches this server. Your LAN address for now; later https://gamenight.jjsnas.xyz" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.33:8094</Config>
+  <Config Name="Discord client ID" Target="DISCORD_CLIENT_ID" Default="" Mode="" Description="From the Discord Developer Portal, your Game Night app, OAuth2 page" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Discord client secret" Target="DISCORD_CLIENT_SECRET" Default="" Mode="" Description="Same page, Reset Secret" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Discord server ID" Target="DISCORD_GUILD_ID" Default="" Mode="" Description="Right-click your server icon, Copy Server ID" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Game Night role ID" Target="DISCORD_ROLE_ID" Default="" Mode="" Description="Server Settings, Roles, right-click Game Night, Copy Role ID" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="RomM address" Target="ROMM_URL" Default="http://romm:8080" Mode="" Description="RomM on the private romm network" Type="Variable" Display="advanced" Required="true" Mask="false">http://romm:8080</Config>
+  <Config Name="RomM user" Target="ROMM_USER" Default="gamenight" Mode="" Description="The Viewer user made in RomM for Game Night" Type="Variable" Display="always" Required="false" Mask="false">gamenight</Config>
+  <Config Name="RomM password" Target="ROMM_PASSWORD" Default="" Mode="" Description="That user's password" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="RomM token" Target="ROMM_TOKEN" Default="" Mode="" Description="Optional instead of user/password: a read-only RomM client token" Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="Days before sign-in again" Target="SESSION_DAYS" Default="30" Mode="" Description="An unused PC has to sign in again after this many days" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="Log level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="INFO normally, DEBUG when troubleshooting" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/gamenight" Mode="rw" Description="Who has signed in (only fingerprints of sign-in passes are kept)" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/gamenight</Config>
+</Container>

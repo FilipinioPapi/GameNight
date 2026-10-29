@@ -8,6 +8,7 @@
 //!   (nes, snes, ...), never anything else, and never follows shortcuts/links out of it.
 
 mod account;
+mod covers;
 mod updater;
 
 use serde::Serialize;
@@ -187,7 +188,7 @@ pub fn run() {
             let app = ctx.app_handle().clone();
             let path = request.uri().path().to_string();
             tauri::async_runtime::spawn(async move {
-                let resp = match account::cover(&app, &path).await {
+                let resp = match covers::cover(&app, &path).await {
                     Some((ctype, body)) => tauri::http::Response::builder()
                         .header("Content-Type", ctype)
                         .header("Cache-Control", "max-age=86400")
@@ -211,6 +212,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            covers::cover_cache_size,
+            covers::clear_cover_cache,
             suggest_folders,
             games_folder,
             folder_size,

@@ -207,23 +207,50 @@ pub async fn install_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State
     run_installer(&app, &file)
 }
 
+/// The helper that installs an update after Game Night has closed. It writes every step to
+/// update\\update.log, so a failed update can be explained, and always reopens Game Night.
+#[cfg(windows)]
+const HELPER: &str = r#"param([int]$AppPid, [string]$Setup, [string]$Exe, [string]$Log)
+function Log($m) { Add-Content -Path $Log -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m) }
+try {
+  Log "waiting for Game Night ($AppPid) to close"
+  $t = 0
+  while ((Get-Process -Id $AppPid -ErrorAction SilentlyContinue) -and $t -lt 60) { Start-Sleep -Milliseconds 500; $t++ }
+  Start-Sleep -Seconds 1
+  Log ("old version: " + (Get-Item $Exe).VersionInfo.ProductVersion)
+  for ($try = 1; $try -le 2; $try++) {
+    $p = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru -Wait -ErrorAction Stop
+    Log "installer finished with code $($p.ExitCode) (try $try)"
+    if ($p.ExitCode -eq 0) { break }
+    Start-Sleep -Seconds 3
+  }
+  Log ("now installed: " + (Get-Item $Exe).VersionInfo.ProductVersion)
+} catch {
+  Log ("install failed: " + $_)
+}
+Start-Process -FilePath $Exe
+Log "reopened Game Night"
+"#;
+
 #[cfg(windows)]
 fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
-    const DETACHED: u32 = 0x0000_0008 | 0x0800_0000; // DETACHED_PROCESS | CREATE_NO_WINDOW
+    const NO_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
+    const BREAKAWAY: u32 = 0x0100_0000; // CREATE_BREAKAWAY_FROM_JOB: keep running after Game Night closes
     let exe = std::env::current_exe().map_err(|_| "Couldn't find Game Night's own file.")?;
-    let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
-    // Wait for Game Night to close, install quietly, then open the new version.
-    let script = format!(
-        "Start-Sleep -Seconds 2; Start-Process -FilePath '{}' -ArgumentList '/S' -Wait; Start-Process -FilePath '{}'",
-        q(setup),
-        q(&exe)
-    );
-    std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
-        .creation_flags(DETACHED)
-        .spawn()
-        .map_err(|_| "Couldn't start the installer.")?;
+    let dir = setup.parent().ok_or("No folder for the update.")?;
+    let script = dir.join("apply.ps1");
+    std::fs::write(&script, HELPER).map_err(|_| "Couldn't prepare the installer.")?;
+    let pid = std::process::id().to_string();
+    let log = dir.join("update.log");
+    let args: [&std::ffi::OsStr; 16] = [
+        "-NoProfile".as_ref(), "-NonInteractive".as_ref(), "-ExecutionPolicy".as_ref(), "Bypass".as_ref(),
+        "-WindowStyle".as_ref(), "Hidden".as_ref(), "-File".as_ref(), script.as_os_str(),
+        "-AppPid".as_ref(), pid.as_ref(), "-Setup".as_ref(), setup.as_os_str(),
+        "-Exe".as_ref(), exe.as_os_str(), "-Log".as_ref(), log.as_os_str(),
+    ];
+    let start = |flags: u32| std::process::Command::new("powershell.exe").args(args).creation_flags(flags).spawn();
+    start(NO_WINDOW | BREAKAWAY).or_else(|_| start(NO_WINDOW)).map_err(|_| "Couldn't start the installer.")?;
     app.exit(0);
     Ok(())
 }

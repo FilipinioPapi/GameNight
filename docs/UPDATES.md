@@ -16,6 +16,9 @@ signing key.
 4. Every Game Night app checks `https://updates.jjsnas.xyz/gamenight/latest.json` when it opens and on the
    main menu (at most every 30 minutes). The menu then shows **Update ready**, and one click downloads,
    checks, installs quietly and reopens.
+5. The install runs from a small helper script after Game Night closes. It writes each step to
+   `%LOCALAPPDATA%\xyz.jjsnas.gamenight\update\update.log` (old version, installer result, new version), which
+   is the first thing to read if an update doesn't take.
 
 The install link for friends is always the newest version:
 `https://updates.jjsnas.xyz/gamenight/v<version>/GameNightSetup.exe`.

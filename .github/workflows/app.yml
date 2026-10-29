@@ -61,6 +61,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+      # A pretend Xbox controller for the tests further down, on this CI machine only (never on anyone's PC):
+      # the ViGEmBus driver plus the vgamepad Python package that presses its buttons. Both come from
+      # vgamepad 0.2.0, checked against its fixed fingerprint.
+      - name: Add a pretend Xbox controller (ViGEmBus)
+        shell: pwsh
+        run: |
+          $tgz = Join-Path $env:RUNNER_TEMP 'vgamepad-0.2.0.tar.gz'
+          Invoke-WebRequest https://files.pythonhosted.org/packages/06/a5/990701a89ea8d7528a269c2be1ba71d888de38a762a1b0f8d8eae4c2be62/vgamepad-0.2.0.tar.gz -OutFile $tgz
+          $sha = (Get-FileHash $tgz -Algorithm SHA256).Hash.ToLower()
+          if ($sha -ne '6ac247e6441e194a0277b46f6f9abc02d7995de5ed8dc495b67eddd214364a88') { throw "vgamepad download doesn't match its fingerprint ($sha)" }
+          tar -xzf $tgz -C $env:RUNNER_TEMP
+          $msi = Join-Path $env:RUNNER_TEMP 'vgamepad-0.2.0\vgamepad\win\vigem\install\x64\ViGEmBusSetup_x64.msi'
+          $log = Join-Path $env:RUNNER_TEMP 'vigem-install.log'
+          $p = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`"" -Wait -PassThru
+          Write-Host "ViGEmBus installer exit code $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Get-Content $log -Tail 60; throw "ViGEmBus didn't install" }
+          $env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = 'true'
+          pip install --no-deps $tgz
+          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend pad plugged in, index', p.get_index())"
       - run: npm ci
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         run: python ../tools/player/fetch_player.py src-tauri/player
@@ -79,24 +98,6 @@ jobs:
           npx tauri build --features e2e --config "$env:RUNNER_TEMP/e2e.conf.json"
           Copy-Item (Get-ChildItem src-tauri/target/release/bundle/nsis/*_0.0.1_*-setup.exe).FullName "$env:RUNNER_TEMP/old-setup.exe"
           Remove-Item src-tauri/target/release/bundle/nsis/*_0.0.1_*-setup.exe
-      # A pretend Xbox controller for the tests below, on this CI machine only (never on anyone's PC):
-      # the ViGEmBus driver plus the vgamepad Python package that presses its buttons. Both come from
-      # vgamepad 0.2.0, checked against its fixed fingerprint.
-      - name: Add a pretend Xbox controller (ViGEmBus)
-        shell: pwsh
-        run: |
-          $tgz = "$env:RUNNER_TEMP/vgamepad-0.2.0.tar.gz"
-          Invoke-WebRequest https://files.pythonhosted.org/packages/06/a5/990701a89ea8d7528a269c2be1ba71d888de38a762a1b0f8d8eae4c2be62/vgamepad-0.2.0.tar.gz -OutFile $tgz
-          $sha = (Get-FileHash $tgz -Algorithm SHA256).Hash.ToLower()
-          if ($sha -ne '6ac247e6441e194a0277b46f6f9abc02d7995de5ed8dc495b67eddd214364a88') { throw "vgamepad download doesn't match its fingerprint ($sha)" }
-          tar -xzf $tgz -C $env:RUNNER_TEMP
-          $msi = "$env:RUNNER_TEMP/vgamepad-0.2.0/vgamepad/win/vigem/install/x64/ViGEmBusSetup_x64.msi"
-          $p = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$env:RUNNER_TEMP/vigem-install.log`"" -Wait -PassThru
-          Write-Host "ViGEmBus installer exit code $($p.ExitCode)"
-          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Get-Content "$env:RUNNER_TEMP/vigem-install.log" -Tail 60; throw "ViGEmBus didn't install" }
-          $env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = 'true'
-          pip install --no-deps $tgz
-          python -c "import vgamepad; p = vgamepad.VX360Gamepad(); print('pretend pad plugged in, index', p.get_index())"
       - name: Test on Windows (install, play a game, controller in the menus, update, reopen)
         shell: pwsh
         run: ../tools/e2e/windows_test.ps1 -OldSetup "$env:RUNNER_TEMP/old-setup.exe" -NewSetup "$env:RUNNER_TEMP/new-setup.exe" -NewVersion $env:GN_VERSION -Tools (Resolve-Path ../tools/e2e)

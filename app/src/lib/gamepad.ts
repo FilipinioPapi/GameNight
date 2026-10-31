@@ -96,6 +96,17 @@ export function useScreenButtons(fn: ScreenButtons | null) {
   screenButtons = fn;
 }
 
+/**
+ * The pad belongs to a game that's running next to the menus (Couch Play's lobby while you play):
+ * the menus ignore every press and stick push, and only this function sees the buttons each frame
+ * (to spot a held combination that hands the pad back). null = the menus use the pad again.
+ */
+type PadLock = (buttons: boolean[]) => void;
+let padLock: PadLock | null = null;
+export function setPadLock(fn: PadLock | null) {
+  padLock = fn;
+}
+
 export type Dir = "up" | "down" | "left" | "right";
 
 /** What the controller can move to: everything clickable that's showing, only inside an open pop-up. */
@@ -357,6 +368,15 @@ function tick() {
     const type = padTypeFromId(`${pad.id} ${pad.usb ?? ""}`);
     app.pad = { connected: true, type, name: pad.id, usb: pad.usb ?? "" };
     app.viewPad = type;
+  }
+  if (padLock) {
+    padLock(pad.buttons);
+    // Remember what's held, so letting go (or still holding) after the lock ends isn't a new press.
+    prevButtons = [...pad.buttons];
+    prevAxes = [...pad.axes];
+    held = null;
+    requestAnimationFrame(tick);
+    return;
   }
   const now = performance.now();
   pad.buttons.forEach((down, i) => {

@@ -41,7 +41,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn note<R: Runtime>(app: &AppHandle<R>, line: &str) {
+pub fn note<R: Runtime>(app: &AppHandle<R>, line: &str) {
     use std::io::Write;
     let mut g = lock(&LOG);
     if g.is_none() {

@@ -58,13 +58,16 @@ def _children(h):
 
 
 def main_window(pid):
-    """Game Night's main window: its biggest visible top-level window."""
+    """Game Night's main window: its biggest visible top-level window. The in-game menu is a second window of
+    the same size over a full screen game, so a window holding the game (RetroArch child) wins a tie."""
     best, area = None, -1
     for h in _tops():
         if _pid(h) == pid and user32.IsWindowVisible(h):
             x, y, w, hh = _rect(h)
-            if w * hh > area:
-                best, area = h, w * hh
+            holds_game = any(_class(c) == "RetroArch" for c in _children(h))
+            score = w * hh * 2 + (1 if holds_game else 0)
+            if score > area:
+                best, area = h, score
     return best
 
 

@@ -435,6 +435,7 @@ fn sync_bezel<R: Runtime>(app: &AppHandle<R>) {
         l.overlay_page = want;
         l.cmd_port
     };
+    crate::ingame::note(app, &format!("bezel page {want} ({}): OVERLAY_NEXT", if want == 0 { "full screen" } else { "small box" }));
     send_cmd(port, "OVERLAY_NEXT");
 }
 

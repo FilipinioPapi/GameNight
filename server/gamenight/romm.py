@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from urllib.parse import quote
@@ -30,6 +31,51 @@ PLATFORMS: dict[str, str] = {
 }
 
 CACHE_SECONDS = 300
+
+log = logging.getLogger("gamenight")
+
+# Game file types per console. Anything else in a console's folder (Windows' desktop.ini, Thumbs.db,
+# readme files, pictures, save files...) is left out of Game Night's game lists. Only what Game Night
+# shows changes: RomM and the files on the NAS are never touched.
+ARCHIVES = {"zip", "7z"}
+GAME_TYPES: dict[str, set[str]] = {
+    "nes": {"nes", "fds", "unf", "unif"},
+    "snes": {"sfc", "smc", "fig", "swc", "bs", "st"},
+    "gen": {"md", "gen", "smd", "bin", "68k", "sgd"},
+    "gb": {"gb", "gbc", "sgb", "dmg"},
+    "gba": {"gba", "agb"},
+    "arc": {"chd"},
+    "ps1": {"cue", "bin", "chd", "pbp", "iso", "img", "m3u", "ccd", "mds", "ecm"},
+    "n64": {"n64", "z64", "v64"},
+    "gc": {"iso", "gcm", "gcz", "rvz", "ciso", "dol"},
+    "wii": {"iso", "wbfs", "rvz", "wia", "gcz", "ciso", "wad"},
+    "ps2": {"iso", "chd", "cso", "zso", "bin", "cue", "img"},
+}
+# Files that are never games, whatever they end in (Windows, Mac and Linux leave these about).
+NEVER_GAMES = {"desktop.ini", "thumbs.db", "ehthumbs.db", "ehthumbs_vista.db", ".ds_store", "folder.jpg",
+               "albumartsmall.jpg"}
+
+
+def _type_of(name: str) -> str:
+    """The file type: 'Contra (USA).nes' gives 'nes'. No real ending (a folder like 'Final Fantasy VII') gives ''."""
+    stem, dot, ext = name.rpartition(".")
+    ext = ext.lower()
+    return ext if dot and stem and ext.isalnum() and len(ext) <= 5 and any(c.isalpha() for c in ext) else ""
+
+
+def is_game(console: str, r: dict) -> bool:
+    """Is this RomM entry a game, or a stray file sitting in a console's folder?"""
+    name = (r.get("fs_name") or "").strip()
+    if not name or name.lower() in NEVER_GAMES or name.startswith("."):
+        return False
+    ok = GAME_TYPES.get(console, set()) | ARCHIVES
+    ext = (r.get("fs_extension") or "").lower().lstrip(".") if "fs_extension" in r else _type_of(name)
+    if ext:
+        return ext in ok
+    # A game kept as a folder (several discs, cue + bin...): a game if any file inside is one.
+    # When RomM doesn't list the files, keep it rather than hide a real game.
+    files = [f.get("file_name") or "" for f in (r.get("files") or []) if isinstance(f, dict)]
+    return not files or any(_type_of(f) in ok for f in files)
 
 
 @dataclass(frozen=True)
@@ -83,6 +129,7 @@ class RomM:
         self._games: dict[int, Game] = {}
         self._loaded = 0.0
         self._lock = asyncio.Lock()
+        self._hidden: list[str] = []
 
     async def _get_json(self, path: str, params: dict | None = None):
         async with self.http.get(self.base + path, params=params, headers=self.headers, auth=self.auth,
@@ -98,6 +145,7 @@ class RomM:
             if time.time() - self._loaded < CACHE_SECONDS and self._games:
                 return self._games
             found: dict[int, Game] = {}
+            hidden: list[str] = []
             offset, limit = 0, 500
             while True:
                 page = await self._get_json("/api/roms", {
@@ -109,6 +157,9 @@ class RomM:
                 for r in items:
                     console = console_for(r.get("platform_slug", ""), r.get("platform_fs_slug", ""))
                     if not console or r.get("missing_from_fs"):
+                        continue
+                    if not is_game(console, r):
+                        hidden.append(f"{console}/{(r.get('fs_name') or '?')[:80]}")
                         continue
                     found[int(r["id"])] = Game(
                         id=int(r["id"]),
@@ -123,6 +174,10 @@ class RomM:
                 offset += len(items)
                 if len(items) < limit:
                     break
+            if hidden and sorted(hidden) != self._hidden:
+                # Only when the list changes, so the log isn't repeated every few minutes.
+                log.info("Not games, left out of the game lists (%d): %s", len(hidden), ", ".join(sorted(hidden)))
+            self._hidden = sorted(hidden)
             self._games, self._loaded = found, time.time()
             return found
 

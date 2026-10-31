@@ -79,3 +79,4 @@ $results.failures = $failures
 $results | ConvertTo-Json -Depth 5 | Tee-Object (Join-Path $Out 'firewall-results.json')
 if ($failures) { exit 1 }
 Write-Host "`nthe block rule keeps other PCs out, even after an Allow, and Game Night still reaches RetroArch on this PC"
+exit 0

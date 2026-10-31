@@ -27,6 +27,7 @@ and stays put (no flicker) while sampled 25 times a second. Then the app is star
 import json
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -315,6 +316,32 @@ def tap(pad, button):
     set_pad(pad, [])
 
 
+CDB = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
+
+
+def watch_host_crashes(stop):
+    """CI only: Windows saved no crash dump for the host's RetroArch (runs 41243488319, 41245117334), so attach
+    Microsoft's debugger (cdb) to each host RetroArch the app starts. On a crash it writes the call stack to
+    host-cdb-<process>.txt in the results."""
+    if not CDB.exists():
+        say("  (no cdb on this machine: the host's crashes won't be traced)")
+        return
+    log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "couch.log"
+    seen = set()
+    cmds = ('sxe -c ".echo FIRST-CHANCE ACCESS VIOLATION; .exr -1; kn 12; gn" '
+            '-c2 ".echo CRASH (second chance); .exr -1; .ecxr; r; kn 40; lmf; q" av; '
+            'sxe -c ".echo FIRST-CHANCE C++ EH; kn 8; gn" eh; g')
+    while not stop.is_set():
+        text = log.read_text(errors="replace") if log.exists() else ""
+        for m in re.finditer(r"started RetroArch as host \(process (\d+)\)", text):
+            pid = m.group(1)
+            if pid not in seen:
+                seen.add(pid)
+                subprocess.Popen([str(CDB), "-p", pid, "-G", "-loga", str(OUT / f"host-cdb-{pid}.txt"), "-c", cmds],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stop.wait(0.5)
+
+
 def ra_cmd_port():
     """The command port in the app's current RetroArch settings (it changes each time the game restarts)."""
     cfg = Path(os.environ.get("APPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "retroarch.cfg"
@@ -468,6 +495,8 @@ def main():
     app_log = open(OUT / "app.log", "w")
     t0 = time.time()
     app = subprocess.Popen([str(APP)], env=env, stdout=app_log, stderr=subprocess.STDOUT)
+    crash_watch_stop = threading.Event()
+    threading.Thread(target=watch_host_crashes, args=(crash_watch_stop,), daemon=True).start()
     friend = Friend(slot_b)
     try:
         info_file = root / "e2e-couch.json"
@@ -754,6 +783,7 @@ def main():
             window_watch.move_app(app.pid, 40, 30, 1500, 900)
             look("look-4-windowed-moved", app, False)
     finally:
+        crash_watch_stop.set()
         friend.kill()
         (OUT / "friend-retroarch.log").write_text(friend.log())
         if app.poll() is None:

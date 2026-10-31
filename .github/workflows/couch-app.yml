@@ -98,7 +98,7 @@ jobs:
       - name: Where RetroArch crashed, if it did
         if: always()
         shell: pwsh
-        run: python tools/e2e/crash_report.py "$env:RUNNER_TEMP/dumps"
+        run: python tools/e2e/crash_report.py "$env:RUNNER_TEMP/dumps" "$env:RUNNER_TEMP/couch-results"
       - name: Keep the results (logs, numbers, screenshots)
         if: always()
         uses: actions/upload-artifact@v4

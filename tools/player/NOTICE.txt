@@ -12,6 +12,9 @@ their shared helper files under the licences in their own headers. Source: https
 Animated NES and Super Famicom bezels in overlays/animated-border/ (from the same RetroArch build, unchanged):
 libretro common-overlays, Creative Commons Attribution 4.0; Super Famicom border by Fercho.
 Source: https://github.com/libretro/common-overlays
+Bezel pictures in overlays/bezels/ ("TV" by NyNy77, "photo" by Nosh01): libretro overlay-borders, MIT licence
+(overlays/bezels/LICENSE-overlay-borders.txt). Nintendo names and logos in them belong to Nintendo.
+Source: https://github.com/libretro/overlay-borders
 The DLLs next to retroarch.exe come with RetroArch's build (Qt, SDL2, FFmpeg and their libraries)
 under their own open source licenses.
 

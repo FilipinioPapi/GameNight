@@ -6,13 +6,15 @@ Used by the Windows build (.github/workflows/app.yml) and on a Windows PC for te
 It downloads RetroArch's official Windows build at a fixed version, checks the downloads against the
 SHA-256 fingerprints below (so a changed or tampered file stops the build), and copies out only:
 retroarch.exe and the DLLs it loads, the NES and SNES emulators, controller profiles, a scanline shader,
-three CRT looks (Lottes, Geom, Royale) and the animated NES / Super Famicom bezels. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
+three CRT looks (Lottes, Geom, Royale), the animated NES / Super Famicom bezels, and the NyNy77 and Nosh01
+bezel pictures from libretro/overlay-borders. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
 """
 import hashlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -49,6 +51,20 @@ LOOKS = ["nearest.slangp", "crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/
 # Bezel C (approved 2026-10-31): libretro common-overlays' animated NES and Super Famicom borders (CC BY 4.0).
 BORDERS = "overlays/borders/animated-border"
 BORDER_FILES = ["nes-border.cfg", "img-nes/*", "super_famicom_animated_border.cfg", "img-sfc/*"]
+# Bezels B (default) and A (approved 2026-10-31): libretro/overlay-borders (MIT) at a fixed commit, each picture
+# checked against its fingerprint. Game Night fits them to the whole-pixel game at game start (display.rs).
+BEZEL_BASE = "https://raw.githubusercontent.com/libretro/overlay-borders/9aceca2dd514c589a57d40086557b804851aafcf/"
+BEZELS = {
+    "tv-nes.png": ("16x9 Collections/NyNy77 1080 Bezel/NintendoEntertainmentSystem-nyny77.png",
+                   "cdc92e63595f96f07cdfc47a30764e8008859182b612d5e057b744dd8efb1c63"),
+    "tv-snes.png": ("16x9 Collections/NyNy77 1080 Bezel/NintendoSuperNintendo-nyny77.png",
+                    "5442ba0a64380781356b126146c08627801c0f52429319dcd9d846331bf7f4f4"),
+    "photo-nes.png": ("16x9 Collections/Nosh01 1440 Plain/Nintendo-Entertainment-System-Bezel-16x9-2560x1440.png",
+                      "3a147ba0211f084771cffb01034264f19512c914c63e7c75aa6c741a64d2edd3"),
+    "photo-snes.png": ("16x9 Collections/Nosh01 1440 Plain/Super-Nintendo-Entertainment-System-Bezel-16x9-2560x1440.png",
+                       "6e05ebda89d1d34c3b199ca9a2ba05cdb8f9ae86cb1b6a1ea927052b2042ab4e"),
+    "LICENSE-overlay-borders.txt": ("LICENSE", "afb11426e09da40a1ae4f8fa17ddcc6b6a52d14df04c29bc5bcd06eb8730624d"),
+}
 
 HERE = Path(__file__).resolve().parent
 
@@ -119,6 +135,14 @@ def main(out: Path) -> None:
             (out / "shaders" / "slang" / f).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src / SLANG / f, out / "shaders" / "slang" / f)
         shutil.copytree(src / BORDERS, out / "overlays" / "animated-border")
+        (out / "overlays" / "bezels").mkdir(parents=True)
+        for name, (path, want) in BEZELS.items():
+            dest = out / "overlays" / "bezels" / name
+            with urllib.request.urlopen(BEZEL_BASE + urllib.parse.quote(path), timeout=120) as r:
+                dest.write_bytes(r.read())
+            got = sha256(dest)
+            if got != want:
+                sys.exit(f"bezel {name} doesn't match its fingerprint ({got}). Stopping.")
         shutil.copy2(HERE / "NOTICE.txt", out / "NOTICE.txt")
     print(f"player ready in {out}")
 

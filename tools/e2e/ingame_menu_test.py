@@ -166,6 +166,37 @@ def fps_over(copy, seconds):
 
 # ---------------------------------------------------------------- part 1: looks, bezels, whole-pixel scaling
 
+def command_port_check(copy, rom):
+    """Sends VERSION to RetroArch's command port from this PC's own network address (not 127.0.0.1), and from
+    127.0.0.1, and records which got an answer. Also lists the addresses the port is bound to (netstat)."""
+    import socket
+    out = {}
+    if not start_copy(copy, rom, full_screen()):
+        return out
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # picks the network address Windows would use; nothing is sent
+            lan = s.getsockname()[0]
+        out["network_address"] = lan
+        for name, addr in (("loopback", "127.0.0.1"), ("network", lan)):
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(3)
+                s.bind((addr, 0))
+                s.sendto(b"VERSION\n", (addr, copy.cmd_port))
+                try:
+                    out[f"{name}_answer"] = s.recvfrom(200)[0].decode(errors="replace").strip()
+                except OSError as e:
+                    out[f"{name}_answer"] = f"none ({type(e).__name__})"
+        ns = subprocess.run(["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True).stdout
+        out["bound"] = [l.strip() for l in ns.splitlines() if f":{copy.cmd_port} " in l]
+        fw = subprocess.run(["netsh", "advfirewall", "show", "allprofiles", "state"], capture_output=True, text=True).stdout
+        out["firewall"] = " ".join(fw.split())[:300]
+    finally:
+        stop_copy(copy)
+    say(f"  command port check: {out}")
+    return out
+
+
 def full_screen(extra=None):
     s = {"video_fullscreen": "true", "video_windowed_fullscreen": "true", "video_font_enable": "false",
          "video_scale_integer": "true", "aspect_ratio_index": "22", **DISPLAY}
@@ -223,6 +254,10 @@ def part_looks(rom, pad, slot):
     if not rect:
         fail("looks: couldn't see where the game is on screen")
         return res
+
+    # 1b. security: does RetroArch's command port also answer on this PC's network address (not only to Game
+    # Night on the same PC)? RetroArch binds it with no address (source read: socket_init with AI_PASSIVE).
+    res["command_port_on_network"] = command_port_check(copy, rom)
 
     # 2. a bezel with a hole exactly over the game, then every look switched live
     bezel = make_test_bezel(WORK / "test bezel", (sw, sh), rect)

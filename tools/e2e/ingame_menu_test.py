@@ -52,6 +52,13 @@ LOOKS = {
     "lottes": SHADERS / "slang" / "crt" / "crt-lottes.slangp",
     "geom": SHADERS / "slang" / "crt" / "crt-geom.slangp",
     "royale": SHADERS / "slang" / "crt" / "crt-royale.slangp",
+    "easymode": SHADERS / "slang" / "crt" / "crt-easymode.slangp",
+    "lottesfast": SHADERS / "slang" / "crt" / "crt-lottes-fast.slangp",
+    "hyllian": SHADERS / "slang" / "crt" / "crt-hyllian.slangp",
+    "sharpsmooth": SHADERS / "slang" / "pixel-art-scaling" / "sharp-bilinear.slangp",
+    "xbr": SHADERS / "slang" / "edge-smoothing" / "xbr" / "xbr-lv2.slangp",
+    "scalefx": SHADERS / "slang" / "edge-smoothing" / "scalefx" / "scalefx.slangp",
+    "hq4x": SHADERS / "slang" / "edge-smoothing" / "hqx" / "hq4x.slangp",
 }
 BEZEL_C_SNES = PLAYER / "overlays" / "animated-border" / "super_famicom_animated_border.cfg"
 BEZEL_RGB = (24, 200, 90)
@@ -174,14 +181,11 @@ def command_port_check(copy, rom):
     if not start_copy(copy, rom, full_screen()):
         return out
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("192.0.2.1", 9))  # picks the network address Windows would use; nothing is sent
-            lan = s.getsockname()[0]
+        lan = next(a for a in socket.gethostbyname_ex(socket.gethostname())[2] if not a.startswith("127."))  # this PC's network address
         out["network_address"] = lan
         for name, addr in (("loopback", "127.0.0.1"), ("network", lan)):
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.settimeout(3)
-                s.bind((addr, 0))
                 s.sendto(b"VERSION\n", (addr, copy.cmd_port))
                 try:
                     out[f"{name}_answer"] = s.recvfrom(200)[0].decode(errors="replace").strip()
@@ -189,6 +193,12 @@ def command_port_check(copy, rom):
                     out[f"{name}_answer"] = f"none ({type(e).__name__})"
         ns = subprocess.run(["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True).stdout
         out["bound"] = [l.strip() for l in ns.splitlines() if f":{copy.cmd_port} " in l]
+        # Couch Play's host: which addresses does RetroArch's netplay port listen on?
+        stop_copy(copy)
+        if start_copy(copy, rom, full_screen(), args=["--host", "--port", "55700"]):
+            time.sleep(3)
+            ns = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+            out["netplay_host_listens"] = [l.strip() for l in ns.splitlines() if ":55700 " in l]
         fw = subprocess.run(["netsh", "advfirewall", "show", "allprofiles", "state"], capture_output=True, text=True).stdout
         out["firewall"] = " ".join(fw.split())[:300]
     finally:
@@ -255,10 +265,6 @@ def part_looks(rom, pad, slot):
         fail("looks: couldn't see where the game is on screen")
         return res
 
-    # 1b. security: does RetroArch's command port also answer on this PC's network address (not only to Game
-    # Night on the same PC)? RetroArch binds it with no address (source read: socket_init with AI_PASSIVE).
-    res["command_port_on_network"] = command_port_check(copy, rom)
-
     # 2. a bezel with a hole exactly over the game, then every look switched live
     bezel = make_test_bezel(WORK / "test bezel", (sw, sh), rect)
     if not start_copy(copy, rom, full_screen({"input_overlay_enable": "true", "input_overlay": str(bezel)})):
@@ -293,7 +299,8 @@ def part_looks(rom, pad, slot):
         if not o["alive"]:
             fail(f"looks: RetroArch closed when switching to {name}")
             return res
-        if name != "plain" and (o["structure"] or 0) < (base["structure"] or 0) + 3:
+        # The smoothing looks don't add a pattern to the test game's flat colours, so only "it loaded" counts there.
+        if name not in ("plain", "sharpsmooth", "xbr", "scalefx", "hq4x") and (o["structure"] or 0) < (base["structure"] or 0) + 3:
             fail(f"looks: {name} didn't show (pattern {o['structure']})")
         if o["bezel_share_outside_game"] < 0.97:
             fail(f"looks: {name} drew over the bezel ({o['bezel_share_outside_game']})")
@@ -646,6 +653,8 @@ def main():
 
     run_part("looks", lambda: part_looks(rom, pads[1], slots[1]))
     run_part("couch", lambda: Trio("couch", rom, pads, slots).run())
+    # Last, because Windows may show a firewall question on screen that would spoil screenshots.
+    run_part("port", lambda: {"part": "port", "command_port_on_network": command_port_check(cl.SnesCopy("port", 55600, slots[1]), rom)})
     results["ok"] = not cl.failures
     results["failures"] = cl.failures
     (OUT / "results.json").write_text(json.dumps(results, indent=2, default=str))

@@ -52,7 +52,7 @@ pub struct WantGame {
 pub struct PlaySettings {
     /// "4:3" (TV shape), "pixel" (square pixels), both whole-pixel with a bezel; "stretch" (fill the screen).
     screen: String,
-    /// The look: "sharp", "smooth", "scanlines", "lottes", "geom", "royale".
+    /// The look: "sharp", "smooth", or a shader look from display::look_preset.
     picture: String,
     rewind: bool,
     fast_forward: bool,

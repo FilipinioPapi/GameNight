@@ -47,7 +47,12 @@ SHADER = "shaders/shaders_slang/crt/shaders/zfast_crt"
 # passes, pictures and #include lines), into player/shaders/slang/ with the same folder layout.
 SLANG = "shaders/shaders_slang"
 # "nearest" is the plain look (sharp pixels, no effect): switching to it is how a look is turned off live.
-LOOKS = ["nearest.slangp", "crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp"]
+# Lighter CRT looks and smoothing looks (Jayden asked 2026-10-31): easymode, lottes-fast, hyllian; sharp bilinear,
+# xBR, ScaleFX, HQ4x. "Old TV scanlines" is zfast CRT (above).
+LOOKS = ["nearest.slangp", "crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp",
+         "crt/crt-easymode.slangp", "crt/crt-lottes-fast.slangp", "crt/crt-hyllian.slangp",
+         "pixel-art-scaling/sharp-bilinear.slangp", "edge-smoothing/xbr/xbr-lv2.slangp",
+         "edge-smoothing/scalefx/scalefx.slangp", "edge-smoothing/hqx/hq4x.slangp"]
 # Bezel C (approved 2026-10-31): libretro common-overlays' animated NES and Super Famicom borders (CC BY 4.0).
 BORDERS = "overlays/borders/animated-border"
 BORDER_FILES = ["nes-border.cfg", "img-nes/*", "super_famicom_animated_border.cfg", "img-sfc/*"]

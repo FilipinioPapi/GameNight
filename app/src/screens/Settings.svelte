@@ -153,14 +153,21 @@
                 </select>
               </div>
               <div class="row">
-                <div class="t"><b>Picture style</b><span>Old TV lines, sharp pixels or smooth</span></div>
+                <div class="t"><b>Picture style</b><span>Runs on this PC only, so it never puts friends out of sync</span></div>
                 <select value={cs.picture} onchange={(e) => app.setConsoleSettings(cid, { picture: e.currentTarget.value as typeof cs.picture })}>
-                  <option value="scanlines">Old TV scanlines</option>
                   <option value="sharp">Sharp pixels</option>
-                  <option value="smooth">Smooth</option>
-                  <option value="lottes">CRT: Lottes (needs a good graphics card)</option>
-                  <option value="geom">CRT: curved glass (needs a good graphics card)</option>
+                  <option value="scanlines">Old TV scanlines</option>
+                  <option value="easymode">CRT: Easymode</option>
+                  <option value="lottesfast">CRT: Lottes Fast</option>
+                  <option value="hyllian">CRT: Hyllian</option>
+                  <option value="lottes">CRT: Lottes</option>
+                  <option value="geom">CRT: curved glass</option>
                   <option value="royale">CRT: Royale (needs a strong graphics card)</option>
+                  <option value="smooth">Smooth: soft blur</option>
+                  <option value="sharpsmooth">Smooth: sharp bilinear</option>
+                  <option value="xbr">Smooth: xBR</option>
+                  <option value="scalefx">Smooth: ScaleFX</option>
+                  <option value="hq4x">Smooth: HQ4x</option>
                 </select>
               </div>
               <div class="row">

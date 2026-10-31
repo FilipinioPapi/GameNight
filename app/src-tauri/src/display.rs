@@ -18,6 +18,13 @@ pub fn look_preset(player: &Path, look: &str) -> Option<PathBuf> {
         "lottes" => Some(s.join("slang").join("crt").join("crt-lottes.slangp")),
         "geom" => Some(s.join("slang").join("crt").join("crt-geom.slangp")),
         "royale" => Some(s.join("slang").join("crt").join("crt-royale.slangp")),
+        "easymode" => Some(s.join("slang").join("crt").join("crt-easymode.slangp")),
+        "lottesfast" => Some(s.join("slang").join("crt").join("crt-lottes-fast.slangp")),
+        "hyllian" => Some(s.join("slang").join("crt").join("crt-hyllian.slangp")),
+        "sharpsmooth" => Some(s.join("slang").join("pixel-art-scaling").join("sharp-bilinear.slangp")),
+        "xbr" => Some(s.join("slang").join("edge-smoothing").join("xbr").join("xbr-lv2.slangp")),
+        "scalefx" => Some(s.join("slang").join("edge-smoothing").join("scalefx").join("scalefx.slangp")),
+        "hq4x" => Some(s.join("slang").join("edge-smoothing").join("hqx").join("hq4x.slangp")),
         _ => None,
     }
 }

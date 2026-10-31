@@ -271,7 +271,7 @@ def part_looks(rom, pad, slot):
         return res
     r2, imgs = changed_box()
     imgs[-1].save(OUT / "looks-bezel-off.png")
-    base = {"game_rect": r2, "bezel_share_outside_game": bezel_share(imgs[-1], rect), "structure": structure(imgs, rect),
+    base = {"game_rect": r2, "bezel_share_outside_game": max(bezel_share(im, rect) for im in imgs), "structure": structure(imgs, rect),
             "fps": fps_over(copy, 4), "log": log_lines(copy, 0)}
     res["bezel"] = base
     say(f"  test bezel: {base}")
@@ -285,7 +285,7 @@ def part_looks(rom, pad, slot):
         rr, ims = changed_box()
         ims[-1].save(OUT / f"looks-{name}.png")
         out = {"command": command, "changed_area": rr, "inside_game": inside(rr, rect),
-               "bezel_share_outside_game": bezel_share(ims[-1], rect), "structure": structure(ims, rect),
+               "bezel_share_outside_game": max(bezel_share(im, rect) for im in ims), "structure": structure(ims, rect),
                "fps": fps_over(copy, 5), "alive": copy.alive(), "log": log_lines(copy, since)}
         res["looks"][name] = out
         say(f"  {name}: pattern {out['structure']} (no look: {base['structure']}), bezel {out['bezel_share_outside_game']}, "

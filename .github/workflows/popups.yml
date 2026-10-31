@@ -1,0 +1,50 @@
+# Pop-up test: does a game start cleanly, with none of RetroArch's own pop-up messages (Jayden, 2026-10-31)?
+# tools/e2e/popup_test.py photographs the game at boot, when a pretend pad is plugged in and when a friend joins
+# over netplay, with RetroArch's normal settings and with Game Night's quiet ones (app/src-tauri/src/quiet_retroarch.cfg).
+# Nothing here touches Game Night's app or releases, and nothing goes to the internet except the downloads below.
+name: Pop-up test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tools/e2e/popup_test.py", "app/src-tauri/src/quiet_retroarch.cfg", "tools/e2e/netplay_test.py",
+            "tools/e2e/couch_lobby_test.py", "tools/e2e/add_pretend_pads.ps1", "tools/player/**",
+            ".github/workflows/popups.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: popups-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  popups:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python packages for the test
+        shell: pwsh
+        run: pip install pillow==11.0.0
+      - name: Screen size like a real PC (1920x1080)
+        shell: pwsh
+        run: tools/e2e/screen_size.ps1
+      - name: Add pretend Xbox controllers (ViGEmBus)
+        shell: pwsh
+        run: tools/e2e/add_pretend_pads.ps1
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Boot, plug in a pad, friend joins; before and after Game Night's quiet settings
+        shell: pwsh
+        run: python tools/e2e/popup_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/popups" "$env:RUNNER_TEMP/popup-results"
+      - name: Keep the results (numbers, photos, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: popup-results
+          path: ${{ runner.temp }}/popup-results
+          if-no-files-found: ignore
+          retention-days: 30

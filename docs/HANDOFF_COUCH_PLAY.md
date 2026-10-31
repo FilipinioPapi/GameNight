@@ -13,7 +13,7 @@ Measured groundwork: `docs/HANDOFF_NETPLAY_TEST.md` (relay, private way) and the
   `gamebox.rs` (RetroArch's borderless window owned by ours, over the box; full screen by resizing).
 - Screens: `lib/couch.svelte.ts`, `screens/CouchPlay.svelte`, `Lobby.svelte`, `JoinCode.svelte`, plus the
   OPEN LOBBIES tab on the main menu and the Library's host-pick mode. `gamepad.ts` got `setPadLock()`: while
-  your own game runs and you have a play seat, the lobby ignores the pad; hold VIEW + MENU 1 s for lobby controls.
+  your own game runs and you have a play seat, the lobby ignores the pad; hold L3 + R3 (both sticks) 1 s for lobby controls (VIEW + MENU clashed with Windows/Steam shortcuts).
 - Logs on each PC: cache folder `player/logs/couch.log` and `relay.log`.
 
 ## Labels

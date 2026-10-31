@@ -253,7 +253,7 @@
 
   // ---- The pad while your own game runs ----
   // Holding a play seat (host too) with the game running, every press belongs to the game: the lobby
-  // ignores the pad. Holding View + Menu together for 1 second opens "lobby controls"; they close
+  // ignores the pad. Holding both sticks in (L3 + R3) for 1 second opens "lobby controls"; they close
   // after an action, after B, or after 8 seconds without a press. Keyboard and mouse always work.
   const playingNow = $derived(!!L && (L.you.role === "host" || L.you.role === "play") && couch.gameRunning && !lost && !closedBy);
   let controls = $state(false);
@@ -284,7 +284,8 @@
     if (!padLocked) return;
     let since = 0;
     setPadLock((b) => {
-      if (b[8] && b[9]) {
+      // Both sticks pressed in (L3 + R3): Windows and Steam use VIEW + MENU for their own shortcuts.
+      if (b[10] && b[11]) {
         const t = performance.now();
         if (!since) since = t;
         else if (t - since >= 1000) {
@@ -296,7 +297,7 @@
     return () => setPadLock(null);
   });
   const ps = $derived(app.pad.type === "dualsense");
-  const comboWords = $derived(ps ? "CREATE + OPTIONS" : "VIEW + MENU");
+  const comboWords = "L3 + R3 (press both sticks in)";
 
   // ---- Panels over the game: the game window steps aside (it keeps running) ----
   // (The dropped-out note sits beside the box instead, so the host never plays blind.)
@@ -380,7 +381,7 @@
     else if (k === "o") toggleOpen();
   }
 
-  const lockedGuide = $derived<GuideItem[]>([{ buttons: ["back", "start"], label: `Hold 1 s: lobby controls` }]);
+  const lockedGuide = $derived<GuideItem[]>([{ buttons: [], label: "Hold L3 + R3 1 s: lobby controls" }]);
   const guide = $derived<GuideItem[]>(padLocked ? lockedGuide : [
     { buttons: ["a"], label: "Pick seat" },
     { buttons: ["x"], label: "Switch play / watch" },
@@ -459,9 +460,7 @@
       </div>
       {#if padLocked}
         <div class="combo">
-          Hold <img src={ps ? "/prompts/ps/ps_back.png" : "/prompts/xbox/xbox_back.png"} alt="" />
-          <img src={ps ? "/prompts/ps/ps_start.png" : "/prompts/xbox/xbox_start.png"} alt="" />
-          {comboWords} to open lobby controls
+          Hold {comboWords} to open lobby controls
         </div>
       {/if}
 
@@ -603,7 +602,6 @@
   .waitscr span { font-family: VT323, monospace; font-size: 22px; letter-spacing: 0.05em; color: #ffd6d6; }
   .info { position: absolute; left: 48px; top: 644px; width: 608px; display: flex; align-items: center; gap: 10px; }
   .combo { position: absolute; left: 48px; top: 676px; width: 608px; display: flex; align-items: center; gap: 8px; font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.05em; color: var(--muted); }
-  .combo img { image-rendering: pixelated; height: 18px; width: auto; }
   .banner {
     position: absolute; z-index: 30; left: 50%; top: 14px; transform: translateX(-50%); white-space: nowrap; padding: 8px 18px; border-radius: 10px;
     border: 2px solid #ffd36b; background: rgba(20, 12, 13, 0.96); font-family: VT323, monospace; font-size: 22px; letter-spacing: 0.05em; color: #fff6d8;

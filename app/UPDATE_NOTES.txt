@@ -1,14 +1,6 @@
-# 0.3.5
-New: Couch Play online. Host an NES or SNES game, or join a friend's with a 6-letter code
-Up to 4 players and 4 watchers, and you can switch between playing and watching any time
-The game plays live in the lobby. Press Y for full screen
-While you play, hold VIEW + MENU for a second to open lobby controls
-If someone drops out, the game keeps going and their seat is held for 2 minutes
-Nothing is listed publicly. Only people in Jayden's Discord can see open lobbies
-
-# 0.3.4
-Updates show the download all the way to 100%, then the install, step by step
-Game Night opens again by itself after an update, in front of your other windows
-It says "Updated" when it's back, so you know it worked
-Game Night steps aside when a game starts, so the game is in front, and comes back when you quit
-New main menu: big glowing cards, the picked one grows, plus your last three games to jump back in
+# 0.3.6
+Couch Play: the game now sits inside Game Night's window, right in the lobby's box. No more flicker, and it no longer covers the seat list
+Game Night opens full screen, like a console. Press F11 to switch to a window and back
+Press Y for full screen in a lobby: the game fills the whole screen
+Lobby controls while you play: hold both sticks in (L3 + R3) for a second. VIEW + MENU clashed with Steam and Windows shortcuts
+To quit a game on your own: press both sticks in (L3 + R3), or Esc

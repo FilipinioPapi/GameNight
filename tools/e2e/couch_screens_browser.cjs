@@ -32,9 +32,9 @@ async function setup(browser, view) {
   return page;
 }
 async function hold(page, ms) {
-  await page.evaluate(() => { window.__pad.buttons[8] = true; window.__pad.buttons[9] = true; });
+  await page.evaluate(() => { window.__pad.buttons[10] = true; window.__pad.buttons[11] = true; });
   await page.waitForTimeout(ms);
-  await page.evaluate(() => { window.__pad.buttons[8] = false; window.__pad.buttons[9] = false; });
+  await page.evaluate(() => { window.__pad.buttons[10] = false; window.__pad.buttons[11] = false; });
   await page.waitForTimeout(200);
 }
 const box = (page) => page.evaluate(() => globalThis.__gnCouchBox || "");
@@ -104,7 +104,7 @@ async function expect(page, what, test) {
   await shot(p, "cq4-lobby-host");
   // Your game is running and you hold P1: the lobby ignores the pad.
   await expect(p, "lobby: the game box was sent (not hidden)", () => { const b = globalThis.__gnCouchBox || ""; return !!b && b !== "0,0,0,0"; });
-  await expect(p, "lobby: hint says hold VIEW + MENU", () => document.body.textContent.includes("VIEW + MENU to open lobby controls"));
+  await expect(p, "lobby: hint says hold L3 + R3", () => document.body.textContent.includes("L3 + R3 (press both sticks in) to open lobby controls"));
   const before = await focused(p);
   await press(p, "down");
   await press(p, "x"); await press(p, "start"); await press(p, "lb"); await press(p, "b"); await press(p, "y");

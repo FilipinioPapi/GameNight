@@ -106,7 +106,7 @@
           {/if}
         </div>
         {#if !playable}<p class="soon">{c.name} games can't be played yet. NES and SNES come first, then the other consoles.</p>{/if}
-        {#if running}<p class="playing">Playing now. To come back, press <b>Esc</b>, or press <b>LB + RB + Start + Select</b> together on your controller.</p>{/if}
+        {#if running}<p class="playing">Playing now. To come back, press <b>Esc</b>, or press both sticks in together (<b>L3 + R3</b>) on your controller.</p>{/if}
         {#if error}<p class="notice">{error}</p>{/if}
         {#if notice}<p class="notice">{notice}</p>{/if}
 

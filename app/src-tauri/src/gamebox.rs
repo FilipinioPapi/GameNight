@@ -1,10 +1,11 @@
 //! Couch Play's game box: the live game shown inside the lobby screen.
 //!
-//! Measured way ("way B", tools/e2e/couch_lobby_test.py on branch claude/project-thread-6m71fx): RetroArch keeps
-//! its own window, without borders, *owned* by Game Night's window (so it stays just above it and hides with it)
-//! and placed exactly over the box. Full screen = Game Night resizes that window to cover the monitor; RetroArch's
-//! own full screen switch is off (it throws its window away). Game Night follows its own window when it moves
-//! or changes size by checking a few times a second.
+//! The game lives inside Game Night's window: RetroArch's window, without borders or menu bar, becomes a *child*
+//! of Game Night's window (measured as "way A" in tools/e2e/couch_lobby_test.py) placed exactly over the box. It
+//! moves, hides and closes with Game Night, and can't sit over the seat list or another app. Full screen = the
+//! game fills Game Night's window (Game Night itself goes full screen too, see couch.rs). RetroArch's own full
+//! screen switch is off (it throws its window away), and RetroArch always opens at the box's size, never a size
+//! of its own (its own size fought the box: 0.3.5 flickered on Jayden's PC). gamebox.log records every move.
 //!
 //! Who gets the controller: the game is live in the box too (the pad reaches RetroArch whatever window is in
 //! front; measured). Game Night's window keeps the keyboard focus, so the lobby screen still sees its own
@@ -37,16 +38,46 @@ struct Want {
     full: bool,
 }
 
+/// gamebox.log in the player logs folder: where the game window was asked to go and where it really was,
+/// so a flicker or a wrong size can be measured on any PC. Nothing private in it.
+#[derive(Clone, Default)]
+pub struct BoxLog {
+    path: Option<std::path::PathBuf>,
+    t0: Option<std::time::Instant>,
+}
+
+impl BoxLog {
+    pub fn new(path: Option<std::path::PathBuf>) -> BoxLog {
+        if let Some(p) = &path {
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(p, "");
+        }
+        BoxLog { path, t0: Some(std::time::Instant::now()) }
+    }
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn line(&self, s: &str) {
+        use std::io::Write;
+        let (Some(p), Some(t0)) = (&self.path, self.t0) else { return };
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(p) {
+            let _ = writeln!(f, "[{:8.2} s] {s}", t0.elapsed().as_secs_f64());
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct GameBox {
     want: Arc<Mutex<Want>>,
+    log: Arc<Mutex<BoxLog>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     started: std::sync::atomic::AtomicBool,
 }
 
 impl GameBox {
     /// Starts keeping RetroArch (process `pid`) over the box of window `main`.
-    pub fn attach(&self, pid: u32, main: isize) {
+    pub fn attach(&self, pid: u32, main: isize, log: BoxLog) {
+        *self.log.lock().unwrap_or_else(|e| e.into_inner()) = log;
         {
             let mut w = self.want.lock().unwrap_or_else(|e| e.into_inner());
             w.pid = Some(pid);
@@ -55,8 +86,9 @@ impl GameBox {
         #[cfg(windows)]
         {
             let want = self.want.clone();
+            let log = self.log.clone();
             if !self.started.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                std::thread::spawn(move || win::follow(want));
+                std::thread::spawn(move || win::follow(want, log));
             }
         }
     }
@@ -79,33 +111,36 @@ impl GameBox {
         self.want.lock().unwrap_or_else(|e| e.into_inner()).full
     }
 
-    /// Where the game window should start (screen pixels), if the box is known; best guess before it's found.
-    pub fn start_rect(&self) -> Option<(i32, i32, i32, i32)> {
+    /// Where RetroArch should open its window (screen pixels): over the box if it's known, otherwise over all
+    /// of Game Night's window `main`. Never left to RetroArch, which would pick a size of its own.
+    pub fn start_rect(&self, main: isize) -> Option<(i32, i32, i32, i32)> {
         #[cfg(windows)]
         {
-            let w = self.want.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if w.main != 0 {
-                return win::target(&w).map(|t| t.0);
+            let mut w = self.want.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            w.main = main;
+            if main != 0 {
+                return win::start(&w);
             }
         }
+        let _ = main;
         None
     }
 }
 
 #[cfg(windows)]
 mod win {
-    use super::{screen_rect, Want};
+    use super::{screen_rect, BoxLog, Want};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
-    use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow,
-        IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, HWND_NOTOPMOST,
-        HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
-        WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
+        EnumWindows, GetClassNameW, GetClientRect, GetParent, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+        IsIconic, IsWindow, IsWindowVisible, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, HWND_TOP,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_CHILD,
+        WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
     };
 
     fn hwnd(v: isize) -> HWND {
@@ -140,7 +175,7 @@ mod win {
         BOOL(1)
     }
 
-    /// RetroArch's game window, found by its process number.
+    /// RetroArch's game window (still a window of its own), found by its process number.
     fn find(pid: u32) -> Option<isize> {
         let mut f = Found { pid, best: 0, area: -1, retroarch_class: false };
         unsafe {
@@ -149,51 +184,74 @@ mod win {
         (f.best != 0).then_some(f.best)
     }
 
-    /// Where the game window should be (screen pixels) and whether it covers the screen; None = hidden/unknown.
+    /// Where the game should be, in pixels inside Game Night's window, and whether that's the whole window.
+    /// None = hidden or not known yet.
     pub(super) fn target(w: &Want) -> Option<((i32, i32, i32, i32), bool)> {
         let main = hwnd(w.main);
         unsafe {
             if w.full {
-                let mon = MonitorFromWindow(main, MONITOR_DEFAULTTONEAREST);
-                let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-                if GetMonitorInfoW(mon, &mut mi).as_bool() {
-                    let r = mi.rcMonitor;
-                    return Some(((r.left, r.top, r.right - r.left, r.bottom - r.top), true));
-                }
-                return None;
+                let mut c = RECT::default();
+                GetClientRect(main, &mut c).ok()?;
+                return Some(((0, 0, c.right - c.left, c.bottom - c.top), true));
             }
             let (x, y, bw, bh) = w.rect?;
             if bw <= 0.0 || bh <= 0.0 {
                 return None;
             }
-            let mut p = POINT { x: 0, y: 0 };
-            if !ClientToScreen(main, &mut p).as_bool() {
-                return None;
-            }
             let dpi = GetDpiForWindow(main);
             let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
-            Some((screen_rect((p.x, p.y), scale, (x, y, bw, bh)), false))
+            Some((screen_rect((0, 0), scale, (x, y, bw, bh)), false))
         }
     }
 
-    /// Keeps the game window where it should be, a few times a second. Runs for the whole app.
-    pub(super) fn follow(want: Arc<Mutex<Want>>) {
+    /// Where RetroArch should open its window (screen pixels) before it's moved inside Game Night: the box if
+    /// it's known, otherwise all of Game Night's window. RetroArch then never opens at a size of its own.
+    pub(super) fn start(w: &Want) -> Option<(i32, i32, i32, i32)> {
+        let main = hwnd(w.main);
+        let inside = target(w).map(|t| t.0).or_else(|| unsafe {
+            let mut c = RECT::default();
+            GetClientRect(main, &mut c).ok()?;
+            Some((0, 0, c.right - c.left, c.bottom - c.top))
+        })?;
+        let mut p = POINT { x: inside.0, y: inside.1 };
+        unsafe { ClientToScreen(main, &mut p).as_bool() }.then_some((p.x, p.y, inside.2, inside.3))
+    }
+
+    /// The game window's place inside Game Night's window.
+    unsafe fn place_of(g: HWND, main: HWND) -> (i32, i32, i32, i32) {
+        let mut r = RECT::default();
+        let _ = GetWindowRect(g, &mut r);
+        let mut p = POINT { x: r.left, y: r.top };
+        let _ = ScreenToClient(main, &mut p);
+        (p.x, p.y, r.right - r.left, r.bottom - r.top)
+    }
+
+    /// Keeps the game inside Game Night's window, over the box (or filling the window), a few times a second.
+    /// The game window becomes a child of Game Night's window: it moves, hides and closes with it, and can
+    /// never sit over another app or the seat list.
+    pub(super) fn follow(want: Arc<Mutex<Want>>, log: Arc<Mutex<BoxLog>>) {
+        let say = |s: &str| log.lock().unwrap_or_else(|e| e.into_inner()).line(s);
+        let mut moves: u64 = 0; // times the game window had to be put back
+        let mut last_want: Option<(Option<(f64, f64, f64, f64)>, bool)> = None;
         let mut game: isize = 0; // the game window being kept
-        let mut styled: isize = 0; // the window already made borderless and owned
-        let mut on_top = false;
+        let mut adopted: isize = 0; // the window already made a child of Game Night's window
         let mut hidden = false;
         loop {
             let w = want.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let Some(pid) = w.pid else {
                 game = 0;
-                styled = 0;
-                on_top = false;
+                adopted = 0;
                 hidden = false;
+                last_want = None;
                 std::thread::sleep(Duration::from_millis(250));
                 continue;
             };
             std::thread::sleep(Duration::from_millis(40));
             unsafe {
+                let main = hwnd(w.main);
+                if w.main == 0 || !IsWindow(Some(main)).as_bool() {
+                    continue;
+                }
                 if game == 0 || !IsWindow(Some(hwnd(game))).as_bool() {
                     game = find(pid).unwrap_or(0);
                     if game == 0 {
@@ -207,48 +265,65 @@ mod win {
                         game = 0;
                         continue;
                     }
+                    let mut r = RECT::default();
+                    let _ = GetWindowRect(hwnd(game), &mut r);
+                    moves = 0;
+                    say(&format!(
+                        "found the game window: at {},{} size {}x{}, its scale {}%, Game Night's scale {}%",
+                        r.left, r.top, r.right - r.left, r.bottom - r.top,
+                        GetDpiForWindow(hwnd(game)) * 100 / 96, GetDpiForWindow(main) * 100 / 96
+                    ));
                 }
                 let g = hwnd(game);
-                let main = hwnd(w.main);
-                if w.main == 0 || !IsWindow(Some(main)).as_bool() || IsIconic(main).as_bool() {
-                    continue; // owned: it hides along with Game Night's window
+                if IsIconic(main).as_bool() {
+                    continue; // a child: it's out of sight along with Game Night's window
+                }
+                if last_want != Some((w.rect, w.full)) {
+                    last_want = Some((w.rect, w.full));
+                    say(&format!(
+                        "asked: box {:?} (window pixels), full screen {}; Game Night's scale {}% -> {:?}",
+                        w.rect, w.full, GetDpiForWindow(main) * 100 / 96, target(&w)
+                    ));
                 }
                 let Some((rect, full)) = target(&w) else {
                     // A zero-size box: out of sight until the box comes back.
-                    if w.rect.is_some_and(|r| r.2 <= 0.0 || r.3 <= 0.0) && !w.full && !hidden {
+                    if adopted == game && w.rect.is_some_and(|r| r.2 <= 0.0 || r.3 <= 0.0) && !w.full && !hidden {
                         let _ = ShowWindow(g, SW_HIDE);
                         hidden = true;
+                        say("hidden (a panel covers the box)");
                     }
                     continue;
                 };
-                if styled != game {
+                let (x, y, cw, ch) = rect;
+                if adopted != game {
+                    // Borderless child window, with no menu bar, drawn only in its own place.
                     let style = GetWindowLongPtrW(g, GWL_STYLE) as u32;
-                    let decor = (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU).0;
-                    let new = (style & !decor) | WS_POPUP.0 | WS_VISIBLE.0;
+                    let decor = (WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_POPUP).0;
+                    let new = (style & !decor) | WS_CHILD.0 | WS_CLIPSIBLINGS.0 | WS_VISIBLE.0;
                     SetWindowLongPtrW(g, GWL_STYLE, new as i32 as isize);
-                    SetWindowLongPtrW(g, GWLP_HWNDPARENT, w.main);
-                    let (x, y, cw, ch) = rect;
-                    let _ = SetWindowPos(g, None, x, y, cw, ch, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-                    styled = game;
+                    let _ = SetParent(g, Some(main));
+                    let _ = SetWindowPos(g, Some(HWND_TOP), x, y, cw, ch, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    adopted = game;
                     hidden = false;
-                    on_top = false;
+                    let parent_ok = GetParent(g).map(|p| p == main).unwrap_or(false);
+                    say(&format!("moved inside Game Night's window (child: {parent_ok}), placed at {rect:?}"));
+                    continue;
                 }
                 if hidden {
                     let _ = ShowWindow(g, SW_SHOWNOACTIVATE);
+                    let _ = SetWindowPos(g, Some(HWND_TOP), x, y, cw, ch, SWP_NOACTIVATE);
                     hidden = false;
+                    say(&format!("shown again at {rect:?}"));
+                    continue;
                 }
-                let mut now = RECT::default();
-                let _ = GetWindowRect(g, &mut now);
-                let have = (now.left, now.top, now.right - now.left, now.bottom - now.top);
-                if have != rect || full != on_top {
-                    let (x, y, cw, ch) = rect;
-                    let (after, flags) = if full != on_top {
-                        (Some(if full { HWND_TOPMOST } else { HWND_NOTOPMOST }), SWP_NOACTIVATE | SWP_SHOWWINDOW)
-                    } else {
-                        (None, SWP_NOZORDER | SWP_NOACTIVATE)
-                    };
-                    let _ = SetWindowPos(g, after, x, y, cw, ch, flags);
-                    on_top = full;
+                let have = place_of(g, main);
+                if have != rect {
+                    moves += 1;
+                    // Every move at first, then now and then: a window being put back over and over is a flicker.
+                    if moves <= 20 || moves % 100 == 0 {
+                        say(&format!("move #{moves}: it was at {have:?}, putting it at {rect:?}{}", if full { " (full screen)" } else { "" }));
+                    }
+                    let _ = SetWindowPos(g, Some(HWND_TOP), x, y, cw, ch, SWP_NOACTIVATE);
                 }
             }
         }
@@ -269,7 +344,7 @@ mod tests {
         let gn = GameBox::default();
         gn.set_fullscreen(true);
         assert!(gn.fullscreen());
-        gn.attach(1, 0);
+        gn.attach(1, 0, BoxLog::default());
         gn.detach();
         assert!(!gn.fullscreen());
     }

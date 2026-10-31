@@ -3,3 +3,4 @@ Updates show the download all the way to 100%, then the install, step by step
 Game Night opens again by itself after an update, in front of your other windows
 It says "Updated" when it's back, so you know it worked
 Game Night steps aside when a game starts, so the game is in front, and comes back when you quit
+New main menu: big glowing cards, the picked one grows, plus your last three games to jump back in

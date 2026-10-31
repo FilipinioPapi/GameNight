@@ -2,7 +2,7 @@
 // or a built-in sample list in the screen preview. Screens only ever talk to this file.
 
 import type { ConsoleId } from "./consoles";
-import { inTauri } from "./settings";
+import { inTauri, type RecentPlay } from "./settings";
 import { play } from "./play.svelte";
 
 export interface Game {
@@ -103,3 +103,19 @@ export function formatSize(bytes: number): string {
 }
 
 export const isCoop = (g: Game) => g.players !== "1";
+
+/** "Played yesterday · 42 min": when a game was last played, for the recently played cards. */
+export function playedWhen(r: RecentPlay): string {
+  const d = new Date(r.at);
+  const now = new Date();
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const ago = Math.round((day(now) - day(d)) / 86400000);
+  const base = ago <= 0 ? (d.getHours() >= 17 ? "Played tonight" : "Played today")
+    : ago === 1 ? "Played yesterday"
+    : ago < 7 ? `Played on ${d.toLocaleDateString("en-GB", { weekday: "long" })}`
+    : `Played on ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+  if (!r.minutes) return base;
+  const h = Math.floor(r.minutes / 60);
+  const m = r.minutes % 60;
+  return `${base} · ${h ? `${h} h ${m ? m + " min" : ""}`.trim() : `${m} min`}`;
+}

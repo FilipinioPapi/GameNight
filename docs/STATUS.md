@@ -20,6 +20,12 @@ Strongly inferred, Unknown.
   scrolling, gliding frame, stick and hold-repeat. Unknown: how it feels on Jayden's PC with his pad.
 - Not in this thread: new main menu concepts and game-art backdrops ("Design a livelier main menu").
 
+## Main menu (thread "Build the approved main menu")
+- Jayden approved design A21 on 2026-10-31 (card icons left out for now). Built on branch
+  `claude/project-thread-tdlf5x`. Details: `docs/HANDOFF_MAIN_MENU.md`.
+- Confirmed: browser check against the approved picture. Windows pretend-controller run: see the PR.
+  Unknown: feel on Jayden's PC with his real pad. Waiting on Jayden: the card icons (later).
+
 ## Online co-op (thread "Plan quickest online co-op for NES and SNES")
 - Plan agreed: build in proven layers, stability before speed. Details: `docs/HANDOFF_ONLINE.md`.
 - Merged: PR #12. Anyone in Jayden's Discord server can sign in, and the role is optional.

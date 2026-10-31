@@ -58,3 +58,73 @@ build or change the Game Night app, and nothing goes to the internet.
 ## Decision (Jayden, 2026-10-31)
 First real friend test goes through **libretro's public relay** (no router or NAS changes). Measure delay and
 reliability through it; those numbers decide whether our own relay on the NAS is worth building later.
+
+# Online co-op step 2: libretro's public relay, measured (2026-10-31, PR #16)
+
+Same test, same NES cartridge and checks, now also through libretro's relay servers over the real internet.
+Both copies still run on one GitHub Windows machine (a US data centre), so every relay round is
+machine -> relay -> same machine: the relay's distance counts twice, like two friends who both live near
+the GitHub machine. Runs: 41167800601 (1), 41169114880 (2), 41170468355 (3, re-run), **41174375748 (4, all green,
+commit f55c16a)**.
+
+## Two ways to use the relay
+- **Listed** (stock RetroArch, `relay-listed-*`): `netplay_use_mitm_server` + `netplay_public_announce`. The host
+  asks libretro's lobby for the relay, gets a session, and lists the game in libretro's **public** game list; the
+  friend reads the session from that list and joins (`--connect <relay> --port 55435 --mitm-session=<id>`).
+- **Private** (`relay-private-*`): `TunnelBridge` in the test holds the relay session for the host (same messages
+  RetroArch's host sends: RATS/RATL/RATA/RATP, read from RetroArch 1.22.2 `netplay_frontend.c`) and hands the
+  friend the session id directly. The host copy only listens on 127.0.0.1. **Nothing is listed anywhere.**
+  In the app this bridge would live in the Rust side and the session id would go through Game Night's own server.
+- **Decision (Jayden, 2026-10-31 06:11)**: use the private way, "if it doesn't break functionality".
+
+## Results
+| Round | Plain connect to relay (median) | Joined after | Extra delay for the other player (median) | Frames compared, different |
+|---|---|---|---|---|
+| direct (same machine) | - | 0.3-0.6 s | 0-16 ms | ~5,300 per run, 0 |
+| pretend 50 +/- 20 ms each way | - | 0.6-0.8 s | 33-95 ms | ~5,300 per run, 0 |
+| listed, New York (90 s) | 49-75 ms | 0.8-1.1 s (listed after ~6 s) | 33-80 ms | 3 runs, 0 |
+| private, New York (90 s + 5 rejoins) | 41-79 ms | 0.8-1.1 s | 33-127 ms | 3 of 4 runs 0; run 2 dropped (below) |
+| listed, New York, **5 minutes** | 48-77 ms | 0.8 s | 33-66 ms | 17,404 and 17,390, **0** (runs 3, 4) |
+| private, New York, **5 minutes** | 77 ms | 1.1 s | 65-95 ms | 17,496, **0** (run 4; run 3: test crash, below) |
+| private, Madrid (30 s) | 119-158 ms | 1.6-1.9 s | 113-146 ms | 4 runs, 0 |
+| private, Sao Paulo (30 s) | 155-190 ms | 1.9-2.2 s | 143-161 ms | 4 runs, 0 |
+| private, Singapore (30 s) | 190-222 ms | 2.2-2.7 s | 160-224 ms | 4 runs, 0 |
+
+"Extra delay for the other player" = how much later a press shows in the other player's game than in the presser's
+own game (accurate to about one frame, ~17 ms, so single numbers jump around). The presser's own game showed a
+press after ~45-60 ms in every round, relay or not: netplay never delays your own buttons.
+
+- **Confirmed**: both ways work through libretro's relay with stock RetroArch 1.22.2 and no ports opened. Every
+  button reached the right player, button histories matched, and there were 0 frames out of sync in every round
+  that stayed connected. That includes both 5-minute rounds (about 17,400 frames each).
+- **Confirmed**: the private way works as well as the listed way. Run 4: same sync, same speed, same delay range,
+  over 5 minutes and in the short rounds.
+- **Confirmed**: leave and rejoin through the same private session: 20 of 20 rejoins in 0.5-1.1 s (4 runs), and
+  the friend was still player 2 each time.
+- **Confirmed**: speed. Relay rounds ran as fast as two unconnected copies (within ~4%).
+- **Confirmed**: in runs 3 and 4 the relay never closed a connection itself. Every link ended only when the test
+  ended it (the bridge logs who closes each link).
+- **Unknown, seen once each**: (a) run 2, `relay-private-nyc` disconnected ~60 s into play with no RetroArch
+  error; frames matched up to the drop, and after it the two games ran on their own (1,711 frames differed). That
+  run had no link logging yet, so the cause is unknown: the relay, the internet or the bridge. (b) Run 3, the 5-minute
+  private round stopped after ~30 s with `OSError: [WinError 10022]` raised inside the test's own Python code
+  (no traceback was recorded then; run 4 records one, and it didn't happen again). Neither happened in runs 3-4's
+  other rounds or in run 4 at all. Watch for them in the app's own tests.
+- **Confirmed**: the listed way puts the host in libretro's public list, readable by anyone at
+  `lobby.libretro.com/list`, with nickname, game file name, country and the host's **home internet address**
+  (field `ip`). Seen on our own test entry and on other people's live entries.
+- **Confirmed**: a password doesn't fit Game Night. RetroArch's joining side ignores `netplay_password` from its
+  settings and always pops up a box to type it (`netplay_handshake_init`, `menu_input_dialog_start`). Run 1's
+  listed round stalled on that box. The listed rounds now use no password and `netplay_max_connections=1`.
+  The private way needs no password: the 12-byte session id is the secret, shared only through Game Night.
+- **Strongly inferred**: delay grows with distance to the relay, about one extra relay round trip. For friends near
+  each other and near a relay, the relay adds roughly 50-80 ms, like the pretend 50 ms round. At Singapore-level
+  distance it adds ~200 ms, which most players feel in action games.
+- **Unknown**: delay between two real homes (their own internet adds to this), which relay is nearest to Jayden
+  and his friends, sessions longer than 5 minutes, and real controllers.
+
+## Next (for the app; one job each)
+- Rust side: hold the relay session (port of `TunnelBridge`), start RetroArch as host on 127.0.0.1 only, pass the
+  session id to the friend through Game Night's own server (needs the server online, `docs/HANDOFF_ONLINE.md`).
+- The join screen needs a mockup and Jayden's OK first.
+- SNES (snes9x) version of this test.

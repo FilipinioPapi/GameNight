@@ -451,6 +451,9 @@ pub async fn ingame_do<R: Runtime>(app: AppHandle<R>, action: String, value: Opt
         }
         ("refresh", Playing::Couch(_)) => {
             close(&app, "Refresh game");
+            // Let RetroArch close its hidden menu before it's asked to save (commands right after MENU_TOGGLE
+            // were sometimes lost, CI runs 41238375842 and 41247795649).
+            tokio::time::sleep(Duration::from_millis(400)).await;
             crate::couch::couch_refresh(app.clone()).await?;
         }
         ("watch" | "play", Playing::Couch(_)) => {

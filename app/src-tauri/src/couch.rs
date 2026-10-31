@@ -995,8 +995,14 @@ pub async fn couch_refresh<R: Runtime>(app: AppHandle<R>) -> Result<Value, Strin
         let port = lock(&couch.local).cmd_port;
         s.log.line("refresh: saving the game's spot (SAVE_STATE)");
         send_cmd(port, "SAVE_STATE");
-        for _ in 0..40 {
+        for i in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if i == 15 && !saved {
+                // A command sent just as RetroArch's hidden menu closes can be lost (as Quit was, CI run
+                // 41238375842): ask once more.
+                s.log.line("refresh: not saved after 1.5 s: SAVE_STATE again");
+                send_cmd(port, "SAVE_STATE");
+            }
             if newest_state(&dir).is_some_and(|(_, t)| Some(t) != before) {
                 saved = true;
                 break;

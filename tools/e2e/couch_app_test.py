@@ -254,6 +254,14 @@ def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
 
 
+def speed(game, seconds=2.0):
+    """Frames a second in `game` (the test cart counts frames), or None."""
+    a = game.ram(0, 3)
+    time.sleep(seconds)
+    b = game.ram(0, 3)
+    return round((frame_of(b) - frame_of(a)) / seconds, 1) if a and b else None
+
+
 def menu_window(pid):
     """Game Night's in-game menu window: (visible, (x, y, w, h)) or None."""
     import ctypes
@@ -567,7 +575,11 @@ def main():
             host.send("OVERLAY_NEXT")
             time.sleep(0.5)
         say("look: in full screen, the in-game menu over the game (the game stays full screen behind it)")
+        results["speed_full_screen"] = {"host": speed(host), "friend": speed(friend)}
+        say(f"  frames a second, full screen, menu closed: {results['speed_full_screen']}")
         menu(app, pad_a)
+        results["speed_full_screen_menu"] = {"host": speed(host), "friend": speed(friend)}
+        say(f"  frames a second, full screen, host's menu open: {results['speed_full_screen_menu']}")
         w = menu_window(app.pid)
         say(f"  menu window: {w}")
         if w and w[0] and (w[1][2] < 1000 or w[1][3] < 600):
@@ -625,6 +637,9 @@ def main():
         say(f"  {results['pause_host']}")
         if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
             fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
+        # Experiment: hold the pause 8 s (the friend's pause, 6 s with the host's menu closed, never came back in
+        # run 41247795649; RetroArch drops a stalled friend after 5 s). Does a long pause break the host's too?
+        time.sleep(6)
         tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
         time.sleep(3)
         f1 = friend.ram(0, 3)

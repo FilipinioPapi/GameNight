@@ -420,7 +420,6 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("video_smooth", yes(s.picture == "smooth").into()),
         ("video_shader_enable", yes(crate::display::look_preset(&p.player, &s.picture).is_some()).into()),
         ("fps_show", yes(s.show_fps).into()),
-        ("video_font_enable", "true".into()),
         // Sound, and normal speed. RetroArch keeps games at their real speed by pacing them with
         // the sound, so without sound they race at the screen's refresh rate (e.g. 144 Hz).
         ("audio_enable", "true".into()),
@@ -452,7 +451,10 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("cache_directory", path(&p.cache)),
         ("sort_savefiles_enable", "false".into()),
         ("sort_savestates_enable", "false".into()),
-    ];
+    ]
+    .into_iter()
+    .chain(quiet_lines(s.show_fps))
+    .collect();
     let mut lines: Vec<(String, String)> = base.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     let mut set = |more: Vec<(String, String)>| {
         for (k, v) in more {
@@ -489,6 +491,21 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         pad(crate::controllers::PLAYERS + 1 + i, "2", id);
     }
     out
+}
+
+/// RetroArch's own pop-up messages, all off (quiet_retroarch.cfg says which and why). Show FPS needs
+/// RetroArch's message drawing, so with it on only the FPS counter's switch comes back on.
+const QUIET: &str = include_str!("quiet_retroarch.cfg");
+
+fn quiet_lines(show_fps: bool) -> impl Iterator<Item = (&'static str, String)> {
+    QUIET.lines().filter_map(move |l| {
+        let (k, v) = l.split_once('=')?;
+        let (k, v) = (k.trim(), v.trim().trim_matches('"'));
+        if k.is_empty() || k.starts_with('#') {
+            return None;
+        }
+        Some((k, if k == "video_font_enable" && show_fps { "true".to_string() } else { v.to_string() }))
+    })
 }
 
 /// What Couch Play changes or adds: private netplay only (no public list, no libretro relay lookup by
@@ -923,6 +940,23 @@ mod tests {
         ] {
             assert!(cfg.contains(want), "missing {want}");
         }
+        // No RetroArch pop-ups (quiet_retroarch.cfg), each setting written once.
+        for want in [
+            "video_font_enable = \"false\"",
+            "menu_show_load_content_animation = \"false\"",
+            "notification_show_autoconfig = \"false\"",
+            "notification_show_netplay_extra = \"false\"",
+            "notification_show_save_state = \"false\"",
+            "notification_show_fast_forward = \"false\"",
+        ] {
+            assert!(cfg.contains(want), "missing {want}");
+        }
+        assert_eq!(cfg.matches("video_font_enable").count(), 1);
+        assert_eq!(quiet_lines(false).count(), 15);
+        let fps = PlaySettings { show_fps: true, ..s.clone() };
+        let cfg_fps = retroarch_config(&p, &fps, 0, &pads, None);
+        assert!(cfg_fps.contains("video_font_enable = \"true\""));
+        assert!(cfg_fps.contains("notification_show_autoconfig = \"false\""));
         let pixel = PlaySettings { screen: "pixel".into(), picture: "sharp".into(), ..s };
         let cfg = retroarch_config(&p, &pixel, 1, &Default::default(), None);
         assert!(cfg.contains("input_player1_device_reservation_type = \"0\""));

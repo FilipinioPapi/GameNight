@@ -299,7 +299,9 @@ function describe(el: Element | null) {
 
 function onPress(index: number) {
   usePadLook();
-  void note(`button ${index} pressed; focused: ${describe(document.activeElement)}; page has focus: ${document.hasFocus()}`);
+  void note(`button ${index} pressed; screen: ${app.route.name}; focused: ${describe(document.activeElement)}; page has focus: ${document.hasFocus()}`);
+  // A moment later, what the press did (the screen has redrawn by then).
+  setTimeout(() => void note(`after button ${index}: screen: ${app.route.name}; focused: ${describe(document.activeElement)}`), 300);
   const input = BUTTON_INDEX[index] ?? (index >= 12 && index <= 15 ? "dpad" : undefined);
   if (capture && input) {
     const fn = capture;

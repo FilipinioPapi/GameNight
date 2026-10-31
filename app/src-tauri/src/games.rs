@@ -362,10 +362,12 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
     let path = |p: &Path| p.to_string_lossy().replace('"', "");
     let yes = |b: bool| if b { "true" } else { "false" };
     // Whole-pixel scaling for both shapes (boards IG1, approved 2026-10-31); display.rs has the bezel lines.
+    // Couch Play keeps these (the game fills its box or the screen); a game on your own gets whole-pixel
+    // scaling and the bezel from display.rs below.
     let (aspect, integer) = match s.screen.as_str() {
-        "pixel" => (21, true),    // square pixels, perfectly sharp
+        "pixel" => (22, true),    // the console's own shape, sharp whole-pixel scaling
         "stretch" => (24, false), // fill the screen
-        _ => (0, true),           // TV shape (4:3), whole pixels tall
+        _ => (0, false),          // 4:3, like an old TV
     };
     let base: Vec<(&str, String)> = vec![
         // Never write these settings back, never show menus or online extras.
@@ -455,8 +457,12 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
             }
         }
     };
-    // Whole-pixel scaling and the bezel (display.rs), then the hidden menu when the in-game menu is on.
-    set(crate::display::config_lines(p.overlay.as_deref(), s.screen != "pixel", s.screen == "stretch"));
+    // On your own: whole-pixel scaling and the bezel (display.rs). Not yet in Couch Play: its window changes size
+    // (box <-> full screen) and the bezel is fitted to one size (measured: couch-app run 41227307054).
+    if net.is_none() {
+        set(crate::display::config_lines(p.overlay.as_deref(), s.screen != "pixel", s.screen == "stretch"));
+    }
+    // The hidden menu, when the in-game menu is on.
     if let Some(theme) = &p.menu_theme {
         set(crate::display::hidden_menu_lines(theme, net.is_some()));
     }
@@ -660,12 +666,8 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
     let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
     // The bezel, fitted to this screen (or to Couch Play's window). A missing or broken bezel never
     // stops the game: it just plays without one, and the log says why.
-    if settings.screen != "stretch" && settings.bezel != "none" {
-        let size = match net.and_then(|n| n.window) {
-            Some((_, _, w, h)) if w > 0 && h > 0 => Some((w as u32, h as u32)),
-            _ => screen_size(app),
-        };
-        if let Some(size) = size {
+    if net.is_none() && settings.screen != "stretch" && settings.bezel != "none" {
+        if let Some(size) = screen_size(app) {
             match crate::display::prepare_bezel(&player, &paths.cache, &settings.bezel, &entry.console, size, settings.screen != "pixel") {
                 Ok(o) => {
                     bezel_note += &format!("screen {size:?}: {o:?}\n");
@@ -955,9 +957,8 @@ mod tests {
         }
         // Each setting once: Couch Play's values replace the normal ones instead of adding a second line.
         // The bezel, whole-pixel TV shape, and the hidden menu that never pauses the game for the others.
-        for want in ["input_overlay = \"/c/bezels/tv.cfg\"", "input_overlay_enable = \"true\"", "aspect_ratio_index = \"0\"", "menu_pause_libretro = \"false\""] {
-            assert!(cfg.contains(want), "missing {want}");
-        }
+        assert!(!cfg.contains("input_overlay_enable = \"true\"") && cfg.contains("video_scale_integer = \"false\""));
+        assert!(cfg.contains("menu_pause_libretro = \"false\""));
         for key in ["video_fullscreen", "network_cmd_enable", "auto_remaps_enable", "rewind_enable", "netplay_nat_traversal", "video_scale_integer", "aspect_ratio_index"] {
             assert_eq!(line(&cfg, key).len(), 1, "{key}");
         }

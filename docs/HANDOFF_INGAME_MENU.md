@@ -111,4 +111,4 @@ project files `gamenight/ingame-menu/bezel-options/`.
 
 ## Jayden's bezel pick (2026-10-31 16:30)
 - Default: B (NyNy77 dark TV frame). Alternatives: C (NES controller, buttons light up; Super Famicom one for SNES) and A (Nosh01 console photos). Each player picks their own. Our own minimal IG1 bezel and D (old TV) not chosen.
-- Open: keep the Nintendo logos on A/B or ship logo-free copies (recommended).
+- Jayden chose 2026-10-31 16:31: KEEP the Nintendo logos on A and B (his call, risk explained).

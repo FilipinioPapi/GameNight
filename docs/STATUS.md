@@ -77,3 +77,13 @@ Strongly inferred, Unknown.
   (`couch-app.yml`) is on PR #24.
 - Waiting on Jayden: the go-online steps (project files `gamenight/couch-play/GO-ONLINE-STEPS.md`), the
   lobby-controls decision card, and a real test with a friend.
+
+## Hide non-game files from game lists (thread "Hide non-game files from game lists")
+- Built: the Game Night server leaves anything that isn't a game file for its console out of the game
+  lists (Windows' desktop.ini, Thumbs.db, readmes, pictures, save files). Game file types per console
+  and a never-a-game list live in `server/gamenight/romm.py`. RomM and the NAS files are never changed.
+- The server's log names what it left out ("Not games, left out of the game lists ..."), once per change.
+- Confirmed: tests on Linux and GitHub's Windows machine (`server/tests/test_game_filter.py`).
+  Strongly inferred: the "desktop" entry in every folder is Windows' desktop.ini (RomM names entries
+  after the file name without its ending). Jayden can confirm by opening it in RomM.
+- Waiting on Jayden after merge: update the Game Night container in Unraid so the new server runs.

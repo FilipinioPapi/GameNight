@@ -221,7 +221,7 @@
   // ---- Your own link dropped, or the lobby closed ----
   const mineHeld = $derived(rows.find((r) => r.kind === "p" && r.held && r.user?.id === youId));
   const closedBy = $derived(couch.ended && (couch.ended.reason === "host-left" || couch.ended.reason === "host-ended") ? couch.ended.reason : null);
-  const lost = $derived(!closedBy && (!!mineHeld || (!!couch.ended && !isHost)));
+  const lost = $derived(!closedBy && (!!mineHeld || (!!couch.ended && !isHost) || couch.gameDropped));
   let lostAt = $state(0);
   $effect(() => {
     if (lost && !lostAt) lostAt = Date.now();
@@ -299,7 +299,8 @@
   const comboWords = $derived(ps ? "CREATE + OPTIONS" : "VIEW + MENU");
 
   // ---- Panels over the game: the game window steps aside (it keeps running) ----
-  const coverGame = $derived(!!menuSeat || lost || !!closedBy || !!(toast && toastRow) || controls || leaveArmed);
+  // (The dropped-out note sits beside the box instead, so the host never plays blind.)
+  const coverGame = $derived(!!menuSeat || lost || !!closedBy || controls || leaveArmed);
   $effect(() => {
     const hide = coverGame;
     untrack(() => (hide ? couch.hideGame() : couch.showGame(boxEl?.getBoundingClientRect() ?? null)));
@@ -489,7 +490,8 @@
       <div class="banner" role="status">Lobby controls on. Your presses also reach the game.</div>
     {/if}
 
-    {#if toast && toastRow && !menuSeat}
+    <!-- Beside the box (over the seat list), never over the game; skipped in full screen. -->
+    {#if toast && toastRow && !menuSeat && !couch.fullscreen}
       <section class="toast" role="status">
         <span class="tt">{@render signal()}{toast.name.toUpperCase()} DROPPED OUT</span>
         <span class="tl">The game keeps going. P{toast.n} stands still until {toast.name} is back.</span>
@@ -634,7 +636,7 @@
   .hint { font-size: 20px; color: #ffd6d6; margin-top: 6px; }
 
   /* ---- Drop-outs (CQ6) ---- */
-  .toast { position: absolute; right: 28px; top: 28px; z-index: 10; width: 420px; border-radius: 12px; border: 2px solid #5a2225; background: rgba(20, 12, 13, 0.94); box-shadow: 0 8px 0 rgba(0, 0, 0, 0.5), 0 0 24px rgba(236, 40, 46, 0.3); padding: 16px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }
+  .toast { position: absolute; left: 688px; right: 48px; top: 500px; z-index: 10; border-radius: 12px; border: 2px solid #5a2225; background: #140c0d; box-shadow: 0 8px 0 rgba(0, 0, 0, 0.5), 0 0 24px rgba(236, 40, 46, 0.3); padding: 16px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }
   .tt { display: flex; align-items: center; gap: 12px; font-family: "Press Start 2P", monospace; font-size: 13px; color: #ff5a60; text-shadow: 0 0 8px rgba(236, 40, 46, 0.8), 2px 2px 0 #000; }
   .tl { font-family: VT323, monospace; font-size: 20px; letter-spacing: 0.04em; color: #ffe0e0; line-height: 1.1; }
   .tm { font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.05em; color: #ffd36b; text-shadow: 0 0 6px rgba(242, 180, 90, 0.6); }
@@ -674,6 +676,7 @@
     .combo { top: 604px; width: 560px; }
     .side { top: 116px; left: 640px; }
     .seat { height: 46px; }
+    .toast { left: 640px; top: 440px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .cloud, .hero, .ov.live i, .cursor, .dots i, .banner { animation: none; }

@@ -184,7 +184,8 @@ async function expect(page, what, test) {
   p = await setup(browser, "dropped");
   await press(p, "right"); await press(p, "a"); await press(p, "a"); await press(p, "a");
   await expect(p, "host sees SAM DROPPED OUT", () => document.body.textContent.includes("SAM DROPPED OUT"));
-  await expect(p, "dropped note: the game window is hidden", () => globalThis.__gnCouchBox === "0,0,0,0");
+  await expect(p, "dropped note: the game window stays showing", () => { const b = globalThis.__gnCouchBox || ""; return !!b && b !== "0,0,0,0"; });
+  await expect(p, "dropped note sits outside the box", () => { const t = document.querySelector(".toast").getBoundingClientRect(), g = document.querySelector(".gamebox").getBoundingClientRect(); return t.left >= g.right || t.right <= g.left || t.top >= g.bottom || t.bottom <= g.top; });
   await shot(p, "cq6-dropped");
   await press(p, "start");
   await expect(p, "locked: Start alone does nothing", () => !document.body.textContent.includes("KEEP HOLDING THE SEAT"));
@@ -209,6 +210,19 @@ async function expect(page, what, test) {
   await shot(p, "cq6-connection-lost");
   await press(p, "a");
   await expect(p, "keep trying puts you back in", () => !document.body.textContent.includes("CONNECTION LOST"));
+  await p.close();
+
+  // Your own game stopped / lost its link (lobby.you.game) while the lobby carries on: Rejoin.
+  p = await setup(browser, "stopped");
+  await press(p, "right"); await press(p, "a"); await press(p, "right"); await press(p, "a");
+  await p.keyboard.type("K7QM2X");
+  await p.waitForTimeout(400);
+  await press(p, "a");
+  await p.waitForTimeout(300);
+  await expect(p, "game disconnected: the rejoin dialog shows", () => document.body.textContent.includes("CONNECTION LOST") && document.body.textContent.includes("KEEP TRYING"));
+  await expect(p, "game disconnected: the pad isn't locked (dialog works)", () => !document.body.textContent.includes("to open lobby controls"));
+  await press(p, "a");
+  await expect(p, "keep trying gets you back in", () => !document.body.textContent.includes("CONNECTION LOST"));
   await p.close();
 
   p = await setup(browser, "closed");

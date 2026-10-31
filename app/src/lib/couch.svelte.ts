@@ -25,9 +25,11 @@ export interface LobbySummary {
   started: boolean;
 }
 export type Role = "host" | "play" | "watch";
+export type GameState = "running" | "starting" | "stopped" | "disconnected";
 export interface Seat { n: number; user: CouchUser | null; status: "playing" | "held" | "empty"; held_left: number | null; }
 export interface Lobby extends Omit<LobbySummary, "watchers"> {
-  you: { id: string; role: Role; seat: number | null };
+  /** game: your own copy of the game, when the Windows side says (newer versions do). */
+  you: { id: string; role: Role; seat: number | null; game?: GameState };
   seats: Seat[];
   watchers: CouchUser[];
   relay: { server: string; port: number; session: string } | null;
@@ -272,6 +274,7 @@ class Couch {
     if (!inTauri) {
       const v = sampleView();
       this.got(v === "lost" ? sampleLobby("lost") : sampleLobby("guest", game, as));
+      if (v === "stopped" && this.lobby) this.lobby.you.game = "disconnected";
       if (v === "closed") this.ended = { reason: "host-ended" };
       return true;
     }
@@ -382,7 +385,15 @@ class Couch {
   /** Your game is running: the lobby has started and hasn't ended. (The Windows side starts your
    *  game when you host or join; the lobby copy doesn't say more than that.) */
   get gameRunning(): boolean {
-    return !!this.lobby && this.lobby.started && !this.ended;
+    if (!this.lobby || this.ended) return false;
+    if (this.lobby.you.game) return this.lobby.you.game === "running";
+    return this.lobby.started;
+  }
+
+  /** Your own game stopped or lost its link while the lobby carries on: offer to rejoin. */
+  get gameDropped(): boolean {
+    const g = this.lobby?.you.game;
+    return !!this.lobby && !this.ended && (g === "stopped" || g === "disconnected");
   }
 
   async setFullscreen(on: boolean) {

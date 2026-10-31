@@ -1,6 +1,8 @@
 <script lang="ts" module>
   // Which card was picked last, so coming back from the Library lands on the same one.
   let lastPick = 0;
+  // Which list shows under the cards: open lobbies (the default) or the last games played.
+  let lastTab: "lobbies" | "jump" = "lobbies";
 </script>
 
 <script lang="ts">
@@ -14,7 +16,8 @@
   import { app } from "../lib/state.svelte";
   import { consoleById } from "../lib/consoles";
   import { loadLibrary, localInfo, playedWhen, type Game, type Library } from "../lib/library";
-  import { moveFocus, type Dir } from "../lib/gamepad";
+  import { moveFocus, useScreenButtons, type Dir } from "../lib/gamepad";
+  import { couch, playersFor, type LobbySummary } from "../lib/couch.svelte";
   import { quitApp, steamRunning } from "../lib/native";
   import { VERSION } from "../lib/version";
   import { updates } from "../lib/update.svelte";
@@ -70,16 +73,51 @@
     return () => clearInterval(t);
   });
 
+  // ---- Open lobbies (Couch Play board CQ1), checked again every 10 seconds ----
+  $effect(() => {
+    void couch.refreshList();
+    const t = setInterval(() => void couch.refreshList(), 10_000);
+    return () => clearInterval(t);
+  });
+  const lobbies = $derived(couch.list.slice(0, 3));
+  const lobbyCount = $derived(couch.list.length);
+  let tab = $state<"lobbies" | "jump">(lastTab);
+  function showTab(t: "lobbies" | "jump") {
+    tab = lastTab = t;
+  }
+  /** "Contra III · 2 of 2 · 1 watching", "Super Mario Bros. · 1 of 2 · seat free". */
+  function lobbyLine(l: LobbySummary) {
+    const max = playersFor(l.game.id, games);
+    const p = Math.min(l.players, max);
+    if (p < max) return `${l.game.title} · ${p} of ${max} · seat free`;
+    return `${l.game.title} · ${p} of ${max} ${l.watchers ? `· ${l.watchers} watching` : "playing"}`;
+  }
+  const owner = (l: LobbySummary) => (l.host.id === app.user?.id ? "Your lobby" : `${l.host.name}'s lobby`);
+  const coverOf = (id: string) => byId.get(id)?.cover;
+
+  // LB / RB switch between Open lobbies and Jump back in without leaving the cards.
+  $effect(() => {
+    useScreenButtons((input) => {
+      if (input !== "lb" && input !== "rb") return false;
+      const inList = document.activeElement instanceof HTMLElement && !!document.activeElement.closest(".recs");
+      showTab(tab === "lobbies" ? "jump" : "lobbies");
+      if (inList) void tick().then(() => (document.querySelector<HTMLElement>(".recs .rec") ?? document.querySelector<HTMLElement>(".btab.on"))?.focus({ preventScroll: true }));
+      return true;
+    });
+    return () => useScreenButtons(null);
+  });
+
   // ---- The four cards ----
-  type Card = { id: string; label: string; more: string; desc: string; halo: string; soon?: boolean; go: () => void };
+  type Card = { id: string; label: string; more: string; desc: string; halo: string; soon?: boolean; tag?: string; go: () => void };
   const items = $derived<Card[]>([
     {
       id: "library", label: "LIBRARY", more: `${games.length} games · ${onPC} on this PC`, desc: "BROWSE AND PLAY YOUR GAMES",
       halo: "rgba(236,40,46,.35)", go: () => app.go({ name: "library", console: "fav" }),
     },
     {
-      id: "couch", label: "COUCH PLAY", more: "Play online with friends", desc: "PLAY ONLINE WITH FRIENDS (COMING NEXT)",
-      halo: "rgba(58,110,232,.4)", soon: true, go: () => {},
+      id: "couch", label: "COUCH PLAY", more: "Play online with friends", desc: "HOST A GAME OR JOIN WITH A CODE",
+      halo: "rgba(58,110,232,.4)", tag: lobbyCount ? `${lobbyCount} ${lobbyCount === 1 ? "LOBBY" : "LOBBIES"} OPEN` : "",
+      go: () => app.go({ name: "couch" }),
     },
     {
       id: "settings", label: "SETTINGS", more: "Controllers, consoles, layout", desc: "CONTROLLERS, CONSOLES AND LAYOUT",
@@ -110,7 +148,8 @@
   const guide = $derived<GuideItem[]>([
     { buttons: ["a"], label: "Select" },
     { buttons: [], glyph: "◄ ►", label: "Move" },
-    ...(recent.length ? [{ buttons: [], glyph: "▼", label: "Jump back in" } satisfies GuideItem] : []),
+    { buttons: [], glyph: "▼", label: tab === "lobbies" ? "Lobbies" : "Jump back in" },
+    { buttons: ["lb", "rb"], label: "Lobbies / Jump back in" },
   ]);
 </script>
 
@@ -155,7 +194,7 @@
         <span class="full"><span class="halo" style="--h: {it.halo}"></span></span>
         <span class="tx">
           <span class="lbl">{it.label}</span>
-          {#if it.soon}<span class="soon">COMING NEXT</span>{/if}
+          {#if it.soon}<span class="soon">COMING NEXT</span>{:else if it.tag}<span class="soon">{it.tag}</span>{/if}
           <span class="more">{it.more}</span>
         </span>
       </button>
@@ -164,10 +203,31 @@
 
   <div class="vt desc" aria-live="polite">&gt; {items[sel].desc}<span class="cursor">_</span></div>
 
-  {#if recent.length}
-    <section aria-label="Jump back in">
-      <span class="vt glowtxt jlabel">&gt; JUMP BACK IN</span>
-      <div class="recs">
+  <section aria-label={tab === "lobbies" ? "Open lobbies" : "Jump back in"}>
+    <div class="btabs">
+      <button class="btab" data-tab class:on={tab === "lobbies"} onclick={() => showTab("lobbies")}>&gt; OPEN LOBBIES <span class="cnt">{lobbyCount}</span></button>
+      <button class="btab" data-tab class:on={tab === "jump"} onclick={() => showTab("jump")}>&gt; JUMP BACK IN</button>
+      <span class="bhint">Only people in your Discord see these</span>
+    </div>
+    <div class="recs">
+      {#if tab === "lobbies"}
+        {#each lobbies as l (l.code)}
+          {@const c = consoleById(l.game.console)}
+          {@const art = coverOf(l.game.id)}
+          <button class="rec" onclick={() => app.go({ name: "join", code: l.code })}>
+            <span class="art">
+              {#if art && !brokenArt[l.game.id]}<img src={art} alt="" decoding="async" onerror={() => (brokenArt[l.game.id] = true)} />
+              {:else}<span class="lart">{l.game.title}</span>{/if}
+            </span>
+            <span class="rtext">
+              <b>{owner(l)}</b><span class="when">{lobbyLine(l)}</span>
+              <span class="chips"><span class="chip">{c.short.toUpperCase()}</span>{#if l.started}<span class="live"><i></i>LIVE</span>{:else}<span class="wait">WAITING</span>{/if}</span>
+            </span>
+          </button>
+        {:else}
+          <div class="rec none">{couch.listLoaded ? "No open lobbies right now. Open Couch Play to host one or join with a code." : "Looking for open lobbies…"}</div>
+        {/each}
+      {:else}
         {#each recent as { r, g } (g.id)}
           {@const c = consoleById(g.console)}
           <button class="rec" onclick={() => app.go({ name: "game", id: g.id })}>
@@ -180,10 +240,12 @@
             </span>
             <span class="rtext"><b>{g.title}</b><span class="when">{playedWhen(r)}</span><span><span class="chip">{c.short.toUpperCase()}</span></span></span>
           </button>
+        {:else}
+          <div class="rec none">Nothing played yet. Games you play show up here.</div>
         {/each}
-      </div>
-    </section>
-  {/if}
+      {/if}
+    </div>
+  </section>
 
   {#if steamTip}
     <div class="tip" role="note">
@@ -286,8 +348,20 @@
   @keyframes blink { 50% { opacity: 0; } }
 
   /* ---- Jump back in: the last three games ---- */
-  section { position: absolute; left: 48px; right: 48px; top: 576px; display: flex; flex-direction: column; gap: 12px; }
-  .jlabel { font-size: 22px; }
+  section { position: absolute; left: 48px; right: 48px; top: 568px; display: flex; flex-direction: column; gap: 12px; }
+  /* Open lobbies / Jump back in (Couch Play board CQ1). */
+  .btabs { display: flex; align-items: center; gap: 22px; }
+  .btab { background: none; border: 0; padding: 0 0 4px; font-family: VT323, monospace; font-size: 22px; letter-spacing: 0.06em; color: var(--muted-2); border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 8px; border-radius: 0; }
+  .btab.on { color: var(--link); text-shadow: 0 0 6px rgba(255, 90, 90, 0.8); border-bottom-color: var(--red); }
+  .btab:hover { color: var(--link); }
+  .cnt { font-size: 16px; color: #ffd36b; border: 1px solid var(--amber); border-radius: 4px; padding: 0 6px; text-shadow: 0 0 6px rgba(242, 180, 90, 0.6); }
+  .bhint { margin-left: auto; font-family: VT323, monospace; font-size: 17px; letter-spacing: 0.05em; color: var(--muted-2); }
+  .rec.none { border-style: dashed; color: var(--muted-2); font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.04em; cursor: default; }
+  .lart { font-family: "Press Start 2P", monospace; }
+  .chips { display: flex; gap: 8px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-family: VT323, monospace; font-size: 15px; letter-spacing: 0.1em; color: var(--link); border: 1px solid var(--red); border-radius: 999px; padding: 0 9px; text-shadow: 0 0 6px rgba(236, 40, 46, 0.8); }
+  .live i { width: 7px; height: 7px; border-radius: 50%; background: #ff2a32; box-shadow: 0 0 6px #ff2a32; animation: blink 1.4s steps(1) infinite; }
+  .wait { display: inline-flex; align-items: center; font-family: VT323, monospace; font-size: 15px; letter-spacing: 0.1em; color: #ffd36b; border: 1px solid var(--amber); border-radius: 999px; padding: 0 9px; }
   .recs { display: flex; gap: 20px; }
   .rec {
     display: flex; align-items: center; gap: 14px; flex: 1 1 0; min-width: 0; height: 88px; box-sizing: border-box; padding: 12px;
@@ -330,7 +404,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .scene, .gnw, .card.on, .cursor { animation: none; }
+    .scene, .gnw, .card.on, .cursor, .live i { animation: none; }
     .card, .lbl, .more, .halo, .rec { transition: none; }
   }
 </style>

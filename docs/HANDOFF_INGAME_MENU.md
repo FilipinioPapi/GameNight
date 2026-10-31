@@ -112,3 +112,26 @@ project files `gamenight/ingame-menu/bezel-options/`.
 ## Jayden's bezel pick (2026-10-31 16:30)
 - Default: B (NyNy77 dark TV frame). Alternatives: C (NES controller, buttons light up; Super Famicom one for SNES) and A (Nosh01 console photos). Each player picks their own. Our own minimal IG1 bezel and D (old TV) not chosen.
 - Jayden chose 2026-10-31 16:31: KEEP the Nintendo logos on A and B (his call, risk explained).
+
+## Build progress (thread "Build the in-game menu and bezels", branch claude/project-thread-x0w0gw)
+
+Measured on GitHub's Windows machine (tools/e2e/ingame_menu_test.py, workflow ingame-menu.yml):
+- A different look per player in Couch Play: 0 frames out of sync, also when switched live (SET_SHADER on the
+  command port). stdin commands don't work in RetroArch 1.22.2. "Look off" = SET_SHADER nearest.slangp.
+- Whole-pixel scaling at 1080p SNES: TV shape 1196x896 at (362, 92), square 1024x896 at (448, 92). Bezel sits exactly.
+- RetroArch's own menu, opened hidden (see-through RGUI theme, kiosk mode, menu_pause_libretro=false online)
+  stops your presses while the game keeps going for everyone = how Game Night's menu holds your player still.
+- Host PAUSE_TOGGLE pauses/resumes everyone; a friend's can't be resumed (RetroArch). Jayden chose (17:30):
+  friends' "Pause for everyone" goes through the Game Night server (server update; he installs it on Unraid).
+- Heavy looks on a PC without a graphics card slow everyone (Royale ~5 fps on CI). Warn when a PC drops below full speed.
+- Bezel C: a mouse click on its pictured buttons presses them. Re-check inside the real app.
+- SECURITY: RetroArch's command port binds 0.0.0.0 and answers on the PC's network address (run 41224303485).
+  Netplay host port: being measured. Affects Couch Play 0.3.5.
+
+Built so far:
+- app/src-tauri/src/display.rs: looks, whole-pixel rect, bezel fitting to the screen (cached in the cache
+  folder), RetroArch lines for scaling/bezel/hidden menu. games.rs uses it at game start (bezel noted in
+  logs/bezel.txt). Settings: 12 looks and a bezel choice per console. Default: 4:3 whole-pixel + bezel B ("tv").
+- Not built yet: the in-game menu window (transparent owned window over the game), the pad watcher (Xbox
+  button / L3+R3 hold, must work with Steam open), command port for solo games (wait for the security fix),
+  the server route for friends' pause, the app-level Windows test.

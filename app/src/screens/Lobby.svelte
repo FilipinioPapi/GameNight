@@ -134,6 +134,12 @@
     done();
     if (L && isHost) void couch.setOpen(!L.open);
   }
+  /** RB: back in control without losing progress (saves the spot, restarts the game, loads the spot). */
+  async function refreshGame() {
+    done();
+    tell("REFRESHING YOUR GAME. YOU'LL BE BACK AT THE SAME SPOT");
+    await couch.refreshGame();
+  }
   async function toggleFull() {
     done();
     await couch.setFullscreen(!couch.fullscreen);
@@ -302,9 +308,20 @@
   // ---- Panels over the game: the game window steps aside (it keeps running) ----
   // (The dropped-out note sits beside the box instead, so the host never plays blind.)
   const coverGame = $derived(!!menuSeat || lost || !!closedBy || controls || leaveArmed);
+  // In full screen: a panel in the middle hides the game; while the lobby listens to the pad (lobby
+  // controls, or watching) the game leaves a strip at the top and bottom for the gold popup and its buttons.
+  const middlePanel = $derived(!!menuSeat || lost || !!closedBy || leaveArmed);
   $effect(() => {
-    const hide = coverGame;
-    untrack(() => (hide ? couch.hideGame() : couch.showGame(boxEl?.getBoundingClientRect() ?? null)));
+    const full = couch.fullscreen, hide = coverGame, middle = middlePanel, locked = padLocked;
+    untrack(() => {
+      if (full) {
+        couch.gameHidden = middle;
+        couch.fullCover(middle ? "hidden" : locked ? "whole" : "strips");
+        return;
+      }
+      if (hide) couch.hideGame();
+      else couch.showGame(boxEl?.getBoundingClientRect() ?? null);
+    });
   });
 
   // ---- The live game box: tell the Windows side where it is ----
@@ -346,8 +363,14 @@
         closeControls();
         return true;
       }
+      // Full screen: A goes back to the lobby view (Y only goes into full screen).
+      if (couch.fullscreen && input === "a") return toggleFull(), true;
+      if (input === "rb" && couch.gameRunning) return void refreshGame(), true;
       if (input === "x") return switchRole(), true;
-      if (input === "y") return toggleFull(), true;
+      if (input === "y") {
+        if (!couch.fullscreen) void toggleFull();
+        return true;
+      }
       if (input === "menu") return gameMenu(), true;
       if (input === "lb") return toggleOpen(), true;
       if (input === "b") return leaveAsk(), true;
@@ -386,11 +409,14 @@
     { buttons: ["a"], label: "Pick seat" },
     { buttons: ["x"], label: "Switch play / watch" },
     { buttons: ["y"], label: "Full screen" },
+    ...(couch.gameRunning ? ([{ buttons: ["rb"], label: "Refresh game" }] satisfies GuideItem[]) : []),
     ...(isHost ? ([{ buttons: ["start"], label: "Game menu" }, { buttons: ["lb"], label: "Open / closed" }] satisfies GuideItem[]) : []),
     { buttons: ["b"], label: controls ? "Close lobby controls" : isHost ? "Close lobby" : "Leave" },
   ]);
   const fsGuide = $derived<GuideItem[]>(padLocked ? lockedGuide : [
-    { buttons: ["y"], label: "Back to lobby view" },
+    { buttons: ["a"], label: "Back to lobby" },
+    ...(couch.gameRunning ? ([{ buttons: ["rb"], label: "Refresh game" }] satisfies GuideItem[]) : []),
+    { buttons: ["b"], label: controls ? "Keep playing" : isHost ? "Close lobby" : "Leave" },
     ...(isHost ? ([{ buttons: ["start"], label: "Game menu" }] satisfies GuideItem[]) : []),
   ]);
   const fsNote = $derived(lost ? "Only your screen stops. The others keep playing." : "Nobody else is paused. The note fades after a few seconds.");

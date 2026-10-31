@@ -34,6 +34,8 @@ export interface Lobby extends Omit<LobbySummary, "watchers"> {
   watchers: CouchUser[];
   relay: { server: string; port: number; session: string } | null;
   ended: null | "host-left" | "host-ended";
+  /** The game fills the screen (the Windows side's own copy; the in-game menu can change it too). */
+  fullscreen?: boolean;
 }
 
 /** The letters a code can use: no O / 0 / I / 1, so nothing gets mixed up. */
@@ -154,6 +156,11 @@ class Couch {
   private got(l: Lobby | null) {
     this.lobby = l;
     this.lobbyAt = Date.now();
+    // Full screen changed on the Windows side (for example "Back to lobby" in the in-game menu). A copy
+    // sent just before our own switch is ignored, so the screen never flips back.
+    if (l && typeof l.fullscreen === "boolean" && l.fullscreen !== this.fullscreen && Date.now() - this.fullAt > 1500) {
+      this.fullscreen = l.fullscreen;
+    }
     if (l) {
       this.lastCode = l.code;
       if (l.ended) this.ended = { reason: l.ended };
@@ -375,6 +382,25 @@ class Couch {
     invoke("couch_box", b).catch((e) => console.warn("couch_box", e));
   }
 
+  /** In full screen, what covers the game: lobby controls leave strips for the popup and its buttons;
+   *  a panel in the middle hides it. */
+  fullCover(cover: "whole" | "strips" | "hidden") {
+    if (inTauri) invoke("couch_full_cover", { cover }).catch((e) => console.warn("couch_full_cover", e));
+  }
+
+  /** "Refresh game": back in control without losing progress (the Windows side saves the spot, restarts
+   *  the game and loads the spot; a friend just restarts and gets the host's game where it is). */
+  async refreshGame(): Promise<boolean> {
+    if (!inTauri) return true;
+    try {
+      this.got(await invoke<Lobby>("couch_refresh"));
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+  }
+
   /** True while a panel needs the game window out of the way (see hideGame). */
   gameHidden = $state(false);
   /** A panel or note has to show where the game window is: a zero-size box hides the game window
@@ -406,8 +432,10 @@ class Couch {
     return !!this.lobby && !this.ended && (g === "stopped" || g === "disconnected");
   }
 
+  private fullAt = 0;
   async setFullscreen(on: boolean) {
     this.fullscreen = on;
+    this.fullAt = Date.now();
     if (!inTauri) return;
     try {
       await invoke("couch_fullscreen", { on });

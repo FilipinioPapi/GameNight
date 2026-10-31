@@ -274,6 +274,8 @@ pub fn run() {
             couch::couch_leave,
             couch::couch_box,
             couch::couch_fullscreen,
+            couch::couch_full_cover,
+            couch::couch_refresh,
             toggle_fullscreen,
             updater::check_update,
             updater::download_update,

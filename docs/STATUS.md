@@ -8,6 +8,9 @@ Strongly inferred, Unknown.
   Settings › Layout (PR #10, merged into PR #8's branch). Retro glow style (banded background, VT323,
   pulsing glows) approved 2026-10-31, in review on branch `claude/project-thread-yyq3jl`.
   Details: `docs/HANDOFF_LIBRARY.md`.
+- Box art in its real shape per console, RomM style (approved 2026-10-31): branch
+  `claude/project-thread-n4n7r0`, see `docs/HANDOFF_LIBRARY.md`. Confirmed in Chromium with 181 of Jayden's
+  real covers and a pad test; Windows CI on the PR. Unknown: how it looks on his PC.
 - Smooth, console-like menu movement on every screen: its own thread ("Make menu movement smooth and console-like").
 - Confirmed: builds, screenshots, pretend-controller test in the browser, GitHub Windows CI.
   Unknown: how it looks and feels on Jayden's PC with his real controller.

@@ -337,10 +337,10 @@
         <div class="art">
           {@render cover(g, [10, 15])}
           {#if local.downloading !== undefined}<div class="dl"><div style="width:{local.downloading * 100}%"></div></div>{/if}
-          {#if mouse}<span class="hover-open"><span class="btn primary small"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>Open</span></span>{/if}
+          {#if mouse}<span class="hover-open"><span class="playdot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg></span></span>{/if}
         </div>
       </div>
-      <span class="name">{#if fav && !mouse}{@render star(10)}{/if}<span>{g.title}</span></span>
+      <span class="name">{#if fav}{@render star(10)}{/if}<span>{g.title}</span></span>
       <span class="meta">
         <!-- Lists that mix consoles say which console; a console's own tab says players and size. -->
         {#if current === "all" || current === "fav" || searching}<span class="badge">{c.short}</span>
@@ -365,7 +365,7 @@
 {#snippet grid(list: Game[], mouse: boolean)}
   {@const one = !searching && current !== "fav" && current !== "all" ? BOX_SHAPE[current] : null}
   {#if one}
-    <div class="grid one" style="--w:{Math.round(boxHeight(one) * one * (mouse ? 0.8 : 0.92))}px;--cr:{one}">
+    <div class="grid one" style="--w:{Math.round(boxHeight(one) * one * (mouse ? 0.84 : 0.92))}px;--cr:{one}">
       {#each list as g (g.id)}{@render card(g, mouse)}{/each}
     </div>
   {:else}
@@ -751,7 +751,6 @@
   .back { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; font-size: 14px; color: var(--muted); }
   .back:hover { color: var(--text); }
   .mk { flex: 1; display: flex; min-height: 0; }
-  .mk .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   aside { width: 240px; flex-shrink: 0; border-right: 1px solid var(--line-soft); padding: 14px 12px; display: flex; flex-direction: column; gap: 2px; background: var(--bg-side); }
   .side { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 12px; border-radius: 10px; border: 0; background: transparent; color: var(--text); text-align: left; width: 100%; flex-shrink: 0; }
   .side:hover { background: var(--panel); }
@@ -774,9 +773,10 @@
     background: rgba(18, 12, 12, 0.85); border: 1px solid var(--amber); display: flex; align-items: center; justify-content: center;
     opacity: 0; transition: opacity 0.1s;
   }
-  .starbtn.on, .cardwrap:hover .starbtn, .starbtn:focus-visible, :global(.pad-mode) .starbtn:focus { opacity: 1; }
+  .cardwrap:hover .starbtn, .starbtn:focus-visible, :global(.pad-mode) .starbtn:focus { opacity: 1; }
   .hover-open { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); }
   .cardwrap.mouse:hover .hover-open { display: flex; }
+  .playdot { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; padding-left: 3px; box-sizing: border-box; background: var(--red-2); color: #fff; box-shadow: 0 3px 0 #000, 0 0 12px rgba(236, 40, 46, 0.6); }
   .cardwrap.mouse .card:hover .art { outline: 2px solid var(--red); outline-offset: 2px; }
 
   .keys { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-top: 1px solid var(--line-soft); background: #0e0909; font-size: 12px; color: var(--muted-2); white-space: nowrap; overflow: hidden; }

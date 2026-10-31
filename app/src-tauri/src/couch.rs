@@ -160,6 +160,9 @@ struct Local {
     /// The bezel is on, and which of its pages shows: 0 = the bezel (full screen), 1 = empty (the small box).
     bezel: bool,
     overlay_page: u8,
+    /// RetroArch has had time to load the bezel (it loads in the background after the game starts; a page
+    /// flip sent before that is lost and the pages would be the wrong way round).
+    bezel_ready: bool,
 }
 
 struct Game {
@@ -332,6 +335,7 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         l.look = game.settings.picture.clone();
         l.bezel = launch.bezel;
         l.overlay_page = 0;
+        l.bezel_ready = false;
         l.gen
     };
     log.line(&format!(
@@ -346,6 +350,10 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
     std::thread::spawn(move || monitor(app2, launch, watched, gen, host, log2));
     Ok(Ra { child })
 }
+
+/// How long after RetroArch starts before Game Night flips the bezel's pages (measured: a flip sent at 2 s
+/// was sometimes lost, CI run 41234261790).
+const BEZEL_SETTLE: Duration = Duration::from_secs(5);
 
 /// Watches the local RetroArch: running after 2 s, one retry if it closes sooner, "disconnected" from its log.
 fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mutex<Option<std::process::Child>>>, gen: u64, host: bool, log: FileLog) {
@@ -381,6 +389,10 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
             }
             launch.after_exit();
             log.line(&format!("RetroArch closed ({status})"));
+            if !status.success() {
+                // Keep its log: the next start replaces retroarch.log.
+                let _ = std::fs::copy(&launch.log_file, launch.log_file.with_file_name("retroarch-crash.log"));
+            }
             {
                 let mut l = lock(&couch.local);
                 if !mine(&l) {
@@ -400,6 +412,10 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
             let mut l = lock(&couch.local);
             if l.state == RaState::Starting && started.elapsed() >= QUICK_EXIT {
                 l.state = RaState::Running;
+                changed = true;
+            }
+            if l.state == RaState::Running && !l.bezel_ready && started.elapsed() >= BEZEL_SETTLE {
+                l.bezel_ready = true;
                 changed = true;
             }
         }
@@ -429,7 +445,7 @@ fn sync_bezel<R: Runtime>(app: &AppHandle<R>) {
     let want = if couch.gamebox.fullscreen() { 0 } else { 1 };
     let port = {
         let mut l = lock(&couch.local);
-        if !l.bezel || l.state != RaState::Running || l.overlay_page == want {
+        if !l.bezel || !l.bezel_ready || l.state != RaState::Running || l.overlay_page == want {
             return;
         }
         l.overlay_page = want;

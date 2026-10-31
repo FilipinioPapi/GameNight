@@ -293,6 +293,30 @@ pub fn hidden_menu_lines(theme: &Path, online: bool) -> Vec<(String, String)> {
         ("menu_show_overlays", "false".into()),
         ("menu_show_rewind", "false".into()),
         ("menu_show_latency", "false".into()),
+        // RetroArch's main menu and tabs are empty too. Its hidden menu still hears the pad while Game Night's
+        // menu shows, so B there goes back to its main menu: nothing may be left to press (e.g. its Netplay
+        // menu, which can stop hosting).
+        ("menu_show_load_disc", "false".into()),
+        ("menu_show_dump_disc", "false".into()),
+        ("menu_show_eject_disc", "false".into()),
+        ("menu_show_online_updater", "false".into()),
+        ("menu_show_core_updater", "false".into()),
+        ("menu_show_legacy_thumbnail_updater", "false".into()),
+        ("menu_show_core_manager_steam", "false".into()),
+        ("menu_show_reboot", "false".into()),
+        ("menu_show_shutdown", "false".into()),
+        ("menu_show_advanced_settings", "false".into()),
+        ("content_show_settings", "false".into()),
+        ("content_show_favorites", "false".into()),
+        ("content_show_images", "false".into()),
+        ("content_show_music", "false".into()),
+        ("content_show_video", "false".into()),
+        ("content_show_netplay", "false".into()),
+        ("content_show_history", "false".into()),
+        ("content_show_playlists", "false".into()),
+        ("content_show_explore", "false".into()),
+        ("content_show_add_entry", "0".into()),
+        ("content_show_contentless_cores", "0".into()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -301,7 +325,7 @@ pub fn hidden_menu_lines(theme: &Path, online: bool) -> Vec<(String, String)> {
         "resume_content", "restart_content", "close_content", "savestate_submenu", "save_load_state", "replay", "take_screenshot",
         "undo_save_load_state", "add_to_favorites", "add_to_playlist", "start_recording", "start_streaming", "set_core_association",
         "reset_core_association", "options", "core_options_flush", "controls", "cheats", "shaders", "save_core_overrides",
-        "save_content_dir_overrides", "save_game_overrides", "information", "download_thumbnails",
+        "save_content_dir_overrides", "save_game_overrides", "information", "download_thumbnails", "game_ai",
     ] {
         v.push((format!("quick_menu_show_{k}"), "false".into()));
     }
@@ -387,6 +411,10 @@ mod tests {
         assert!(solo.contains(&("menu_pause_libretro".into(), "true".into())));
         let online = hidden_menu_lines(Path::new("t.cfg"), true);
         assert!(online.contains(&("menu_pause_libretro".into(), "false".into())));
+        // Nothing left to press in RetroArch's hidden menu, Netplay menu included.
+        for k in ["content_show_netplay", "content_show_settings", "menu_show_load_content", "quick_menu_show_resume_content"] {
+            assert!(online.contains(&(k.into(), "false".into())), "{k}");
+        }
         assert!(hidden_menu_theme().lines().all(|l| l.ends_with("\"0x00000000\"")));
     }
 }

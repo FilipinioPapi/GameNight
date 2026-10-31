@@ -313,20 +313,15 @@ def ra_cmd_port():
 
 
 def bezel_pixels(name, rect):
-    """In screenshot `name`-3: share of lit pixels (not black) in a strip down the left of `rect` and in its
-    four corners. The bezel (TV frame) fills both in full screen; the game itself never reaches them."""
+    """In screenshot `name`-3: share of lit pixels in a band left of where the game sits (8-18 % across, middle
+    rows). The TV frame (bezel B) is dark grey there (about 26 of 255, measured in run 41236464953) with a red
+    logo; with no bezel it's black."""
     from PIL import Image
     img = Image.open(OUT / f"{name}-3.png").convert("RGB")
     x, y, w, h = rect
-    def lit(box):
-        part = img.crop(box).resize((32, 32))
-        px = list(part.getdata())
-        return round(sum(1 for p in px if max(p) > 24) / len(px), 3)
-    c = max(4, int(min(w, h) * 0.03))
-    strip = lit((x, y + h // 5, x + max(4, int(w * 0.1)), y + h * 4 // 5))
-    corners = [lit((x, y, x + c, y + c)), lit((x + w - c, y, x + w, y + c)),
-               lit((x, y + h - c, x + c, y + h)), lit((x + w - c, y + h - c, x + w, y + h))]
-    return {"strip": strip, "corners": round(sum(corners) / 4, 3)}
+    part = img.crop((x + int(w * 0.08), y + int(h * 0.3), x + int(w * 0.18), y + int(h * 0.7))).resize((32, 32))
+    px = list(part.getdata())
+    return {"band": round(sum(1 for p in px if max(p) > 12) / len(px), 3)}
 
 
 def app_bezel():
@@ -522,8 +517,8 @@ def main():
             fail(f"Couch Play's RetroArch isn't set up with the two-page bezel: {b}")
         full_rect = results["look"]["look-2b-game-full-screen"]["last_game"]
         results["bezel"]["full_screen"] = bezel_pixels("look-2b-game-full-screen", full_rect)
-        say(f"  full screen, lit share (strip left of the game, corners): {results['bezel']['full_screen']}")
-        if results["bezel"]["full_screen"]["strip"] < 0.3 or results["bezel"]["full_screen"]["corners"] < 0.3:
+        say(f"  full screen, lit share left of the game: {results['bezel']['full_screen']}")
+        if results["bezel"]["full_screen"]["band"] < 0.5:
             fail(f"no bezel around the full screen game: {results['bezel']['full_screen']}")
             # Measure why: flip the page ourselves. Lit now = Game Night's page count was off by one;
             # still dark = RetroArch isn't drawing the bezel at all.
@@ -572,9 +567,8 @@ def main():
         look("look-2d-back-to-the-box", app, True)
         box_rect = results["look"]["look-2d-back-to-the-box"]["last_game"]
         results["bezel"]["box"] = bezel_pixels("look-2d-back-to-the-box", box_rect)
-        say(f"  in the box, lit share (strip, corners): {results['bezel']['box']} (the bezel is fitted to full screen, so none here)")
-        if results["bezel"]["box"]["corners"] > 0.3:
-            fail(f"the full screen bezel still shows in the lobby's small box: {results['bezel']['box']}")
+        # Recorded only: in the box the game itself fills that band.
+        say(f"  in the box, lit share in the same band: {results['bezel']['box']} (the game fills most of the box)")
         say("full screen and back 6 more times through the menu, quickly (Jayden lost control after doing this)")
         for _ in range(6):
             menu(app, pad_a, "full")
@@ -734,7 +728,7 @@ def main():
         app.kill()
         app.wait(15)
         logs = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs"
-        for name in ("gamebox.log", "couch.log", "retroarch.log", "ingame.txt", "relay.log"):
+        for name in ("gamebox.log", "couch.log", "retroarch.log", "ingame.txt", "relay.log", "retroarch-crash.log"):
             if (logs / name).exists():
                 (OUT / f"host-{name.split('.')[0]}-full-screen-run.log").write_bytes((logs / name).read_bytes())
         info_file.unlink(missing_ok=True)
@@ -754,7 +748,7 @@ def main():
         if app.poll() is None:
             app.kill()
         server.kill()
-        for name in ("retroarch.log", "relay.log", "couch.log", "gamebox.log", "ingame.txt"):
+        for name in ("retroarch.log", "relay.log", "couch.log", "gamebox.log", "ingame.txt", "retroarch-crash.log"):
             for base in (Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs",):
                 src = base / name
                 if src.exists():

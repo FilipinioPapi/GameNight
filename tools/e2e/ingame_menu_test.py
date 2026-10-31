@@ -75,6 +75,10 @@ QUIET_MENU = {
         "controls", "cheats", "shaders", "save_core_overrides", "save_content_dir_overrides", "save_game_overrides",
         "information", "download_thumbnails")},
 }
+# RetroArch's own menu drawn fully see-through (every colour's alpha 0): when it is open behind Game Night's menu
+# only to hold your presses back, nothing of it should show on the game.
+INVISIBLE_THEME = "".join(f"rgui_{k}_color = \"0x00000000\"\n" for k in (
+    "entry_normal", "entry_hover", "title", "bg_dark", "bg_light", "border_dark", "border_light", "shadow", "particle"))
 results = {"parts": []}
 
 
@@ -367,6 +371,11 @@ class Trio(cl.Couch):
         common = {"netplay_allow_pausing": "true", "menu_pause_libretro": "false", "pause_nonactive": "false",
                   **DISPLAY, **QUIET_MENU}
         bezel = make_test_bezel(WORK / "couch bezel", (256, 224), (16, 16, 224, 192))
+        theme = WORK / "invisible-menu.cfg"
+        theme.write_text(INVISIBLE_THEME, encoding="ascii")
+        common.update({"rgui_menu_color_theme": "0", "rgui_menu_theme_preset": str(theme), "menu_rgui_transparency": "true",
+                       "menu_rgui_shadows": "false", "rgui_particle_effect": "0", "menu_widget_scale_auto": "true",
+                       "menu_enable_widgets": "false"})
         host = self.person("P1", 0, slots[1], {**common, "netplay_request_device_p1": "true",
                                                 "input_overlay_enable": "true", "input_overlay": str(bezel)})
         self.person("P2", 1, slots[2], {**common, "netplay_request_device_p2": "true"})
@@ -448,11 +457,11 @@ class Trio(cl.Couch):
                 fail(f"couch: switching windows paused the game ({e['stopped_ms']})")
 
             # ---- "your menu is open": RetroArch's own menu, open and hidden, for P2 only
-            res["menu"] = {}
+            res["menu"] = {"p2_picture_menu_closed": self.window_picture("P2", "couch-3-p2-menu-closed")}
             e = self.timed("P2's RetroArch menu opens", lambda: p2.send("MENU_TOGGLE"), 4)
             res["menu"]["open"] = e
             res["menu"]["pad_b_goes_nowhere"] = self.pad_goes_nowhere(pads[2], "P2's menu open, pad B")
-            grab().save(OUT / "couch-3-p2-menu-open.png")
+            res["menu"]["p2_picture_menu_open"] = self.window_picture("P2", "couch-3-p2-menu-open")
             mash_b = self.masher(pads[2], 15, "menu")
             r = self.mash_and_compare({1: pads[1]}, 15, "P2's menu open: pad A plays, pad B pressed into the menu", mash_b)
             res["menu"]["sync_with_menu_open"] = r
@@ -468,6 +477,9 @@ class Trio(cl.Couch):
                 res["menu"]["needed_second_toggle"] = self.seat_check(owners, "after a second toggle")
             res["menu"]["blocks_own_presses"] = bool(res["menu"]["pad_b_goes_nowhere"]) and not r["seat_states_not_from_their_pad"]
             res["menu"]["game_kept_going"] = max(res["menu"]["open"]["stopped_ms"].values()) < 1500
+            pic = res["menu"].get("p2_picture_menu_open") or {}
+            res["menu"]["invisible_while_open"] = (pic.get("pattern") or 99) < 3 and (pic.get("changed_share") or 0) > 0.3
+            say(f"  P2's window with its RetroArch menu open: {pic} (menu invisible and game live: {res['menu']['invisible_while_open']})")
             if not res["menu"]["blocks_own_presses"]:
                 fail("couch: with P2's menu open, pad B still reached the game")
 
@@ -503,6 +515,18 @@ class Trio(cl.Couch):
             for line in v:
                 say(f"   | {k}: {line}")
         return {"what": label, "stopped_ms": stopped, "note": note, "netplay_log": {k: v for k, v in logs.items() if v}}
+
+    def window_picture(self, who, name):
+        """How P2's game window looks: is the game live in it, and is anything drawn on top (a plain look on a
+        flat-colour game has no pattern, so menu text would show as pattern)."""
+        h = self.copies[who].main_window()
+        if not h:
+            return None
+        rect = cl.client_screen_rect(h)
+        box, imgs = changed_box()
+        imgs[-1].crop((rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3])).save(OUT / f"{name}.png")
+        live = cl.live_in((rect[0] + 8, rect[1] + 8, rect[2] - 16, rect[3] - 16))[0]
+        return {"window": rect, "pattern": structure(imgs, rect), "changed_share": live["changed_share"]}
 
     def ensure_running(self):
         """After the pause checks: make sure nobody is left paused."""

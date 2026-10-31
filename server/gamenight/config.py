@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -29,6 +30,8 @@ class Config:
     session_days: int
     trusted_proxies: tuple
     log_level: str
+    base_path: str = ""          # e.g. "/gamenight" behind Nginx Proxy Manager; "" = none
+
 
     @property
     def secure(self) -> bool:
@@ -37,6 +40,22 @@ class Config:
     @property
     def redirect_uri(self) -> str:
         return f"{self.public_url}/auth/callback"
+
+
+_BASE_RE = re.compile(r"^/[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
+_TAKEN = {"api", "app", "auth", "healthz"}
+
+
+def base_path(raw: str) -> str:
+    """BASE_PATH: empty, or one folder name like "/gamenight" (a trailing slash is dropped)."""
+    value = raw.strip().rstrip("/")
+    if not value:
+        return ""
+    if not value.startswith("/"):
+        value = "/" + value
+    if not _BASE_RE.match(value) or value[1:].lower() in _TAKEN:
+        raise SystemExit(f"BASE_PATH must be blank or one name like /gamenight (letters, numbers, - or _), not {raw!r}")
+    return value
 
 
 def load() -> Config:
@@ -59,6 +78,7 @@ def load() -> Config:
         session_days=int(_get("SESSION_DAYS", "30")),
         trusted_proxies=tuple(proxies),
         log_level=_get("LOG_LEVEL", "INFO").upper(),
+        base_path=base_path(_get("BASE_PATH")),
     )
     if not cfg.romm_token and not (cfg.romm_user and cfg.romm_password):
         raise SystemExit("Add either ROMM_TOKEN, or ROMM_USER and ROMM_PASSWORD, to the Game Night container")

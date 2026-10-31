@@ -14,7 +14,7 @@
   import ButtonGuide, { type GuideItem } from "../components/ButtonGuide.svelte";
   import { app, type LibraryTab } from "../lib/state.svelte";
   import { CONSOLES, PLAYABLE_NOW, TAB_ART, consoleById } from "../lib/consoles";
-  import { formatSize, isCoop, listGames, localInfo, type Game } from "../lib/library";
+  import { formatSize, isCoop, listGames, localInfo, playedWhen, type Game } from "../lib/library";
   import { remember, shapeOf } from "../lib/boxart.svelte";
   import { moveFocus, useScreenButtons, type Dir } from "../lib/gamepad";
   import { inTauri, type RecentPlay } from "../lib/settings";
@@ -209,20 +209,6 @@
   });
 
   // ---- Words ----
-  function when(r: RecentPlay): string {
-    const d = new Date(r.at);
-    const now = new Date();
-    const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-    const ago = Math.round((day(now) - day(d)) / 86400000);
-    const base = ago <= 0 ? (d.getHours() >= 17 ? "Played tonight" : "Played today")
-      : ago === 1 ? "Played yesterday"
-      : ago < 7 ? `Played on ${d.toLocaleDateString("en-GB", { weekday: "long" })}`
-      : `Played on ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
-    if (!r.minutes) return base;
-    const h = Math.floor(r.minutes / 60);
-    const m = r.minutes % 60;
-    return `${base} · ${h ? `${h} h ${m ? m + " min" : ""}`.trim() : `${m} min`}`;
-  }
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
   const guide = $derived<GuideItem[]>([
@@ -346,14 +332,14 @@
             <div class="rcard mouse">
               <button class="rbody" data-game={g.id} onclick={() => open(g)} onmouseenter={() => (hoveredId = g.id)} onmouseleave={() => (hoveredId = null)}>
                 <span class="art rart">{@render cover(g, [6, 9])}</span>
-                <span class="rtext"><b>{g.title}</b><span>{c.short} · {when(r).replace("Played ", "")}</span></span>
+                <span class="rtext"><b>{g.title}</b><span>{c.short} · {playedWhen(r).replace("Played ", "")}</span></span>
               </button>
               <button class="btn primary small rplay" onclick={() => quickPlay(g)}><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>Play</button>
             </div>
           {:else}
             <button class="rcard" data-game={g.id} onclick={() => open(g)}>
               <span class="art rart">{@render cover(g, [6, 9])}</span>
-              <span class="rtext"><b>{g.title}</b><span>{when(r)}</span><span class="badges"><span class="badge">{c.short}</span></span></span>
+              <span class="rtext"><b>{g.title}</b><span>{playedWhen(r)}</span><span class="badges"><span class="badge">{c.short}</span></span></span>
             </button>
           {/if}
         {/each}

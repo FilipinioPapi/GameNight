@@ -374,6 +374,7 @@ class TunnelBridge(threading.Thread):
         self.writer = None
         self.t0 = time.time()
         self.events = []  # what happened on the relay connections, with seconds since the bridge started
+        self.tasks = set()  # running link tasks (see main)
 
     def note(self, what):
         self.events.append((round(time.time() - self.t0, 2), what))
@@ -420,7 +421,12 @@ class TunnelBridge(threading.Thread):
                 link = await reader.readexactly(12)
                 fut = self.loop.create_future()
                 waiting[link] = fut
-                asyncio.ensure_future(self.open_link(link, fut, writer))
+                # Keep a reference: asyncio only holds tasks weakly, so an unreferenced link task can be thrown
+                # away by the garbage collector mid-game. That was the cause of the "private way" drops in runs
+                # 41169114880 and 41178763017 ("Task was destroyed but it is pending! ... open_link" at the drop).
+                task = asyncio.ensure_future(self.open_link(link, fut, writer))
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
             elif magic == RATA:
                 link = await reader.readexactly(12)
                 addr = await reader.readexactly(16)
@@ -462,8 +468,10 @@ class TunnelBridge(threading.Thread):
                 self.stats[counter] += len(data)
                 writer.write(data)
                 await writer.drain()
-        except Exception as e:  # noqa: BLE001
+        except BaseException as e:  # noqa: BLE001 - includes being cancelled or thrown away
             how = f"broke: {type(e).__name__}: {e}"
+            if not isinstance(e, Exception):
+                raise  # still noted below
         finally:
             self.note(f"{label} {how}")
             writer.close()

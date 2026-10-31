@@ -60,6 +60,16 @@ export const consoleById = (id: ConsoleId): ConsoleInfo => {
   return c;
 };
 
+/**
+ * Each console's usual box art shape (width / height), measured from Jayden's RomM covers on 2026-10-31
+ * (181 covers): NES 0.73, SNES 1.37, Genesis 0.71, GB/GBC 1.00, GBA 1.01, arcade flyers 0.73,
+ * PS1 1.165 (jewel case with spine), N64 1.37, GameCube 0.71, PS2 0.71. Wii: no covers saved yet,
+ * same case as GameCube. Used until a cover loads; each cover then keeps its own real shape.
+ */
+export const BOX_SHAPE: Record<ConsoleId, number> = {
+  nes: 0.73, snes: 1.37, gen: 0.71, gb: 1, gba: 1, arc: 0.73, ps1: 1.165, n64: 1.37, gc: 0.71, wii: 0.71, ps2: 0.71,
+};
+
 /** Pictures for the two tabs that aren't consoles. */
 export const TAB_ART = { fav: "favourites", all: "all-games" } as const;
 

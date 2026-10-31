@@ -15,7 +15,8 @@
   import { app, type LibraryTab } from "../lib/state.svelte";
   import { CONSOLES, PLAYABLE_NOW, TAB_ART, consoleById } from "../lib/consoles";
   import { formatSize, isCoop, listGames, localInfo, playedWhen, type Game } from "../lib/library";
-  import { remember, shapeOf } from "../lib/boxart.svelte";
+  import { boxHeight, remember, shapeOf } from "../lib/boxart.svelte";
+  import { BOX_SHAPE } from "../lib/consoles";
   import { moveFocus, useScreenButtons, type Dir } from "../lib/gamepad";
   import { inTauri, type RecentPlay } from "../lib/settings";
   import { couch, maxPlayersOf, ONLINE_CONSOLES } from "../lib/couch.svelte";
@@ -323,37 +324,32 @@
   {/if}
 {/snippet}
 
-<!-- One game tile. The mouse layout adds a star button and an "Open" cover on hover. -->
+<!-- One game tile: the whole cover in its own shape (never cropped or stretched), then its name and
+     details underneath, so nothing sits on top of the art. The mouse layout adds a star and an "Open" cover on hover. -->
 {#snippet card(g: Game, mouse: boolean)}
   {@const c = consoleById(g.console)}
   {@const local = localInfo(g.id)}
   {@const fav = app.isFavourite(g.id)}
-  <div class="cardwrap" class:mouse>
+  {@const r = shapeOf(g.id, g.console)}
+  <div class="cardwrap" class:mouse class:wider={r > BOX_SHAPE[g.console] + 0.02} style="--r:{r}">
     <button class="card" data-game={g.id} onclick={() => open(g)} onmouseenter={() => (hoveredId = g.id)} onmouseleave={() => (hoveredId = null)}>
-      <div class="art" style="aspect-ratio:{shapeOf(g.id)}">
-        {@render cover(g, [10, 15])}
-        {#if fav && !mouse}<span class="favdot" title="Favourite">{@render star(12)}</span>{/if}
-        {#if local.downloading !== undefined}
-          <div class="dl"><div style="width:{local.downloading * 100}%"></div></div>
-        {:else if local.onPC}
-          <span class="state ok" title="On this PC"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg></span>
-        {:else if !mouse}
-          <span class="state" title="Download to play"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E3D2D3" stroke-width="2.5" aria-hidden="true"><path d="M12 4v12M6 11l6 6 6-6M5 20h14" /></svg></span>
-        {/if}
-        {#if mouse}<span class="hover-open"><span class="btn primary small"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>Open</span></span>{/if}
+      <div class="slot">
+        <div class="art">
+          {@render cover(g, [10, 15])}
+          {#if local.downloading !== undefined}<div class="dl"><div style="width:{local.downloading * 100}%"></div></div>{/if}
+          {#if mouse}<span class="hover-open"><span class="playdot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg></span></span>{/if}
+        </div>
       </div>
-      <div class="meta">
+      <span class="name">{#if fav}{@render star(10)}{/if}<span>{g.title}</span></span>
+      <span class="meta">
         <!-- Lists that mix consoles say which console; a console's own tab says players and size. -->
+        {#if current === "all" || current === "fav" || searching}<span class="badge">{c.short}</span>
+        {:else}<span class="badge">{g.players === "1" ? "1P" : g.players + "P"}</span>{/if}
         {#if isCoop(g) && c.coop}<span class="badge coop">Co-op</span>{/if}
-        {#if current === "all" || current === "fav" || searching}
-          <span class="badge">{c.short}</span>
-          {#if local.downloading !== undefined}<span class="note amber">{Math.round(local.downloading * 100)}%</span>{/if}
-        {:else}
-          <span class="badge">{g.players === "1" ? "1P" : g.players + "P"}</span>
-          {#if local.downloading !== undefined}<span class="note amber">Downloading {Math.round(local.downloading * 100)}%</span>
-          {:else if !local.onPC}<span class="note">{formatSize(g.sizeBytes)}</span>{/if}
-        {/if}
-      </div>
+        {#if local.downloading !== undefined}<span class="note amber">{Math.round(local.downloading * 100)}%</span>
+        {:else if local.onPC}<span class="note ok" title="On this PC"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg>ON PC</span>
+        {:else if current !== "all" && current !== "fav" && !searching}<span class="note">{formatSize(g.sizeBytes)}</span>{/if}
+      </span>
     </button>
     {#if mouse}
       <button class="starbtn" class:on={fav} title={fav ? "Unfavourite (F)" : "Favourite (F)"} aria-label={fav ? `Remove ${g.title} from favourites` : `Add ${g.title} to favourites`} onclick={() => toggleFav(g.id)}>
@@ -363,10 +359,20 @@
   </div>
 {/snippet}
 
+<!-- A console's own tab: one box shape, so the covers line up in neat columns, sized for that console
+     (tall NES boxes, wide SNES boxes). Lists that mix consoles: shelves where every cover is the same
+     height and keeps its own width, like RomM. -->
 {#snippet grid(list: Game[], mouse: boolean)}
-  <div class="grid">
-    {#each list as g (g.id)}{@render card(g, mouse)}{/each}
-  </div>
+  {@const one = !searching && current !== "fav" && current !== "all" ? BOX_SHAPE[current] : null}
+  {#if one}
+    <div class="grid one" style="--w:{Math.round(boxHeight(one) * one * (mouse ? 0.84 : 0.92))}px;--cr:{one}">
+      {#each list as g (g.id)}{@render card(g, mouse)}{/each}
+    </div>
+  {:else}
+    <div class="grid shelf" style="--h:{mouse ? 150 : 172}px">
+      {#each list as g (g.id)}{@render card(g, mouse)}{/each}
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet sorts(withRecent: boolean)}
@@ -412,14 +418,14 @@
           {#if mouse}
             <div class="rcard mouse">
               <button class="rbody" data-game={g.id} onclick={() => open(g)} onmouseenter={() => (hoveredId = g.id)} onmouseleave={() => (hoveredId = null)}>
-                <span class="art rart">{@render cover(g, [6, 9])}</span>
+                <span class="art rart" style="aspect-ratio:{shapeOf(g.id, g.console)}">{@render cover(g, [6, 9])}</span>
                 <span class="rtext"><b>{g.title}</b><span>{c.short} · {playedWhen(r).replace("Played ", "")}</span></span>
               </button>
               <button class="btn primary small rplay" onclick={() => quickPlay(g)}><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>Play</button>
             </div>
           {:else}
             <button class="rcard" data-game={g.id} onclick={() => open(g)}>
-              <span class="art rart">{@render cover(g, [6, 9])}</span>
+              <span class="art rart" style="aspect-ratio:{shapeOf(g.id, g.console)}">{@render cover(g, [6, 9])}</span>
               <span class="rtext"><b>{g.title}</b><span>{playedWhen(r)}</span><span class="badges"><span class="badge">{c.short}</span></span></span>
             </button>
           {/if}
@@ -513,8 +519,11 @@
       <div class="dither" aria-hidden="true" style="--c:{d.color};--a:{d.at}%;--b:{d.at + 3}%"></div>
     {/each}
     <header class="pad-head">
-      <span class="lucky title glow">LIBRARY</span>
-      <span class="count">{plural(games.length, "game")} · {onPCCount} on this PC</span>
+      <img class="tvlogo" src="/brand/crt-logo.gif" alt="Game Night logo" />
+      <div class="hcol">
+        <span class="crumb">GAME NIGHT › LIBRARY</span>
+        <span class="ttl">LIBRARY<span class="count">{plural(games.length, "game")} · {onPCCount} on this PC</span></span>
+      </div>
       <div class="right">{@render searchBox(`SEARCH ${games.length} GAMES_`)}</div>
     </header>
 
@@ -594,7 +603,14 @@
   .search input { width: 320px; height: 40px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); padding: 0 12px 0 38px; font-size: 14px; }
 
   /* ---------- Controller layout ---------- */
-  .pad-head { height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 24px; }
+  .pad-head { height: 92px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 4px 28px 0; }
+  .pad-head .tvlogo { display: block; flex-shrink: 0; width: 50px; height: 60px; filter: drop-shadow(0 0 10px rgba(236, 40, 46, 0.35)) drop-shadow(0 4px 0 #000); }
+  .pad-head .hcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .pad-head .crumb { font-family: VT323, monospace; font-size: 18px; letter-spacing: 0.12em; color: var(--muted); }
+  .pad-head .ttl {
+    display: flex; align-items: baseline; gap: 18px; font-family: "Press Start 2P", monospace; font-size: 22px; line-height: 1.1; white-space: nowrap; color: #ff2a32;
+    text-shadow: 0 0 3px #ff5a60, 0 0 12px #ec282e, 0 0 26px rgba(236, 40, 46, 0.85), 3px 3px 0 #000;
+  }
   .tabbar {
     flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 4px 16px 14px;
     border-bottom: 1px solid #5a2225; box-shadow: 0 1px 12px rgba(236, 40, 46, 0.2);
@@ -628,7 +644,8 @@
     display: flex; align-items: center; gap: 16px; height: 112px; padding: 12px; border-radius: 14px; border: 1px solid var(--line);
     background: var(--panel); color: var(--text); text-align: left; min-width: 0;
   }
-  .rart { width: 66px; height: 88px; flex-shrink: 0; padding: 4px; border-radius: 6px; }
+  .rart { height: 88px; width: auto; max-width: 132px; flex-shrink: 0; padding: 4px; border-radius: 4px; }
+  .rart :global(img.cover) { object-fit: contain; }
   .rtext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .rtext b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rtext > span { font-size: 12px; color: var(--muted); }
@@ -640,10 +657,30 @@
   .nofav span { font-size: 13px; color: var(--muted); }
   .inline { height: 18px; width: auto; image-rendering: pixelated; vertical-align: -4px; margin: 0 2px; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 20px 16px; align-items: end; }
+  /* Covers keep their real shape: --r is width / height, --h the height they're drawn at. */
+  .grid { --gap: 20px; }
+  /* A console's own tab: neat columns sized for that console's boxes. */
+  .grid.one { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--w), 1fr)); gap: 22px var(--gap); }
+  /* Each column is the console's box shape; a cover of another shape sits whole inside it, on the floor. */
+  .grid.one .slot { height: auto; aspect-ratio: var(--cr); }
+  .grid.one .card .art { width: auto; height: 100%; }
+  .grid.one .wider .card .art { width: 100%; height: auto; }
+  /* Mixed consoles: shelves where every cover in a row is the same height and as wide as its shape needs. */
+  .grid.shelf { display: flex; flex-wrap: wrap; gap: 22px var(--gap); }
+  /* Each row stretches to fill the width, and every cover in it grows by its own shape, so a row stays one
+     height (a justified row). The last row keeps its normal size. */
+  .grid.shelf .cardwrap { flex: var(--r) 1 calc(var(--h) * var(--r)); }
+  .grid.shelf::after { content: ""; flex: 999 1 0; }
+  .grid.shelf .slot { height: auto; }
   .cardwrap { position: relative; min-width: 0; }
-  .card { display: flex; flex-direction: column; gap: 8px; border: 0; background: none; padding: 0; text-align: left; width: 100%; }
-  .card .art { width: 100%; border: 2px solid transparent; outline: 1px solid var(--line); outline-offset: -1px; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45); }
+  .card { display: flex; flex-direction: column; gap: 6px; border: 0; background: none; padding: 0; text-align: left; width: 100%; color: var(--text); }
+  /* The cover sits on the shelf's floor, so names line up even when one box is shorter. */
+  .slot { height: var(--h); display: flex; align-items: flex-end; justify-content: center; }
+  .card .art {
+    width: 100%; aspect-ratio: var(--r); flex-shrink: 0; border-radius: 4px; border: 2px solid transparent;
+    outline: 1px solid rgba(255, 255, 255, 0.08); outline-offset: -1px; box-shadow: 0 8px 18px rgba(0, 0, 0, 0.55); background: #0a0606;
+  }
+  .card .art :global(img.cover) { object-fit: contain; }
   .card:hover .art, .card:focus-visible .art { border-color: var(--red); outline-color: transparent; }
   .card:focus-visible { outline: none; }
   /* Controller in use: the highlighted game gets a warm neon glow. */
@@ -653,18 +690,17 @@
     box-shadow: 0 0 0 1px #fff3c4, 0 0 8px 2px #ffb21e, 0 0 20px 3px rgba(255, 150, 0, 0.5);
   }
   :global(.pad-mode) .rcard:focus { outline: none; border: 2px solid #ffc84a; padding: 11px; }
-  .favdot {
-    position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 50%; background: var(--btn);
-    border: 1px solid var(--amber); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 8px rgba(242, 180, 90, 0.5);
-  }
-  .state { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--btn); border: 1px solid var(--line-2); }
-  .state.ok { background: var(--green-bg); border-color: var(--green-bg); }
+  .name { display: flex; align-items: center; gap: 5px; min-width: 0; font-family: "Press Start 2P", monospace; font-size: 9px; line-height: 1.5; padding-top: 4px; }
+  .name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name :global(svg) { flex-shrink: 0; }
+  .card:focus .name { color: #fff6d8; }
   .dl { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--btn); }
   .dl div { height: 100%; background: var(--amber); }
   /* One line, so tiles in a row line up. */
   .meta { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; overflow: hidden; }
-  .note { font-size: 12px; color: var(--muted); margin-left: 2px; white-space: nowrap; }
+  .note { font-size: 12px; color: var(--muted); margin-left: 2px; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
   .note.amber { color: var(--amber); }
+  .note.ok { color: #7fe0a0; }
 
   /* ---------- Retro glow style (controller layout; approved by Jayden 2026-10-31) ---------- */
   .retro {
@@ -685,6 +721,8 @@
   .retro .tabs { padding: 22px; margin: -16px -18px; }
   .retro .tabbar { gap: 28px; }
   .retro .label { font-size: 22px; font-weight: 400; }
+  /* Section titles in the main menu's 8-bit lettering. */
+  .retro .h { font-family: "Press Start 2P", monospace; font-size: 18px; -webkit-text-stroke: 0; color: #fff; text-shadow: 0 0 4px #ff6a70, 0 0 12px #ec282e, 3px 3px 0 #000; }
   .retro .search input {
     font-family: VT323, monospace; font-size: 20px; border-color: #6a2a2d; background: rgba(30, 20, 21, 0.8);
     box-shadow: 0 0 10px rgba(236, 40, 46, 0.25) inset;
@@ -713,7 +751,6 @@
   .back { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; font-size: 14px; color: var(--muted); }
   .back:hover { color: var(--text); }
   .mk { flex: 1; display: flex; min-height: 0; }
-  .mk .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   aside { width: 240px; flex-shrink: 0; border-right: 1px solid var(--line-soft); padding: 14px 12px; display: flex; flex-direction: column; gap: 2px; background: var(--bg-side); }
   .side { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 12px; border-radius: 10px; border: 0; background: transparent; color: var(--text); text-align: left; width: 100%; flex-shrink: 0; }
   .side:hover { background: var(--panel); }
@@ -727,7 +764,7 @@
 
   .rcard.mouse { height: 96px; padding: 10px; gap: 14px; }
   .rbody { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; border: 0; background: none; padding: 0; text-align: left; color: inherit; }
-  .rcard.mouse .rart { width: 56px; height: 76px; }
+  .rcard.mouse .rart { height: 76px; max-width: 114px; }
   .rcard.mouse .rtext b { font-size: 15px; }
   .rplay { height: 36px; flex-shrink: 0; }
 
@@ -736,9 +773,10 @@
     background: rgba(18, 12, 12, 0.85); border: 1px solid var(--amber); display: flex; align-items: center; justify-content: center;
     opacity: 0; transition: opacity 0.1s;
   }
-  .starbtn.on, .cardwrap:hover .starbtn, .starbtn:focus-visible, :global(.pad-mode) .starbtn:focus { opacity: 1; }
+  .cardwrap:hover .starbtn, .starbtn:focus-visible, :global(.pad-mode) .starbtn:focus { opacity: 1; }
   .hover-open { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); }
   .cardwrap.mouse:hover .hover-open { display: flex; }
+  .playdot { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; padding-left: 3px; box-sizing: border-box; background: var(--red-2); color: #fff; box-shadow: 0 3px 0 #000, 0 0 12px rgba(236, 40, 46, 0.6); }
   .cardwrap.mouse .card:hover .art { outline: 2px solid var(--red); outline-offset: 2px; }
 
   .keys { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-top: 1px solid var(--line-soft); background: #0e0909; font-size: 12px; color: var(--muted-2); white-space: nowrap; overflow: hidden; }

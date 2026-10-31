@@ -18,8 +18,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use url::Url;
 
-/// Jayden's server on his home network, until it's reachable at https://gamenight.jjsnas.xyz.
-pub const DEFAULT_SERVER: &str = "http://192.168.1.33:8094";
+/// Jayden's server, online through his own domain (Nginx Proxy Manager forwards /gamenight/ to it).
+pub const DEFAULT_SERVER: &str = "https://play.jjsnas.xyz/gamenight";
+/// The home-network address used before 0.3.5. A PC that never signed in there moves to the online one.
+const OLD_HOME_SERVER: &str = "http://192.168.1.33:8094";
 const SIGN_IN_MINUTES: u64 = 10;
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -182,6 +184,11 @@ impl Account {
             g.token = vault::load(app.path().app_config_dir().ok());
             if g.token.is_none() {
                 g.saved.user = None;
+                // Friends outside the house could never sign in at the home address; send them online.
+                // A PC already signed in there (Jayden's) keeps it, since its pass only works with that server.
+                if g.saved.server == OLD_HOME_SERVER {
+                    g.saved.server = DEFAULT_SERVER.into();
+                }
             }
         }
         f(&mut g)

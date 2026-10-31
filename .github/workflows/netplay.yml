@@ -1,0 +1,54 @@
+# Online co-op, step 1: two copies of Game Night's pinned RetroArch play together on GitHub's Windows
+# machine, each with its own pretend Xbox pad, and tools/e2e/netplay_test.py measures whether they connect,
+# stay in sync, and put each pad on the right player. Nothing here touches Game Night's app or releases,
+# and nothing goes to the internet (the two copies talk over the machine's own loopback address).
+name: Online co-op test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tools/e2e/netplay_test.py", "tools/e2e/make_netplay_rom.py", "tools/e2e/check_netplay_rom.py",
+            "tools/e2e/add_pretend_pads.ps1", "tools/player/**", ".github/workflows/netplay.yml"]
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "How long each round presses random buttons (seconds)"
+        default: "90"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  netplay:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the test cartridge's code on a 6502 simulator first
+        shell: pwsh
+        run: |
+          pip install py65==1.2.0
+          python tools/e2e/check_netplay_rom.py
+      - name: Add two pretend Xbox controllers (ViGEmBus)
+        shell: pwsh
+        run: tools/e2e/add_pretend_pads.ps1
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Two players, one machine
+        shell: pwsh
+        env:
+          NETPLAY_MASH_SECONDS: ${{ github.event.inputs.seconds || '90' }}
+        run: python tools/e2e/netplay_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/netplay" "$env:RUNNER_TEMP/netplay-results"
+      - name: Keep the results (logs, numbers, screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netplay-results
+          path: ${{ runner.temp }}/netplay-results
+          if-no-files-found: ignore
+          retention-days: 30

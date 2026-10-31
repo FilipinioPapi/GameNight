@@ -158,6 +158,18 @@
                   <option value="scanlines">Old TV scanlines</option>
                   <option value="sharp">Sharp pixels</option>
                   <option value="smooth">Smooth</option>
+                  <option value="lottes">CRT: Lottes (needs a good graphics card)</option>
+                  <option value="geom">CRT: curved glass (needs a good graphics card)</option>
+                  <option value="royale">CRT: Royale (needs a strong graphics card)</option>
+                </select>
+              </div>
+              <div class="row">
+                <div class="t"><b>Bezel</b><span>The picture around the game. Not with "Fill the screen".</span></div>
+                <select value={cs.bezel} onchange={(e) => app.setConsoleSettings(cid, { bezel: e.currentTarget.value as typeof cs.bezel })}>
+                  <option value="tv">Dark TV frame</option>
+                  <option value="photo">Console photo</option>
+                  <option value="pad">Controller that lights up</option>
+                  <option value="none">None</option>
                 </select>
               </div>
               {#if LAYOUTS[cid].extras.some((e) => e.key === "rewind")}

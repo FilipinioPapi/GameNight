@@ -53,6 +53,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import vgamepad as vg
@@ -385,6 +386,7 @@ class TunnelBridge(threading.Thread):
             self.ready.set()
 
     def stop(self):
+        self.note("the test is ending the session (closing our side)")
         if self.loop and self.writer:
             self.loop.call_soon_threadsafe(self.writer.close)
 
@@ -1007,8 +1009,10 @@ def main():
         try:
             rounds.append(run_round(name, rom, pad_a, slot_a, pad_b, slot_b, **opts))
         except Exception as e:  # noqa: BLE001 - one broken round shouldn't hide the others' numbers
+            where = traceback.format_exc()
+            say(where)
             fail(f"{name}: the round stopped with {type(e).__name__}: {e}")
-            rounds.append({"round": name, "ok": False, "error": f"{type(e).__name__}: {e}"})
+            rounds.append({"round": name, "ok": False, "error": f"{type(e).__name__}: {e}", "where": where})
     summary = {"ok": not failures, "two_unconnected_copies_fps": round(SOLO_FPS, 2), "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
     (OUT / "results.json").write_text(json.dumps(summary, indent=2))
     say("\n================ summary ================")

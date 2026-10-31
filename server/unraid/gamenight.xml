@@ -6,7 +6,7 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Overview>Game Night server: Discord sign-in (Game Night role only) and the game list from RomM, for the Game Night app. Read-only to RomM.</Overview>
+  <Overview>Game Night server: Discord sign-in (members of your Discord server only) and the game list from RomM, for the Game Night app. Read-only to RomM.</Overview>
   <Category>GameServers:</Category>
   <WebUI></WebUI>
   <ExtraParams>--read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL</ExtraParams>
@@ -15,7 +15,7 @@
   <Config Name="Discord client ID" Target="DISCORD_CLIENT_ID" Default="" Mode="" Description="From the Discord Developer Portal, your Game Night app, OAuth2 page" Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Discord client secret" Target="DISCORD_CLIENT_SECRET" Default="" Mode="" Description="Same page, Reset Secret" Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Discord server ID" Target="DISCORD_GUILD_ID" Default="" Mode="" Description="Right-click your server icon, Copy Server ID" Type="Variable" Display="always" Required="true" Mask="false"/>
-  <Config Name="Game Night role ID" Target="DISCORD_ROLE_ID" Default="" Mode="" Description="Server Settings, Roles, right-click Game Night, Copy Role ID" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Game Night role ID (optional)" Target="DISCORD_ROLE_ID" Default="" Mode="" Description="Optional. Leave blank to let anyone in your Discord server sign in. To limit it to one role: Server Settings, Roles, right-click the role, Copy Role ID" Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="RomM address" Target="ROMM_URL" Default="http://192.168.1.33:8084" Mode="" Description="RomM on your network" Type="Variable" Display="advanced" Required="true" Mask="false">http://192.168.1.33:8084</Config>
   <Config Name="RomM user" Target="ROMM_USER" Default="gamenight" Mode="" Description="The Viewer user made in RomM for Game Night" Type="Variable" Display="always" Required="false" Mask="false">gamenight</Config>
   <Config Name="RomM password" Target="ROMM_PASSWORD" Default="" Mode="" Description="That user's password" Type="Variable" Display="always" Required="false" Mask="true"/>

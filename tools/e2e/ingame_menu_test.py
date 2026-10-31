@@ -333,15 +333,32 @@ def part_looks(rom, pad, slot):
         c["game_saw_the_pad"] = bool(game_saw and game_saw[0] & 0x08)
         # a mouse click where the border pictures the A button (its overlay file: "a,0.97043,0.4725")
         ax, ay = int(0.97043 * sw), int(0.4725 * sh)
-        u32.SetCursorPos(ax, ay)
-        seen = []
-        for _ in range(3):
-            u32.mouse_event(0x2, 0, 0, 0, 0)
-            time.sleep(0.25)
-            seen.append(copy.ram(0x10, 2))
-            u32.mouse_event(0x4, 0, 0, 0, 0)
-            time.sleep(0.25)
-        c["mouse_click_on_pictured_button_pressed_it"] = any(m and (m[0] or m[1]) for m in seen)
+
+        def clicks():
+            u32.SetCursorPos(ax, ay)
+            seen = []
+            for _ in range(3):
+                u32.mouse_event(0x2, 0, 0, 0, 0)
+                time.sleep(0.25)
+                seen.append(copy.ram(0x10, 2))
+                u32.mouse_event(0x4, 0, 0, 0, 0)
+                time.sleep(0.25)
+            return any(m and (m[0] or m[1]) for m in seen)
+        # 1. RetroArch's own "overlay pointer" setting off (run 41221344002: the click still pressed A)
+        c["mouse_click_on_pictured_button_pressed_it"] = clicks()
+        # 2. Game Night switches the game window to "disabled" (Windows then gives it no mouse or keyboard input)
+        hwnd = copy.main_window()
+        u32.EnableWindow.argtypes = [cl.wt.HWND, cl.wt.BOOL]
+        u32.EnableWindow(hwnd, False)
+        time.sleep(0.5)
+        c["window_disabled_click_pressed_it"] = clicks()
+        set_pad(pad, [B.XUSB_GAMEPAD_A])
+        time.sleep(0.5)
+        m = copy.ram(0x10, 2)
+        set_pad(pad, [])
+        c["window_disabled_pad_still_works"] = bool(m and m[0] & 0x80)
+        c["window_disabled_game_live"] = fps_over(copy, 2)
+        u32.EnableWindow(hwnd, True)
         c["fps"] = fps_over(copy, 4)
         c["log"] = log_lines(copy, 0)
         stop_copy(copy)
@@ -349,8 +366,8 @@ def part_looks(rom, pad, slot):
     say(f"  bezel C: {c}")
     if not c.get("lights_up_with_the_pad"):
         fail("looks: bezel C didn't light up when the pad was pressed")
-    if c.get("mouse_click_on_pictured_button_pressed_it"):
-        fail("looks: a mouse click on bezel C's pictured button pressed it in the game")
+    if c.get("window_disabled_click_pressed_it") is not False or not c.get("window_disabled_pad_still_works"):
+        fail(f"looks: bezel C's pictured buttons can still be clicked, or the pad stopped ({c})")
     return res
 
 
@@ -429,20 +446,7 @@ class Trio(cl.Couch):
                 self.set_look(who, look)
             time.sleep(8)
 
-            # ---- pause for everyone
             p2, w1 = self.copies["P2"], self.copies["W1"]
-            res["pause"] = []
-            for who, label in (("P2", "P2 pauses for everyone"), ("P2", "P2 resumes"),
-                               ("P1", "the host pauses for everyone"), ("P1", "the host resumes")):
-                res["pause"].append(self.timed(label, lambda w=who: self.copies[w].send("PAUSE_TOGGLE"), 6))
-            stops = [p["stopped_ms"] for p in res["pause"]]
-            res["pause_works"] = min(stops[0].values()) > 4000 and min(stops[2].values()) > 4000 \
-                and max(stops[1].values()) < 1500 and max(stops[3].values()) < 1500
-            res["paused_by_in_logs"] = {k: [l for l in self.copies[k].log_text().splitlines() if "paused" in l.lower()][-4:] for k in ("P1", "P2", "W1")}
-            say(f"  pause for everyone works: {res['pause_works']}; 'paused' lines: {res['paused_by_in_logs']}")
-            if not res["pause_works"]:
-                fail(f"couch: pause for everyone didn't stop and restart the game for everyone: {stops}")
-            self.ensure_running()
 
             # ---- switching windows with pausing allowed
             def flip():
@@ -457,7 +461,8 @@ class Trio(cl.Couch):
                 fail(f"couch: switching windows paused the game ({e['stopped_ms']})")
 
             # ---- "your menu is open": RetroArch's own menu, open and hidden, for P2 only
-            res["menu"] = {"p2_picture_menu_closed": self.window_picture("P2", "couch-3-p2-menu-closed")}
+            res["menu"] = {"p2_picture_menu_closed": self.window_picture("P2", "couch-3-p2-menu-closed"),
+                           "pad_b_reaches_game_before": self.seat_check({2: pads[2]}, "before P2's menu opens")}
             e = self.timed("P2's RetroArch menu opens", lambda: p2.send("MENU_TOGGLE"), 4)
             res["menu"]["open"] = e
             res["menu"]["pad_b_goes_nowhere"] = self.pad_goes_nowhere(pads[2], "P2's menu open, pad B")
@@ -475,10 +480,11 @@ class Trio(cl.Couch):
                 p2.send("MENU_TOGGLE")
                 time.sleep(3)
                 res["menu"]["needed_second_toggle"] = self.seat_check(owners, "after a second toggle")
-            res["menu"]["blocks_own_presses"] = bool(res["menu"]["pad_b_goes_nowhere"]) and not r["seat_states_not_from_their_pad"]
+            res["menu"]["blocks_own_presses"] = bool(res["menu"]["pad_b_reaches_game_before"]) and bool(res["menu"]["pad_b_goes_nowhere"]) \
+                and not r["seat_states_not_from_their_pad"] and r["frames_compared"] > 0
             res["menu"]["game_kept_going"] = max(res["menu"]["open"]["stopped_ms"].values()) < 1500
             pic = res["menu"].get("p2_picture_menu_open") or {}
-            res["menu"]["invisible_while_open"] = (pic.get("pattern") or 99) < 3 and (pic.get("changed_share") or 0) > 0.3
+            res["menu"]["invisible_while_open"] = pic.get("pattern") is not None and pic["pattern"] < 3 and (pic.get("changed_share") or 0) > 0.3
             say(f"  P2's window with its RetroArch menu open: {pic} (menu invisible and game live: {res['menu']['invisible_while_open']})")
             if not res["menu"]["blocks_own_presses"]:
                 fail("couch: with P2's menu open, pad B still reached the game")
@@ -488,6 +494,28 @@ class Trio(cl.Couch):
             res["watch_way_pad_b_goes_nowhere"] = self.pad_goes_nowhere(pads[2], "P2 watching, pad B")
             res["watch_way"].append(self.timed("P2 back to playing", lambda: p2.send("NETPLAY_GAME_WATCH"), 4))
             self.seat_check(owners, "P2 back to playing")
+            # ---- pause for everyone (last: in run 41221344002 a FRIEND's pause stuck the game for the others and
+            # their resume never reached them, so the host's way and the friend's way are measured separately)
+            res["pause"] = {}
+            for who, name in (("P1", "host"), ("P2", "friend")):
+                steps = [self.timed(f"{name} ({who}) pauses for everyone", lambda w=who: self.copies[w].send("PAUSE_TOGGLE"), 6),
+                         self.timed(f"{name} ({who}) resumes", lambda w=who: self.copies[w].send("PAUSE_TOGGLE"), 6)]
+                stops = [x["stopped_ms"] for x in steps]
+                works = min(stops[0].values()) > 4000 and max(stops[1].values()) < 1500
+                still = all(c.alive() for c in self.copies.values()) and not any(
+                    "disconnected" in l for c in self.copies.values() for l in c.new_netplay_lines())
+                res["pause"][name] = {"steps": steps, "works": works, "everyone_still_connected": still,
+                                      "paused_by_lines": {k: [l for l in c.log_text().splitlines() if "paused" in l.lower()][-3:]
+                                                          for k, c in self.copies.items()}}
+                say(f"  {name} pause for everyone works: {works}; everyone still connected: {still}")
+                self.ensure_running()
+                if not works:
+                    break
+            res["pause_works_host"] = res["pause"]["host"]["works"]
+            res["pause_works_friend"] = res["pause"].get("friend", {}).get("works")
+            if not res["pause_works_host"]:
+                fail(f"couch: the host's pause for everyone didn't stop and restart the game for everyone: {res['pause']['host']['steps']}")
+            self.seat_check(owners, "after the pause checks")
             self.mash_and_compare(owners, 30, "end: everyone back")
             grab().save(OUT / "couch-5-end.png")
             res["ok"] = not [f for f in cl.failures if f.startswith("couch")]

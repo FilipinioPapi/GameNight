@@ -23,14 +23,18 @@ Spec: project files `gamenight/main-menu/A21-approved.dc.html` and `A21-approved
 - With a controller, the gliding gold frame from PR #14 is the highlight (the card's own glow steps aside,
   so there's only one). With the mouse, hovering picks a card and the card's own gold glow shows.
 - Coming back from another screen lands on the card you last used.
+- Smaller windows (down to the app's smallest, 1100 x 700): card titles shrink to fit their card and the
+  rows move up so Jump back in stays clear of the button guide. Same sizes as the mockup at 1280 x 800.
 - "Reduce animations" in Windows turns off the flicker, the drift, the blinking cursor and the growing.
 
 ## Checked
 - Confirmed: `npm run check` and `npm run build` clean. Chromium at 1280x800: matches A21 side by side;
   arrow keys move right/left/down/up as above; A on LIBRARY opens the Library, Escape comes back to LIBRARY;
   COUCH PLAY does nothing; no console errors.
-- Windows: the pretend-controller test (`tools/e2e/pad_test.py menus`) now presses right, right, left,
-  left, A, B and screenshots each step. See the PR for the run.
+- Confirmed on GitHub's Windows machine (PR #20, first run): the pretend controller pressed right, right,
+  left, left, A, B and every step landed where expected. Its screen is only 1024 x 768, which squeezed the
+  window and cut off "COUCH PLAY"; fixed with the shrink-to-fit titles above (checked in Chromium at
+  1280x800, 1100x670 and 1008x690: every title fits).
 - Unknown: how it feels on Jayden's PC with his real pad.
 
 ## Later

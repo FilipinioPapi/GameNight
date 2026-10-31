@@ -250,7 +250,7 @@
     /* 460 px picked and 217 px for the rest in the 1280-wide window, sharing the room the same way if it's wider. */
     position: relative; flex: none; width: calc((100% - 72px) * 217 / 1111); height: 340px; box-sizing: border-box; overflow: hidden; padding: 0;
     border-radius: 10px; border: 3px solid #000; background: #120c0c; color: var(--text); font: inherit; text-align: left; cursor: pointer;
-    box-shadow: 0 8px 0 rgba(0, 0, 0, 0.5); outline: none;
+    box-shadow: 0 8px 0 rgba(0, 0, 0, 0.5); outline: none; container-type: inline-size;
     transition: width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.28s ease, background 0.28s ease;
   }
   .card::after { content: ""; position: absolute; inset: 6px; border: 2px solid rgba(255, 255, 255, 0.07); border-radius: 5px; pointer-events: none; }
@@ -269,10 +269,12 @@
   .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 58%; background: linear-gradient(180deg, rgba(10, 6, 6, 0) 0%, rgba(10, 6, 6, 0.78) 55%, rgba(10, 6, 6, 0.95) 100%); }
   .tx { position: absolute; left: 24px; right: 16px; top: 226px; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
   .lbl {
-    font-family: "Press Start 2P", monospace; white-space: nowrap; letter-spacing: 0.02em; line-height: 1.15; color: #fff; font-size: 17px;
+    font-family: "Press Start 2P", monospace; white-space: nowrap; letter-spacing: 0.02em; line-height: 1.15; color: #fff;
     text-shadow: 0 0 4px #ff6a70, 0 0 12px #ec282e, 0 0 26px rgba(236, 40, 46, 0.7), 3px 3px 0 #000; transition: font-size 0.3s ease;
+    /* In a narrower window the titles shrink to fit their card (same size as the mockup at 1280 wide). */
+    font-size: min(17px, 8cqw);
   }
-  .card.on .lbl { font-size: 30px; color: #fff6d8; text-shadow: 0 0 4px #ffd36b, 0 0 14px #ffb21e, 0 0 30px rgba(255, 140, 0, 0.7), 4px 4px 0 #000; }
+  .card.on .lbl { font-size: min(30px, 6.6cqw); color: #fff6d8; text-shadow: 0 0 4px #ffd36b, 0 0 14px #ffb21e, 0 0 30px rgba(255, 140, 0, 0.7), 4px 4px 0 #000; }
   .more { font-family: VT323, monospace; font-size: 21px; letter-spacing: 0.05em; color: #ffe0e0; font-weight: 500; white-space: nowrap; opacity: 0; transition: opacity 0.3s ease 0.12s; }
   .card.on .more { opacity: 1; }
   .soon {
@@ -317,6 +319,17 @@
 
   .foot { position: absolute; left: 0; right: 0; bottom: 0; }
   .foot :global(.guide) { height: 64px; }
+
+  /* A shorter window (down to the smallest the app allows): everything moves up a little so
+     Jump back in stays clear of the button guide. */
+  @media (max-height: 799px) {
+    header { top: 22px; }
+    nav { top: 112px; }
+    .card { height: 290px; }
+    .tx { top: 186px; }
+    .desc { top: 424px; }
+    section { top: 470px; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .scene, .gnw, .card.on, .cursor { animation: none; }

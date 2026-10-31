@@ -25,3 +25,13 @@ Strongly inferred, Unknown.
 - Merged: PR #12. Anyone in Jayden's Discord server can sign in, and the role is optional.
 - Next: step 1, two players in sync on GitHub's Windows runner.
 - play.jjsnas.xyz = Roof Rage's ntfy board; Game Night plan: its own /gamenight/ custom location, checked before and after (HANDOFF_ONLINE.md).
+
+## Game window in front (thread "Minimize Game Night when a game starts")
+- Built on branch `claude/project-thread-sh0idr` (PR #18, into the 0.3.3 branch): when a game starts, Game Night
+  waits for RetroArch's window, makes sure it's in front, then minimizes. When the game closes, Game Night comes
+  back to the front (it already tried to; now measured). Each step is logged to `player/logs/window.txt` in the
+  cache folder.
+- Confirmed (CI runs 96 and 97, commit 518dc85): game test and all three pretend-controller game tests saw
+  RetroArch in front, Game Night minimized, and Game Night back in front after the game closed.
+- Unknown: Jayden's PC. If it misbehaves there, `window.txt` shows which step went wrong.
+- Waiting on Jayden: whether Game Night should come back by itself after a game (built as "yes", the recommended choice).

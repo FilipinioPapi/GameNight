@@ -548,6 +548,11 @@ class Trio(cl.Couch):
             res["host_menu"] = {"buttons": []}
             p1.send("MENU_TOGGLE")
             time.sleep(2)
+            # With the host's menu open, the friend's pad must still reach seat 2 in every copy (the app test saw
+            # the host's game show nothing from the friend then).
+            res["host_menu"]["friend_reaches_seat_2"] = self.seat_check({2: pads[2]}, "host's menu open: pad B still plays")
+            if not res["host_menu"]["friend_reaches_seat_2"]:
+                fail("couch: with the host's menu open, the friend's presses didn't reach every copy")
             for label, btn in (("A", B.XUSB_GAMEPAD_A), ("B", B.XUSB_GAMEPAD_B), ("X", B.XUSB_GAMEPAD_X),
                                ("Y", B.XUSB_GAMEPAD_Y), ("LB", B.XUSB_GAMEPAD_LEFT_SHOULDER),
                                ("RB", B.XUSB_GAMEPAD_RIGHT_SHOULDER), ("Start", B.XUSB_GAMEPAD_START),

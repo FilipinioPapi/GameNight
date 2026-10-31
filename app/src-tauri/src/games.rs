@@ -694,10 +694,11 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
     };
     let mut paths = paths;
     let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
-    // The bezel, fitted to this screen (in Couch Play: to the full screen game, which always fills the screen:
-    // couch_fullscreen makes Game Night full screen too). A missing or broken bezel never stops the game: it
-    // just plays without one, and the log says why.
-    if settings.screen != "stretch" && settings.bezel != "none" {
+    // The bezel, fitted to this screen. A missing or broken bezel never stops the game: it just plays without
+    // one, and the log says why. Not in Couch Play for now: its two-page bezel (full screen / small box,
+    // flipped with OVERLAY_NEXT) went with the host's RetroArch crashing (0xc0000005) and page flips being
+    // lost (CI runs 41236464953, 41238376028, 41240337383); being measured without it.
+    if net.is_none() && settings.screen != "stretch" && settings.bezel != "none" {
         if let Some(size) = screen_size(app) {
             match crate::display::prepare_bezel(&player, &paths.cache, &settings.bezel, &entry.console, size, settings.screen != "pixel", net.is_some()) {
                 Ok(o) => {

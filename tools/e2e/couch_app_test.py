@@ -525,13 +525,12 @@ def main():
         results["bezel"] = {"settings": app_bezel()}
         say(f"  RetroArch's bezel setting: {results['bezel']['settings']}")
         b = results["bezel"]["settings"]
-        if b["enabled"] != "true" or not (b["file"] or "").endswith("-couch.cfg") or b["pages"] != "2":
-            fail(f"Couch Play's RetroArch isn't set up with the two-page bezel: {b}")
+        if b["enabled"] == "true":
+            fail(f"Couch Play has no bezel for now (it went with the host's RetroArch crashing), but one is set: {b}")
         full_rect = results["look"]["look-2b-game-full-screen"]["last_game"]
         results["bezel"]["full_screen"] = bezel_pixels("look-2b-game-full-screen", full_rect)
         say(f"  full screen, lit share left of the game: {results['bezel']['full_screen']}")
-        if results["bezel"]["full_screen"]["band"] < 0.5:
-            fail(f"no bezel around the full screen game: {results['bezel']['full_screen']}")
+        if False:  # Couch Play has no bezel for now (see games.rs); the band is recorded only.
             # Measure why: flip the page ourselves. Lit now = Game Night's page count was off by one;
             # still dark = RetroArch isn't drawing the bezel at all.
             host.send("OVERLAY_NEXT")

@@ -18,8 +18,10 @@
   import { remember, shapeOf } from "../lib/boxart.svelte";
   import { moveFocus, useScreenButtons, type Dir } from "../lib/gamepad";
   import { inTauri, type RecentPlay } from "../lib/settings";
+  import { couch, maxPlayersOf, ONLINE_CONSOLES } from "../lib/couch.svelte";
 
-  let { console: current }: { console: LibraryTab } = $props();
+  // host: Couch Play's "pick a game to host" (approved board CQ3), styled like the main menu.
+  let { console: current, host = false }: { console: LibraryTab; host?: boolean } = $props();
 
   let games = $state<Game[]>([]);
   let loaded = $state(false);
@@ -140,6 +142,14 @@
   };
   $effect(() => {
     useScreenButtons((input) => {
+      // Hosting: LB / RB flip between NES and SNES (the other consoles aren't online yet).
+      if (host) {
+        if (input !== "lb" && input !== "rb") return false;
+        const inGames = !!document.activeElement?.closest(".hgrid");
+        hostTab(hostConsole === "nes" ? "snes" : "nes", true);
+        void tick().then(() => (inGames ? document.querySelector<HTMLElement>(".hgame") : document.querySelector<HTMLElement>(".htab.cur"))?.focus({ preventScroll: true }));
+        return true;
+      }
       if (input === "y") {
         void toggleFav(focusedId);
         return true;
@@ -166,6 +176,7 @@
   // ---- Keyboard ----
   const ARROWS: Record<string, Dir> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
   function onKey(e: KeyboardEvent) {
+    if (host) return hostKey(e);
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       focusSearch();
@@ -197,7 +208,7 @@
   // Controller layout: start with the first game highlighted, so a controller can go straight away.
   let started = false;
   $effect(() => {
-    if (!loaded || started || layout !== "controller") return;
+    if (!loaded || started || layout !== "controller" || host) return;
     started = true;
     void tick().then(() => {
       document.querySelector<HTMLElement>("[data-tab].on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -207,6 +218,76 @@
       if (back) back.scrollIntoView({ block: "nearest" });
     });
   });
+
+  // ---- Couch Play: pick a game to host (board CQ3) ----
+  // All 11 consoles in the board's order; only NES and SNES can be played online for now.
+  const HOST_ORDER = ["nes", "snes", "gen", "gb", "gba", "n64", "ps1", "ps2", "gc", "wii", "arc"] as const;
+  const hostTabs = HOST_ORDER.map((id) => {
+    const c = consoleById(id);
+    return { id, art: c.art, label: c.short.toUpperCase(), on: ONLINE_CONSOLES.includes(id) };
+  });
+  const hostConsole = $derived(ONLINE_CONSOLES.includes(current as never) ? current : "nes");
+  const hostGames = $derived(games.filter((g) => g.console === hostConsole).sort((a, b) => a.title.localeCompare(b.title)));
+  let soonMsg = $state("");
+  let hostFocus = $state<string | null>(null);
+  let hostBusy = $state<string | null>(null);
+  const hostPlayers = (g: Game) => maxPlayersOf(g.players);
+  const hostDesc = $derived.by(() => {
+    if (hostBusy) {
+      const g = byId.get(hostBusy);
+      const p = play.progress[hostBusy];
+      if (p && g) return `DOWNLOADING ${g.title.toUpperCase()} · ${p.total ? Math.round((p.done / p.total) * 100) : 0}%`;
+      return (couch.busy || "Opening your lobby…").toUpperCase();
+    }
+    if (couch.error) return couch.error.toUpperCase();
+    if (soonMsg) return soonMsg;
+    const g = hostFocus ? byId.get(hostFocus) : hostGames[0];
+    if (!g) return loaded ? "NO GAMES HERE YET" : "LOADING YOUR GAMES";
+    const n = hostPlayers(g);
+    return g.title.toUpperCase() + (n > 1 ? ` · ${n} PLAYERS · PRESS A TO OPEN A LOBBY` : " · 1 PLAYER · FRIENDS CAN WATCH");
+  });
+  function hostTab(id: (typeof HOST_ORDER)[number], on: boolean) {
+    if (!on) {
+      soonMsg = `${consoleById(id).short.toUpperCase()} ONLINE IS COMING SOON`;
+      return;
+    }
+    soonMsg = "";
+    couch.error = "";
+    app.route = { name: "library", console: id, host: true };
+  }
+  async function hostPick(g: Game) {
+    if (hostBusy) return;
+    soonMsg = "";
+    hostBusy = g.id;
+    const ok = await couch.host(g, true);
+    hostBusy = null;
+    if (ok) app.route = { name: "lobby" };
+  }
+  // Start with the first game highlighted.
+  let hostStarted = false;
+  $effect(() => {
+    if (!host || !loaded || hostStarted) return;
+    hostStarted = true;
+    couch.error = "";
+    void tick().then(() => (document.querySelector<HTMLElement>(".hgame") ?? document.querySelector<HTMLElement>(".htab.cur"))?.focus({ preventScroll: true }));
+  });
+  function hostKey(e: KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "q" || k === "e") {
+      e.preventDefault();
+      hostTab(hostConsole === "nes" ? "snes" : "nes", true);
+    } else if (ARROWS[e.key]) {
+      e.preventDefault();
+      moveFocus(ARROWS[e.key]);
+    }
+  }
+  const hostGuide: GuideItem[] = [
+    { buttons: ["a"], label: "Host this game" },
+    { buttons: [], glyph: "◄ ► ▲ ▼", label: "Move" },
+    { buttons: ["lb", "rb"], label: "Console" },
+    { buttons: ["b"], label: "Back" },
+  ];
 
   // ---- Words ----
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -374,6 +455,57 @@
   {/if}
 {/snippet}
 
+{#if host}
+<div class="page cq3">
+  <header class="hhd">
+    <img class="tvlogo" src="/brand/crt-logo.gif" alt="Game Night logo" />
+    <div class="hcol"><span class="crumb">GAME NIGHT › COUCH PLAY › LIBRARY ›</span><span class="ttl">PICK A GAME TO HOST</span></div>
+    <div class="right"><span class="mode">HOSTING · NES AND SNES FOR NOW</span></div>
+  </header>
+
+  <nav class="hbar" aria-label="Consoles">
+    <img class="shoulder" src={app.pad.type === "dualsense" ? "/prompts/ps/ps_lb.png" : "/prompts/xbox/xbox_lb.png"} alt="" />
+    <div class="htabs" data-nav-group>
+      {#each hostTabs as t (t.id)}
+        <button
+          class="htab"
+          class:off={!t.on}
+          class:cur={t.id === hostConsole}
+          class:on={t.id === hostConsole}
+          data-tab
+          aria-disabled={t.on ? undefined : "true"}
+          onfocus={() => { if (!t.on) soonMsg = `${t.label} ONLINE IS COMING SOON`; }}
+          onclick={() => hostTab(t.id, t.on)}
+        >
+          <img src="/consoles/{t.art}.png" alt="" draggable="false" /><span>{t.label}</span>
+          {#if !t.on}<b class="soon">SOON</b>{/if}
+        </button>
+      {/each}
+    </div>
+    <img class="shoulder" src={app.pad.type === "dualsense" ? "/prompts/ps/ps_rb.png" : "/prompts/xbox/xbox_rb.png"} alt="" />
+  </nav>
+
+  <section class="hgrid scroll content" aria-label="Games">
+    {#each hostGames as g (g.id)}
+      {@const c = consoleById(g.console)}
+      {@const n = hostPlayers(g)}
+      {@const p = play.progress[g.id]}
+      <button class="hgame" data-game={g.id} onfocus={() => { hostFocus = g.id; soonMsg = ""; }} onmouseenter={() => { hostFocus = g.id; soonMsg = ""; }} onclick={() => hostPick(g)}>
+        <span class="hcover">
+          {#if g.cover && !broken[g.id]}<img src={g.cover} alt="" loading="lazy" decoding="async" onerror={() => (broken[g.id] = true)} />
+          {:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 9 : 14}px;line-height:1.4">{g.title}</span>{/if}
+          {#if p}<span class="hdl"><span style="width:{p.total ? (p.done / p.total) * 100 : 0}%"></span></span>{/if}
+        </span>
+        <span class="gn">{g.title}</span>
+        <span class="pp"><span class="hchip" class:two={n > 1}>{n > 1 ? `${n} PLAYERS` : "1 PLAYER"}</span></span>
+      </button>
+    {/each}
+  </section>
+
+  <div class="hdesc" aria-live="polite">&gt; {hostDesc}<span class="cursor">_</span></div>
+  <div class="hfoot"><ButtonGuide items={hostGuide} retro note="1-player games work too: friends watch live" /></div>
+</div>
+{:else}
 <div class="page" class:retro={layout === "controller"} onfocusin={(e) => (focusedId = lastFocus = gameAt(e.target))}>
   {#if layout === "controller"}
     <!-- Retro glow style: hard colour bands, with a checkerboard blend where two bands meet. -->
@@ -445,6 +577,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <style>
   .page { height: 100%; display: flex; flex-direction: column; position: relative; }
@@ -615,5 +748,59 @@
   .toast {
     position: absolute; right: 28px; bottom: 76px; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px;
     background: var(--panel); border: 1px solid var(--amber); font-size: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); pointer-events: none;
+  }
+
+  /* ---------- Couch Play: pick a game to host (approved board CQ3, styled like the main menu) ---------- */
+  .cq3 {
+    display: block; overflow: hidden; isolation: isolate;
+    background: radial-gradient(ellipse at 50% 38%, #3b1417 0% 12%, #2d1012 12% 24%, #210c0e 24% 38%, #170a0b 38% 54%, #0e0707 54% 72%, #070404 72% 100%);
+  }
+  .hhd { position: absolute; left: 48px; right: 48px; top: 32px; display: flex; align-items: center; gap: 16px; }
+  .tvlogo { display: block; flex-shrink: 0; width: 66px; height: 80px; margin: -6px 2px -6px 0; filter: drop-shadow(0 0 10px rgba(236, 40, 46, 0.35)) drop-shadow(0 4px 0 #000); }
+  .hcol { display: flex; flex-direction: column; gap: 8px; }
+  .crumb { font-family: VT323, monospace; font-size: 18px; letter-spacing: 0.12em; color: var(--muted); }
+  .ttl { font-family: "Press Start 2P", monospace; font-size: 24px; line-height: 1.1; white-space: nowrap; color: #ff2a32; text-shadow: 0 0 3px #ff5a60, 0 0 12px #ec282e, 0 0 26px rgba(236, 40, 46, 0.85), 3px 3px 0 #000; }
+  .mode { font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.08em; color: #ffd36b; border: 1px solid var(--amber); border-radius: 4px; padding: 2px 9px; text-shadow: 0 0 6px rgba(242, 180, 90, 0.6); }
+  .hbar { position: absolute; left: 48px; right: 48px; top: 132px; display: flex; align-items: center; gap: 10px; }
+  .hbar .shoulder { width: 34px; height: 18px; }
+  .htabs { display: flex; gap: 6px; }
+  .htab { position: relative; width: 92px; height: 84px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 10px; border: 2px solid var(--line-2); background: rgba(30, 20, 21, 0.86); color: var(--text-2); font: inherit; padding: 0; box-sizing: border-box; }
+  .htab img { width: 88px; height: 50px; object-fit: contain; }
+  .htab span { font-family: "Press Start 2P", monospace; font-size: 8px; white-space: nowrap; }
+  .htab.off { background: rgba(18, 12, 12, 0.6); border-style: dashed; cursor: default; opacity: 1; }
+  .htab.off img { opacity: 0.3; }
+  .htab.off span { color: #6a5052; }
+  .htab .soon { position: absolute; top: 4px; right: 4px; font-family: VT323, monospace; font-weight: 400; font-size: 13px; letter-spacing: 0.06em; color: var(--muted); background: rgba(10, 6, 6, 0.9); border: 1px solid var(--line-2); border-radius: 3px; padding: 0 3px; line-height: 1.1; }
+  .htab.cur { border-color: #ffd36b; animation: neonGold 2.6s ease-in-out infinite; }
+  .htab:not(.off):not(.cur):hover { border-color: #ffd36b; }
+  .hgrid {
+    position: absolute; left: 48px; top: 246px; width: calc(100% - 96px); height: 420px; padding: 0;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: 200px; gap: 16px; align-content: start; scrollbar-width: none;
+  }
+  .hgame { height: 200px; border-radius: 12px; border: 1px solid #4a2427; background: rgba(30, 20, 21, 0.88); padding: 10px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; color: var(--text); font: inherit; text-align: left; width: 100%; min-width: 0; }
+  .hgame:hover { border-color: #ffd36b; box-shadow: 0 0 0 1px #fff3c4, 0 0 8px 2px #ffb21e, 0 0 22px 4px rgba(255, 150, 0, 0.5); }
+  :global(body.glide.pad-mode) .hgame:focus { border-color: transparent; box-shadow: none; }
+  .hcover { position: relative; height: 132px; flex-shrink: 0; border-radius: 6px; border: 2px solid #000; display: flex; align-items: flex-end; padding: 8px; box-sizing: border-box; color: #fff; box-shadow: 0 6px 12px rgba(0, 0, 0, 0.45); overflow: hidden; background: linear-gradient(160deg, #4a2f31, #1e1415); }
+  .hcover:has(img) { padding: 0; align-items: center; justify-content: center; background: rgba(10, 6, 6, 0.7); }
+  .hcover img { width: 100%; height: 100%; object-fit: contain; }
+  .hdl { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: var(--btn); }
+  .hdl span { display: block; height: 100%; background: var(--amber); }
+  .gn { font-family: "Press Start 2P", monospace; font-size: 9px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pp { display: flex; gap: 6px; }
+  .hchip { font-family: VT323, monospace; font-size: 15px; letter-spacing: 0.08em; color: var(--text-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 7px; }
+  .hchip.two { color: #ffd36b; border-color: var(--amber); }
+  .hdesc { position: absolute; left: 50px; top: 684px; font-family: VT323, monospace; font-size: 24px; letter-spacing: 0.06em; color: #ffd6d6; text-shadow: 0 0 6px rgba(255, 120, 120, 0.6); white-space: nowrap; overflow: hidden; right: 48px; text-overflow: ellipsis; }
+  .cursor { animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hfoot { position: absolute; left: 0; right: 0; bottom: 0; }
+  .hfoot :global(.guide) { height: 64px; gap: 30px; }
+  @media (max-height: 799px) {
+    .hhd { top: 22px; }
+    .hbar { top: 112px; }
+    .hgrid { top: 214px; height: calc(100% - 214px - 120px); }
+    .hdesc { top: auto; bottom: 76px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .htab.cur, .cursor { animation: none; }
   }
 </style>

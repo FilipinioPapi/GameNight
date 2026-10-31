@@ -22,7 +22,7 @@ use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// The emulator for each console that can be played so far.
-const CORES: &[(&str, &str)] = &[("nes", "fceumm_libretro.dll"), ("snes", "snes9x_libretro.dll")];
+pub(crate) const CORES: &[(&str, &str)] = &[("nes", "fceumm_libretro.dll"), ("snes", "snes9x_libretro.dll")];
 
 #[derive(Default)]
 pub struct Games {
@@ -47,7 +47,7 @@ pub struct WantGame {
     size_bytes: u64,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaySettings {
     screen: String,
@@ -57,6 +57,25 @@ pub struct PlaySettings {
     show_fps: bool,
 }
 
+/// Couch Play (online) additions to RetroArch's settings. None = a normal game on your own.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Netplay {
+    /// This PC hosts (its RetroArch takes friends from the relay bridge on this PC).
+    pub host: bool,
+    /// The seat (1-4) to ask for; None = watch.
+    pub seat: Option<u8>,
+    /// RetroArch's local command port, for switching play/watch.
+    pub cmd_port: u16,
+    /// Folder of Game Night's own remap files (SNES multitap), when the game needs it.
+    pub remaps: Option<PathBuf>,
+    /// The name others see in the game's messages.
+    pub nickname: String,
+    /// Where the window starts on the screen (x, y, width, height), before Game Night puts it in the box.
+    pub window: Option<(i32, i32, i32, i32)>,
+    /// Netplay command-line arguments (--host / --connect ...).
+    pub args: Vec<String>,
+}
+
 #[derive(Serialize, Clone)]
 struct Progress {
     id: String,
@@ -64,7 +83,7 @@ struct Progress {
     total: u64,
 }
 
-fn root_of(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn root_of(path: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(path);
     if is_ours(&root) {
         Ok(root)
@@ -112,7 +131,7 @@ fn index_path(root: &Path) -> PathBuf {
     root.join("library.json")
 }
 
-fn read_index(root: &Path) -> HashMap<String, Entry> {
+pub(crate) fn read_index(root: &Path) -> HashMap<String, Entry> {
     fs::read_to_string(index_path(root)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
@@ -123,7 +142,7 @@ fn write_index(root: &Path, idx: &HashMap<String, Entry>) -> Result<(), String> 
 }
 
 /// Path of a game's file, only if it is really there, inside its console folder, at the right size.
-fn game_file(root: &Path, e: &Entry) -> Option<PathBuf> {
+pub(crate) fn game_file(root: &Path, e: &Entry) -> Option<PathBuf> {
     if !valid_console(&e.console) || safe_name(&e.file, "0") != e.file {
         return None;
     }
@@ -315,7 +334,8 @@ fn e2e_mode() -> Option<&'static str> {
 
 /// RetroArch's settings for one game. Menus, online features and anything that could take a player
 /// out of the game are switched off. Quitting: Esc, or L1 + R1 + Start + Select on a controller.
-pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &crate::controllers::Plan) -> String {
+/// `net`: Couch Play's online settings on top (see `netplay_lines`).
+pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &crate::controllers::Plan, net: Option<&Netplay>) -> String {
     let path = |p: &Path| p.to_string_lossy().replace('"', "");
     let yes = |b: bool| if b { "true" } else { "false" };
     let (aspect, integer) = match s.screen.as_str() {
@@ -323,7 +343,7 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         "stretch" => (24, false), // fill the screen
         _ => (0, false),          // 4:3, like an old TV
     };
-    let lines: Vec<(&str, String)> = vec![
+    let base: Vec<(&str, String)> = vec![
         // Never write these settings back, never show menus or online extras.
         ("config_save_on_exit", "false".into()),
         ("menu_driver", "rgui".into()),
@@ -399,6 +419,15 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("sort_savefiles_enable", "false".into()),
         ("sort_savestates_enable", "false".into()),
     ];
+    let mut lines: Vec<(String, String)> = base.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    if let Some(n) = net {
+        for (k, v) in netplay_lines(n) {
+            match lines.iter_mut().find(|(have, _)| *have == k) {
+                Some(line) => line.1 = v,
+                None => lines.push((k, v)),
+            }
+        }
+    }
     let mut out = String::from("# Written by Game Night for each game. Changes here are replaced.\n");
     for (k, v) in lines {
         out.push_str(&format!("{k} = \"{v}\"\n"));
@@ -418,6 +447,73 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
     out
 }
 
+/// What Couch Play changes or adds: private netplay only (no public list, no libretro relay lookup by
+/// RetroArch, no router hole-punching), the game in a borderless window Game Night places itself, and
+/// RetroArch's own full screen switch off (it throws its window away and makes a new one; measured).
+fn netplay_lines(n: &Netplay) -> Vec<(String, String)> {
+    let path = |p: &Path| p.to_string_lossy().replace('"', "");
+    let yes = |b: bool| if b { "true" } else { "false" }.to_string();
+    let name: String = n.nickname.chars().filter(|c| c.is_ascii_alphanumeric() || " _-.".contains(*c)).take(32).collect();
+    let name = if name.trim().is_empty() { "Player".to_string() } else { name.trim().to_string() };
+    let mut v: Vec<(String, String)> = [
+        ("netplay_public_announce", "false".to_string()),
+        ("netplay_use_mitm_server", "false".into()),
+        ("netplay_nat_traversal", "false".into()),
+        ("netplay_max_connections", "8".into()),
+        ("netplay_max_ping", "0".into()),
+        ("netplay_check_frames", "0".into()),
+        ("netplay_ping_show", "false".into()),
+        ("netplay_allow_pausing", "false".into()),
+        ("netplay_password", "".into()),
+        ("netplay_spectate_password", "".into()),
+        ("netplay_nickname", name),
+        ("netplay_start_as_spectator", yes(!n.host && n.seat.is_none())),
+        // Local commands for the play/watch switch, sent by Game Night on this PC.
+        ("network_cmd_enable", "true".into()),
+        ("network_cmd_port", n.cmd_port.to_string()),
+        // A plain borderless window that Game Night keeps over the game box (or over the whole screen).
+        ("video_fullscreen", "false".into()),
+        ("video_windowed_fullscreen", "false".into()),
+        ("video_window_show_decorations", "false".into()),
+        ("input_toggle_fullscreen", "nul".into()),
+        ("pause_nonactive", "false".into()),
+        // Netplay can't rewind or speed up.
+        ("rewind_enable", "false".into()),
+        ("input_rewind", "nul".into()),
+        ("input_hold_fast_forward", "nul".into()),
+        ("savestate_auto_load", "false".into()),
+        ("savestate_auto_save", "false".into()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    for p in 1..=16u8 {
+        v.push((format!("netplay_request_device_p{p}"), yes(n.seat == Some(p))));
+    }
+    if let Some(dir) = &n.remaps {
+        v.push(("auto_remaps_enable".into(), "true".into()));
+        v.push(("input_remapping_directory".into(), path(dir)));
+    }
+    if let Some((x, y, w, h)) = n.window {
+        v.push(("video_window_save_positions".into(), "true".into()));
+        v.push(("video_windowed_position_x".into(), x.to_string()));
+        v.push(("video_windowed_position_y".into(), y.to_string()));
+        v.push(("video_windowed_position_width".into(), w.max(64).to_string()));
+        v.push(("video_windowed_position_height".into(), h.max(64).to_string()));
+    }
+    v
+}
+
+/// SNES 3-4 players: the multitap on port 2. RetroArch only reads this from a remap file (measured).
+pub(crate) const SNES_MULTITAP_REMAP: &str = "input_libretro_device_p1 = \"1\"\ninput_libretro_device_p2 = \"257\"\n";
+
+/// Writes Game Night's own Snes9x remap file under `dir` (in Game Night's settings folder).
+pub(crate) fn write_snes_remap(dir: &Path) -> Result<(), String> {
+    let core = dir.join("Snes9x");
+    fs::create_dir_all(&core).map_err(|_| "Couldn't write the controller settings.")?;
+    fs::write(core.join("Snes9x.rmp"), SNES_MULTITAP_REMAP).map_err(|_| "Couldn't write the controller settings.".to_string())
+}
+
 /// A short note of the controllers seen and who got what, kept next to RetroArch's log.
 fn describe(plugged: &[crate::retroports::Device], pads: &crate::controllers::Plan) -> String {
     let mut t = String::new();
@@ -433,28 +529,58 @@ fn describe(plugged: &[crate::retroports::Device], pads: &crate::controllers::Pl
     t
 }
 
-/// Starts a downloaded game fullscreen. "game-closed" fires when the player quits.
-#[tauri::command]
-pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settings: PlaySettings) -> Result<(), String> {
-    let root = root_of(&root)?;
-    let entry = read_index(&root).remove(&id).ok_or("That game isn't on this PC yet.")?;
-    let rom = game_file(&root, &entry).ok_or("That game's file is missing. Download it again.")?;
+/// One RetroArch start, ready to go (and to go again, for Couch Play's one retry).
+pub(crate) struct Launch {
+    exe: PathBuf,
+    cwd: PathBuf,
+    args: Vec<std::ffi::OsString>,
+    pub log_file: PathBuf,
+    sound_file: PathBuf,
+    sound: usize,
+}
+
+impl Launch {
+    pub(crate) fn spawn(&self) -> Result<std::process::Child, String> {
+        let _ = fs::remove_file(&self.log_file);
+        std::process::Command::new(&self.exe)
+            .current_dir(&self.cwd)
+            .args(&self.args)
+            .spawn()
+            .map_err(|_| "Couldn't start the game.".to_string())
+    }
+
+    /// After RetroArch closes: no sound this time? Try the next way next time. Returns "no sound".
+    pub(crate) fn after_exit(&self) -> bool {
+        let log = fs::read_to_string(&self.log_file).ok();
+        let silent = log.as_deref().map(sound_failed).unwrap_or(false);
+        if silent && self.sound < SOUND_WAYS.len() {
+            let _ = fs::write(&self.sound_file, (self.sound + 1).to_string());
+        } else if !silent && log.is_some() && self.sound == SOUND_WAYS.len() {
+            // The last resort had sound after all (e.g. speakers plugged back in): back to normal pacing.
+            let _ = fs::write(&self.sound_file, (SOUND_WAYS.len() - 1).to_string());
+        }
+        silent
+    }
+}
+
+/// The game's console, if that game is on this PC and can be played.
+pub(crate) fn console_of(root: &Path, id: &str) -> Option<String> {
+    let e = read_index(root).remove(id)?;
+    game_file(root, &e)?;
+    CORES.iter().any(|(c, _)| *c == e.console).then_some(e.console)
+}
+
+/// Writes RetroArch's settings for one game and works out how to start it. `net`: Couch Play.
+pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, settings: &PlaySettings, net: Option<&Netplay>) -> Result<Launch, String> {
+    let entry = read_index(root).remove(id).ok_or("That game isn't on this PC yet.")?;
+    let rom = game_file(root, &entry).ok_or("That game's file is missing. Download it again.")?;
     let core = CORES.iter().find(|(c, _)| *c == entry.console).map(|(_, f)| *f).ok_or("That console can't be played yet.")?;
-    let player = player_dir(&app).ok_or("Game Night's player is missing. Reinstall Game Night.")?;
+    let player = player_dir(app).ok_or("Game Night's player is missing. Reinstall Game Night.")?;
     let exe = player.join(if cfg!(windows) { "retroarch.exe" } else { "retroarch" });
     let core_path = player.join("cores").join(core);
     if !exe.is_file() || !core_path.is_file() {
         return Err("Game Night's player is missing. Reinstall Game Night.".into());
     }
-    {
-        let state = app.state::<Games>();
-        let mut playing = state.playing.lock().unwrap_or_else(|e| e.into_inner());
-        if playing.is_some() {
-            return Err("A game is already running.".into());
-        }
-        *playing = Some(id.clone());
-    }
-
     let cfg_dir = app.path().app_config_dir().map_err(|_| "No settings folder.")?.join("player");
     let cache = app.path().app_cache_dir().map_err(|_| "No cache folder.")?.join("player");
     let sound_file = cfg_dir.join("sound.txt");
@@ -465,7 +591,7 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     let scan = crate::retroports::scan();
     let plugged = &scan.devices;
     let mut pads = crate::controllers::plan(
-        &crate::controllers::prefs(&app),
+        &crate::controllers::prefs(app),
         plugged,
         last_used,
         fs::read_to_string(&pad_file).ok().as_deref(),
@@ -478,69 +604,88 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         pads.joypad_driver = "dinput";
     }
     let sound: usize = fs::read_to_string(&sound_file).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0).min(SOUND_WAYS.len());
+    // Someone else's game (Couch Play as a friend): its battery saves go to a folder of their own, so
+    // they never overwrite your own saves for that game.
+    let guest = net.is_some_and(|n| !n.host);
+    let saves = if guest { root.join("saves").join("couch") } else { root.join("saves") };
+    let states = if guest { root.join("states").join("couch") } else { root.join("states") };
     let paths = ConfigPaths {
         player: player.clone(),
         logs: cache.join("logs"),
-        saves: root.join("saves").join(&entry.console),
-        states: root.join("states").join(&entry.console),
+        saves: saves.join(&entry.console),
+        states: states.join(&entry.console),
         system: root.join("bios"),
         cache,
     };
     let log_file = paths.logs.join("retroarch.log");
-    let started = (|| -> Result<std::process::Child, String> {
-        for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache, &paths.logs] {
-            fs::create_dir_all(d).map_err(|_| "Couldn't make the saves folder.")?;
-        }
-        let cfg = cfg_dir.join("retroarch.cfg");
-        let _ = fs::remove_file(&log_file);
-        if let Some(id) = &pads.player1 {
-            let _ = fs::write(&pad_file, id);
-        }
-        let _ = fs::write(paths.logs.join("controllers.txt"), describe(plugged, &pads));
-        fs::write(&cfg, retroarch_config(&paths, &settings, sound, &pads)).map_err(|_| "Couldn't write the player settings.")?;
-        let mut cmd = std::process::Command::new(&exe);
-        cmd.current_dir(&player).arg("--config").arg(&cfg).arg("-L").arg(&core_path).arg("--fullscreen");
-        if settings.picture == "scanlines" {
-            cmd.arg("--set-shader").arg(player.join("shaders").join("scanlines.slangp"));
-        }
-        // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
-        // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
-        match e2e_mode() {
-            Some("play") => {
-                cmd.arg("--max-frames=600");
-            }
-            Some("padgame") => {
-                cmd.arg("--max-frames=3600");
-            }
-            _ => {}
-        }
-        cmd.arg(&rom);
-        cmd.spawn().map_err(|_| "Couldn't start the game.".to_string())
-    })();
-    let mut child = match started {
-        Ok(c) => c,
+    for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache, &paths.logs] {
+        fs::create_dir_all(d).map_err(|_| "Couldn't make the saves folder.")?;
+    }
+    let cfg = cfg_dir.join("retroarch.cfg");
+    if let Some(id) = &pads.player1 {
+        let _ = fs::write(&pad_file, id);
+    }
+    let _ = fs::write(paths.logs.join("controllers.txt"), describe(plugged, &pads));
+    fs::write(&cfg, retroarch_config(&paths, settings, sound, &pads, net)).map_err(|_| "Couldn't write the player settings.")?;
+    let mut args: Vec<std::ffi::OsString> = vec!["--config".into(), cfg.into_os_string(), "-L".into(), core_path.into_os_string()];
+    match net {
+        None => args.push("--fullscreen".into()),
+        Some(n) => args.extend(n.args.iter().map(Into::into)),
+    }
+    if settings.picture == "scanlines" {
+        args.push("--set-shader".into());
+        args.push(player.join("shaders").join("scanlines.slangp").into_os_string());
+    }
+    // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
+    // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
+    match e2e_mode() {
+        Some("play") => args.push("--max-frames=600".into()),
+        Some("padgame") => args.push("--max-frames=3600".into()),
+        _ => {}
+    }
+    args.push(rom.into_os_string());
+    Ok(Launch { exe, cwd: player, args, log_file, sound_file, sound })
+}
+
+/// Marks a game as running (only one at a time, alone or online). False = one already is.
+pub(crate) fn claim<R: Runtime>(app: &AppHandle<R>, what: &str) -> bool {
+    let state = app.state::<Games>();
+    let mut playing = state.playing.lock().unwrap_or_else(|e| e.into_inner());
+    if playing.is_some() {
+        return false;
+    }
+    *playing = Some(what.to_string());
+    true
+}
+
+pub(crate) fn release<R: Runtime>(app: &AppHandle<R>) {
+    *app.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Starts a downloaded game fullscreen. "game-closed" fires when the player quits.
+#[tauri::command]
+pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settings: PlaySettings) -> Result<(), String> {
+    let root = root_of(&root)?;
+    if !claim(&app, &id) {
+        return Err("A game is already running.".into());
+    }
+    let started = prepare(&app, &root, &id, &settings, None).and_then(|l| l.spawn().map(|c| (l, c)));
+    let (launch, mut child) = match started {
+        Ok(x) => x,
         Err(e) => {
-            *app.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            release(&app);
             return Err(e);
         }
     };
     let handle = app.clone();
     std::thread::spawn(move || {
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
-        *handle.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        // No sound this time? Try the next way next time.
-        let log = fs::read_to_string(&log_file).ok();
-        let silent = log.as_deref().map(sound_failed).unwrap_or(false);
-        if silent && sound < SOUND_WAYS.len() {
-            let _ = fs::write(&sound_file, (sound + 1).to_string());
-        } else if !silent && log.is_some() && sound == SOUND_WAYS.len() {
-            // The last resort had sound after all (e.g. speakers plugged back in): back to normal pacing.
-            let _ = fs::write(&sound_file, (SOUND_WAYS.len() - 1).to_string());
-        }
+        release(&handle);
+        let silent = launch.after_exit();
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
         #[cfg(feature = "e2e")]
         if e2e_mode().is_some() {
-            let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file });
+            let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[launch.sound.min(SOUND_WAYS.len() - 1)], "log": launch.log_file });
             let _ = fs::write(root.join("e2e-result.json"), result.to_string());
             handle.exit(0);
         }
@@ -640,7 +785,7 @@ mod tests {
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false };
         let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
-        let cfg = retroarch_config(&p, &s, 0, &pads);
+        let cfg = retroarch_config(&p, &s, 0, &pads, None);
         for want in [
             "audio_driver = \"xaudio\"",
             "input_max_users = \"4\"",
@@ -666,15 +811,99 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         let pixel = PlaySettings { screen: "pixel".into(), picture: "sharp".into(), ..s };
-        let cfg = retroarch_config(&p, &pixel, 1, &Default::default());
+        let cfg = retroarch_config(&p, &pixel, 1, &Default::default(), None);
         assert!(cfg.contains("input_player1_device_reservation_type = \"0\""));
         assert!(cfg.contains("input_joypad_driver = \"xinput\""));
         assert!(cfg.contains("audio_driver = \"wasapi\"") && cfg.contains("audio_wasapi_exclusive_mode = \"false\""));
-        let last = retroarch_config(&p, &pixel, 9, &Default::default());
+        let last = retroarch_config(&p, &pixel, 9, &Default::default(), None);
         assert!(last.contains("audio_driver = \"dsound\"") && last.contains("vrr_runloop_enable = \"true\""));
         assert!(sound_failed("[ERROR] Failed to initialize audio driver. Will continue without audio.\n"));
         assert!(!sound_failed("[INFO] [Audio]: Started synchronous audio driver.\n"));
         assert!(cfg.contains("aspect_ratio_index = \"22\"") && cfg.contains("video_scale_integer = \"true\""));
         assert!(cfg.contains("video_shader_enable = \"false\""));
+        assert!(cfg.contains("video_fullscreen = \"true\"") && cfg.contains("network_cmd_enable = \"false\""));
+        assert!(!cfg.contains("netplay_request_device"));
+    }
+
+    fn paths() -> ConfigPaths {
+        ConfigPaths {
+            player: PathBuf::from("/p"),
+            logs: PathBuf::from("/c/logs"),
+            saves: PathBuf::from("/g/saves/snes"),
+            states: PathBuf::from("/g/states/snes"),
+            system: PathBuf::from("/g/bios"),
+            cache: PathBuf::from("/c"),
+        }
+    }
+
+    fn line(cfg: &str, key: &str) -> Vec<String> {
+        cfg.lines().filter(|l| l.starts_with(&format!("{key} = "))).map(String::from).collect()
+    }
+
+    #[test]
+    fn couch_play_settings() {
+        let s = PlaySettings { screen: "4:3".into(), picture: "sharp".into(), rewind: true, fast_forward: true, show_fps: false };
+        let host = Netplay {
+            host: true,
+            seat: Some(1),
+            cmd_port: 55123,
+            remaps: Some(PathBuf::from("/cfg/couch-remaps")),
+            nickname: "Jay\"den = <x>".into(),
+            window: Some((10, 20, 640, 480)),
+            args: vec!["--host".into(), "--port".into(), "55555".into()],
+        };
+        let cfg = retroarch_config(&paths(), &s, 0, &Default::default(), Some(&host));
+        for want in [
+            "netplay_public_announce = \"false\"",
+            "netplay_use_mitm_server = \"false\"",
+            "netplay_nat_traversal = \"false\"",
+            "netplay_max_connections = \"8\"",
+            "netplay_start_as_spectator = \"false\"",
+            "netplay_request_device_p1 = \"true\"",
+            "netplay_request_device_p2 = \"false\"",
+            "netplay_request_device_p16 = \"false\"",
+            "network_cmd_enable = \"true\"",
+            "network_cmd_port = \"55123\"",
+            "video_fullscreen = \"false\"",
+            "video_window_show_decorations = \"false\"",
+            "input_toggle_fullscreen = \"nul\"",
+            "pause_nonactive = \"false\"",
+            "auto_remaps_enable = \"true\"",
+            "input_remapping_directory = \"/cfg/couch-remaps\"",
+            "rewind_enable = \"false\"",
+            "input_hold_fast_forward = \"nul\"",
+            "video_windowed_position_x = \"10\"",
+            "video_windowed_position_width = \"640\"",
+            "netplay_nickname = \"Jayden  x\"",
+        ] {
+            assert!(cfg.contains(want), "missing {want}");
+        }
+        // Each setting once: Couch Play's values replace the normal ones instead of adding a second line.
+        for key in ["video_fullscreen", "network_cmd_enable", "auto_remaps_enable", "rewind_enable", "netplay_nat_traversal"] {
+            assert_eq!(line(&cfg, key).len(), 1, "{key}");
+        }
+
+        let watcher = Netplay { host: false, seat: None, cmd_port: 1, nickname: "".into(), ..Default::default() };
+        let cfg = retroarch_config(&paths(), &s, 0, &Default::default(), Some(&watcher));
+        assert!(cfg.contains("netplay_start_as_spectator = \"true\""));
+        assert!(cfg.contains("netplay_nickname = \"Player\""));
+        assert!(cfg.contains("auto_remaps_enable = \"false\"")); // NES: no remap file
+        assert!(!cfg.contains("netplay_request_device_p1 = \"true\""));
+
+        let p3 = Netplay { seat: Some(3), ..watcher };
+        let cfg = retroarch_config(&paths(), &s, 0, &Default::default(), Some(&p3));
+        assert!(cfg.contains("netplay_start_as_spectator = \"false\""));
+        assert!(cfg.contains("netplay_request_device_p3 = \"true\""));
+        assert_eq!(line(&cfg, "netplay_request_device_p1"), vec!["netplay_request_device_p1 = \"false\""]);
+    }
+
+    #[test]
+    fn snes_multitap_remap_file() {
+        let dir = std::env::temp_dir().join(format!("gn-remap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write_snes_remap(&dir).unwrap();
+        let text = fs::read_to_string(dir.join("Snes9x").join("Snes9x.rmp")).unwrap();
+        assert_eq!(text, "input_libretro_device_p1 = \"1\"\ninput_libretro_device_p2 = \"257\"\n");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

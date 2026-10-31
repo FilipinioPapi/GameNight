@@ -69,14 +69,17 @@ Labels: Confirmed (measured or read in RetroArch 1.22.2's own code), Strongly in
   Steam, if running with Steam Input, may also take it.
 - Unknown: DualSense PS button through gilrs while Game Night is in the background (Windows' WGI input may only deliver to the
   window in front). Test on CI isn't possible (pretend controller is Xbox-style); needs Jayden's real DualSense.
-- Backup shortcut: hold Start + Select ~1 s (a hold avoids clashing with games that use Start+Select).
+- Backup shortcut: NOT Start + Select. Jayden reported 2026-10-31 16:15 that Start + Select opens Windows' Alt-Tab switcher
+  on his PC (cause Unknown: Windows' own controller features or Steam's desktop controls; to find out on his PC).
+  Proposed instead: hold both stick clicks (L3 + R3) ~1 s. NES/SNES games never use them, and they're not a known
+  Windows, Game Bar or Steam shortcut (Strongly inferred; Steam's chords all use the Guide button).
 
 ## Recommendations (for Jayden)
 - Menu opens LOCALLY in Couch Play (game keeps going, your player stands still), with "Pause for everyone" as its second item.
   Solo games: the menu simply pauses. If the "stand still" part can't be made reliable, fall back to pausing for everyone.
 - No RetroArch menu for players at all. Everything people need gets a Game Night setting; Game Night writes RetroArch's settings
   fresh each launch, so nothing can get broken permanently. Optional later: a hidden "advanced" switch for Jayden only.
-- Quit moves into the menu ("Quit" with a confirm). Start+Select (held) opens the menu as backup to the Xbox/PS button.
+- Quit moves into the menu ("Quit" with a confirm). Holding both stick clicks (L3 + R3) opens the menu as backup to the Xbox/PS button.
 - Menu tabs: HOME (resume, pause for everyone, back to lobby, switch to watching, end game/quit), MY SCREEN (look/shader,
   bezel, pixels, screen shape, FPS), GAME (my volume; host: reset, game options; solo: save/load state, rewind, fast forward),
   CONTROLLER (my pad, hand pad to a friend, button layout). Lobby panel on the right in Couch Play.

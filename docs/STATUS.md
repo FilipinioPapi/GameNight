@@ -83,4 +83,4 @@ Strongly inferred, Unknown.
   `docs/HANDOFF_INGAME_MENU.md`.
 - Strongly inferred: per-player shaders/bezels don't break online sync; heavy shaders on a slow PC slow everyone.
   Unknown: stopping your own presses reaching the game while your menu is open (CI test planned), PS button in the background.
-- Waiting on Jayden: OK on the mockups and on "menu opens locally, with Pause for everyone" vs "always pause".
+- Jayden chose 2026-10-31: menu opens locally with "Pause for everyone" (fallback pause-all). Waiting on Jayden: OK on mockups IG1-IG3.

@@ -34,21 +34,17 @@ The install link for friends is always the newest version:
 ## Security
 - `latest.json` contains only `signed` (base64 of the file list) and `signature` (base64 ECDSA P-256 /
   SHA-256, r||s). The app checks it against Jayden's public key built into `app/src-tauri/src/updater.rs`.
-  That is the same key as Roof Rage's. The secret half is only at
-  `/mnt/user/appdata/roofrage-sync/signing_key.pem`. The container gets it read-only, and it is never in the
+  The secret half is only on the NAS. The publish container gets it read-only, and it is never in the
   served folder, git or chat.
-- The signed list says `"app": "gamenight"`, so a Roof Rage list (same key) is refused. It carries the
+- The signed list says `"app": "gamenight"`, so a list made for another app is refused. It carries the
   installer's size and SHA-256, so the one signature covers the download too. Only a newer version is
   offered, so an old signed list can't be replayed to downgrade anyone.
 - With no key on the NAS, nothing is published, because the app would refuse an unsigned list anyway.
 - Test builds can use `GAMENIGHT_UPDATE_URL` and `GAMENIGHT_UPDATE_KEY`. Release builds ignore both.
 - Known limit (same as Roof Rage): anyone who can merge to `main` gets a release signed.
 
-## When Roof Rage's downloads get locked (RoofRageRE `re/UPDATES_LOCK_SETUP.md` Part C)
-That guide puts a friends-token check at the top of the whole `server { }`, which would also lock
-`/gamenight/`. The Game Night app holds no secrets, so it can't send that token. When locking, put the check
-inside `location / { ... }` instead, and add an open `location /gamenight/ { }` block. Game Night's files are
-protected by the signature, and its installer contains nothing private.
+## Locking down downloads
+NAS and proxy notes for this are in the project's private notes (project files: `gamenight/private-notes/server-setup.md`).
 
 ## One-time NAS setup (Jayden)
 1. **GitHub token.** Go to github.com, then Settings, Developer settings, Fine-grained tokens, and edit the

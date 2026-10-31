@@ -2,6 +2,10 @@
 
 Browser pages:  /app/login, /auth/callback (Discord sign-in only)
 App API:        /api/... (needs the app's sign-in pass, except trading a sign-in code for one)
+Couch Play:     /api/lobbies/... (see docs/COUCH_PLAY_SPEC.md)
+
+With BASE_PATH set (e.g. /gamenight), every address also answers under it (/gamenight/api/me),
+so Nginx Proxy Manager can forward /gamenight/ with or without stripping it.
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import aiohttp
 from aiohttp import web
 
 from . import discord_auth as da
+from . import lobbies as lb
 from .db import Database, User
 from .romm import RomM
 
@@ -25,6 +30,7 @@ ROMM = web.AppKey("romm", RomM)
 BOOK = web.AppKey("book", da.LoginBook)
 HTTP = web.AppKey("http", aiohttp.ClientSession)
 LIMITS = web.AppKey("limits", dict)
+LOBBIES = web.AppKey("lobbies", lb.LobbyBook)
 USER = web.RequestKey("user", User)
 TOKEN = web.RequestKey("token", str)
 
@@ -95,10 +101,19 @@ async def security_headers(request: web.Request, handler):
     return resp
 
 
+def local_path(request: web.Request) -> str:
+    """The address without BASE_PATH in front, so /gamenight/api/me and /api/me are treated the same."""
+    path, base = request.path, getattr(request.app[CFG], "base_path", "")
+    if base and (path == base or path.startswith(base + "/")):
+        return path[len(base):] or "/"
+    return path
+
+
 @web.middleware
 async def require_pass(request: web.Request, handler):
     """Every /api address needs the app's sign-in pass, except trading a code for one."""
-    if request.path.startswith("/api/") and not (request.path == "/api/session" and request.method == "POST"):
+    path = local_path(request)
+    if path.startswith("/api/") and not (path == "/api/session" and request.method == "POST"):
         auth = request.headers.get("Authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         user = request.app[DB].check_session(token) if token else None
@@ -257,16 +272,148 @@ async def download(request: web.Request) -> web.StreamResponse:
         return resp
 
 
+# ---------- Couch Play lobbies ----------
+
+def _lobby_call(fn, *args):
+    try:
+        return fn(*args)
+    except lb.LobbyError as e:
+        raise {403: web.HTTPForbidden, 404: web.HTTPNotFound, 409: web.HTTPConflict,
+               503: web.HTTPServiceUnavailable}.get(e.status, web.HTTPBadRequest)(text=e.message)
+
+
+async def _body(request: web.Request, allowed: set[str]) -> dict:
+    """The JSON body: an object with only the expected keys."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="Bad request.")
+    if not isinstance(body, dict) or not set(body) <= allowed:
+        raise web.HTTPBadRequest(text="Bad request.")
+    return body
+
+
+def _choice(body: dict, key: str, options: tuple) -> str:
+    value = body.get(key)
+    if not isinstance(value, str) or value not in options:
+        raise web.HTTPBadRequest(text="Bad request.")
+    return value
+
+
+def _flag(body: dict, key: str) -> bool:
+    value = body.get(key)
+    if not isinstance(value, bool):
+        raise web.HTTPBadRequest(text="Bad request.")
+    return value
+
+
+def _whole(value, lo: int, hi: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi
+
+
+def _code_check(request: web.Request) -> str:
+    """Looking up or joining by code: 20 a minute per person, so codes can't be guessed.
+    People already in that lobby aren't counted."""
+    code, uid = request.match_info["code"], request[USER].discord_id
+    if not request.app[LOBBIES].is_member(code, uid) and not request.app[LIMITS]["code"].allow(uid):
+        log.info("%s tried too many lobby codes; slowing them down", request[USER].name)
+        raise web.HTTPTooManyRequests(text="Too many tries. Wait a minute, then check the code.")
+    return code
+
+
+async def lobby_list(request: web.Request) -> web.Response:
+    return web.json_response({"lobbies": request.app[LOBBIES].open_list()})
+
+
+async def lobby_host(request: web.Request) -> web.Response:
+    body = await _body(request, {"game_id", "open"})
+    gid, is_open = body.get("game_id"), _flag(body, "open")
+    if not isinstance(gid, str) or not 1 <= len(gid) <= 12 or not gid.isascii() or not gid.isdigit():
+        raise web.HTTPBadRequest(text="Bad request.")
+    if not request.app[LIMITS]["host"].allow(request[USER].discord_id):
+        raise web.HTTPTooManyRequests(text="Too many lobbies opened. Wait a minute.")
+    try:
+        games = await request.app[ROMM].games()
+    except (aiohttp.ClientError, TimeoutError) as e:
+        log.warning("RomM unreachable: %s", e)
+        raise web.HTTPServiceUnavailable(text="The game library is offline right now.")
+    game = games.get(int(gid))
+    if not game:
+        raise web.HTTPNotFound(text="No such game.")
+    if game.console not in lb.CONSOLES:
+        raise web.HTTPBadRequest(text="Only NES and SNES games can be played online for now.")
+    info = {"id": str(game.id), "title": game.title, "console": game.console}
+    return web.json_response(_lobby_call(request.app[LOBBIES].host, user_json(request[USER]), info, is_open))
+
+
+async def lobby_get(request: web.Request) -> web.Response:
+    code = _code_check(request)
+    return web.json_response(_lobby_call(request.app[LOBBIES].lookup, code, request[USER].discord_id))
+
+
+async def lobby_join(request: web.Request) -> web.Response:
+    code = _code_check(request)
+    as_ = _choice(await _body(request, {"as"}), "as", ("play", "watch"))
+    return web.json_response(_lobby_call(request.app[LOBBIES].join, code, user_json(request[USER]), as_))
+
+
+async def lobby_switch(request: web.Request) -> web.Response:
+    as_ = _choice(await _body(request, {"as"}), "as", ("play", "watch"))
+    return web.json_response(_lobby_call(request.app[LOBBIES].switch, request.match_info["code"],
+                                         request[USER].discord_id, as_))
+
+
+async def lobby_heartbeat(request: web.Request) -> web.Response:
+    state = _choice(await _body(request, {"retroarch"}), "retroarch", lb.RETROARCH_STATES)
+    return web.json_response(_lobby_call(request.app[LOBBIES].heartbeat, request.match_info["code"],
+                                         request[USER].discord_id, state))
+
+
+async def lobby_relay(request: web.Request) -> web.Response:
+    body = await _body(request, {"server", "port", "session"})
+    server, port, session = body.get("server"), body.get("port"), body.get("session")
+    if not lb.valid_relay_server(server) or not lb.valid_session(session) or not _whole(port, 1, 65535):
+        raise web.HTTPBadRequest(text="Bad request.")
+    return web.json_response(_lobby_call(request.app[LOBBIES].set_relay, request.match_info["code"],
+                                         request[USER].discord_id, server, port, session))
+
+
+async def lobby_patch(request: web.Request) -> web.Response:
+    is_open = _flag(await _body(request, {"open"}), "open")
+    return web.json_response(_lobby_call(request.app[LOBBIES].set_open, request.match_info["code"],
+                                         request[USER].discord_id, is_open))
+
+
+async def lobby_seat(request: web.Request) -> web.Response:
+    body = await _body(request, {"seat", "action", "user"})
+    seat, target = body.get("seat"), body.get("user")
+    action = _choice(body, "action", ("hold", "give", "empty"))
+    if not _whole(seat, 1, lb.SEATS):
+        raise web.HTTPBadRequest(text="Bad request.")
+    if (action == "give" or target is not None) and not lb.valid_user_id(target):
+        raise web.HTTPBadRequest(text="Bad request.")
+    return web.json_response(_lobby_call(request.app[LOBBIES].seat_action, request.match_info["code"],
+                                         request[USER].discord_id, seat, action,
+                                         target if action == "give" else None))
+
+
+async def lobby_leave(request: web.Request) -> web.Response:
+    _lobby_call(request.app[LOBBIES].leave, request.match_info["code"], request[USER].discord_id)
+    return web.json_response({"ok": True})
+
+
 async def healthz(_request: web.Request) -> web.Response:
     return web.Response(text="ok", headers={"Cache-Control": "no-store"})
 
 
-def build(cfg, db: Database | None = None, romm_factory=None) -> web.Application:
+def build(cfg, db: Database | None = None, romm_factory=None, lobbies: lb.LobbyBook | None = None) -> web.Application:
     app = web.Application(middlewares=[security_headers, require_pass], client_max_size=64 * 1024)
     app[CFG] = cfg
     app[DB] = db or Database(f"{cfg.data_dir}/gamenight.db", cfg.session_days)
     app[BOOK] = da.LoginBook()
-    app[LIMITS] = {"login": RateLimit(10, 60), "session": RateLimit(10, 60), "bad_pass": RateLimit(30, 60)}
+    app[LIMITS] = {"login": RateLimit(10, 60), "session": RateLimit(10, 60), "bad_pass": RateLimit(30, 60),
+                   "code": RateLimit(20, 60), "host": RateLimit(10, 60)}
+    app[LOBBIES] = lobbies or lb.LobbyBook(log=log)
 
     async def startup(a: web.Application):
         a[HTTP] = aiohttp.ClientSession(headers={"User-Agent": "GameNight/0.1"})
@@ -281,13 +428,33 @@ def build(cfg, db: Database | None = None, romm_factory=None) -> web.Application
     app.on_response_prepare.append(hide_version)
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
-    app.router.add_get("/healthz", healthz)
-    app.router.add_get("/app/login", app_login)
-    app.router.add_get("/auth/callback", auth_callback)
-    app.router.add_post("/api/session", make_session)
-    app.router.add_delete("/api/session", end_session)
-    app.router.add_get("/api/me", me)
-    app.router.add_get("/api/games", list_games)
-    app.router.add_get("/api/games/{id}/cover", cover)
-    app.router.add_get("/api/games/{id}/download", download)
+    routes = [
+        ("GET", "/healthz", healthz),
+        ("GET", "/app/login", app_login),
+        ("GET", "/auth/callback", auth_callback),
+        ("POST", "/api/session", make_session),
+        ("DELETE", "/api/session", end_session),
+        ("GET", "/api/me", me),
+        ("GET", "/api/games", list_games),
+        ("GET", "/api/games/{id}/cover", cover),
+        ("GET", "/api/games/{id}/download", download),
+        ("GET", "/api/lobbies", lobby_list),
+        ("POST", "/api/lobbies", lobby_host),
+        ("GET", "/api/lobbies/{code}", lobby_get),
+        ("PATCH", "/api/lobbies/{code}", lobby_patch),
+        ("POST", "/api/lobbies/{code}/join", lobby_join),
+        ("POST", "/api/lobbies/{code}/switch", lobby_switch),
+        ("POST", "/api/lobbies/{code}/heartbeat", lobby_heartbeat),
+        ("POST", "/api/lobbies/{code}/relay", lobby_relay),
+        ("POST", "/api/lobbies/{code}/seat", lobby_seat),
+        ("POST", "/api/lobbies/{code}/leave", lobby_leave),
+    ]
+    # Every address answers both as /x and, with BASE_PATH set, as BASE_PATH/x.
+    base = getattr(cfg, "base_path", "")
+    for prefix in ("", base) if base else ("",):
+        for method, path, handler in routes:
+            if method == "GET":
+                app.router.add_get(prefix + path, handler)
+            else:
+                app.router.add_route(method, prefix + path, handler)
     return app

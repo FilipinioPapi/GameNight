@@ -21,6 +21,7 @@
   <Config Name="RomM password" Target="ROMM_PASSWORD" Default="" Mode="" Description="That user's password" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="RomM token" Target="ROMM_TOKEN" Default="" Mode="" Description="Optional instead of user/password: a read-only RomM client token" Type="Variable" Display="advanced" Required="false" Mask="true"/>
   <Config Name="Days before sign-in again" Target="SESSION_DAYS" Default="30" Mode="" Description="An unused PC has to sign in again after this many days" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="Base path (optional)" Target="BASE_PATH" Default="" Mode="" Description="Optional. When the server sits under a folder of your web address (for example https://play.jjsnas.xyz/gamenight), put that folder here: /gamenight. Leave blank otherwise. The Public address must then end with it too" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Log level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="INFO normally, DEBUG when troubleshooting" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/gamenight" Mode="rw" Description="Who has signed in (only fingerprints of sign-in passes are kept)" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/gamenight</Config>
 </Container>

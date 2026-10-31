@@ -93,7 +93,7 @@ class Member:
 @dataclass
 class Lobby:
     code: str
-    game: dict                    # {"id", "title", "console"}
+    game: dict                    # {"id", "title", "console", "players"}
     host_id: str
     open: bool
     created: float

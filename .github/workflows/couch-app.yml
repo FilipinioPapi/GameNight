@@ -1,0 +1,72 @@
+# CI only: the real Game Night app hosts a Couch Play lobby and a friend joins it through libretro's relay the
+# private way (tools/e2e/couch_app_test.py). Game Night's server code runs on this machine as a stand-in.
+name: Couch Play app test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
+            "tools/e2e/make_netplay_rom.py", "tools/player/**", ".github/workflows/couch-app.yml"]
+  pull_request:
+    paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
+            ".github/workflows/couch-app.yml"]
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "How long the random-press sync check runs (seconds)"
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: couch-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  couch:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: couch-e2e
+      - name: Add pretend Xbox controllers (ViGEmBus)
+        shell: pwsh
+        run: tools/e2e/add_pretend_pads.ps1
+      - name: Server code's own packages
+        run: pip install -r server/requirements.txt
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Build the test app (e2e build, never shipped)
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm ci
+          New-Item -ItemType Directory src-tauri/player -Force | Out-Null
+          npx tauri build --debug --features e2e --no-bundle
+      - name: Host a lobby in the app, a friend joins through the relay
+        shell: pwsh
+        env:
+          COUCH_MASH_SECONDS: ${{ github.event.inputs.seconds || '60' }}
+        run: python tools/e2e/couch_app_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/couch" "$env:RUNNER_TEMP/couch-results" "app/src-tauri/target/debug/game-night.exe" server
+      - name: Keep the results (logs, numbers, screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: couch-app-results
+          path: ${{ runner.temp }}/couch-results
+          if-no-files-found: ignore
+          retention-days: 30

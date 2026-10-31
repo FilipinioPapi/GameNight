@@ -18,8 +18,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use url::Url;
 
-/// Jayden's server on his home network, until it's reachable at https://gamenight.jjsnas.xyz.
-pub const DEFAULT_SERVER: &str = "http://192.168.1.33:8094";
+/// Jayden's server, online through his own domain (Nginx Proxy Manager forwards /gamenight/ to it).
+pub const DEFAULT_SERVER: &str = "https://play.jjsnas.xyz/gamenight";
+/// The home-network address used before 0.3.5. A PC that never signed in there moves to the online one.
+const OLD_HOME_SERVER: &str = "http://192.168.1.33:8094";
 const SIGN_IN_MINUTES: u64 = 10;
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -49,6 +51,16 @@ struct Inner {
     pending: Option<(String, Instant)>, // (secret, when sign-in started)
 }
 
+/// Why a JSON call to the server didn't work.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SendError {
+    SignedOut,
+    Offline,
+    /// The server said no: its status code, and its own short message if it gave one.
+    Refused(u16, Option<String>),
+    Odd,
+}
+
 #[derive(Serialize)]
 pub struct Status {
     server: String,
@@ -66,13 +78,18 @@ fn http() -> reqwest::Client {
 }
 
 /// Only https, or plain http to this PC or the home network (192.168.x.x, 10.x.x.x and so on).
+/// A plain folder-style path is allowed (e.g. https://play.jjsnas.xyz/gamenight), nothing else after it.
 pub fn check_server(raw: &str) -> Result<String, String> {
     let bad = || "That doesn't look like a Game Night server address.".to_string();
     let u = Url::parse(raw.trim()).map_err(|_| bad())?;
     if !u.username().is_empty() || u.password().is_some() || u.query().is_some() || u.fragment().is_some() {
         return Err(bad());
     }
-    if u.path() != "/" && !u.path().is_empty() {
+    let path = u.path().trim_end_matches('/');
+    let plain = |seg: &str| {
+        !seg.is_empty() && seg != "." && seg != ".." && seg.len() <= 64 && seg.chars().all(|c| c.is_ascii_alphanumeric() || "-_.~".contains(c))
+    };
+    if !path.is_empty() && (path.len() > 200 || !path.starts_with('/') || !path[1..].split('/').all(plain)) {
         return Err(bad());
     }
     let host = u.host().ok_or_else(bad)?;
@@ -167,6 +184,11 @@ impl Account {
             g.token = vault::load(app.path().app_config_dir().ok());
             if g.token.is_none() {
                 g.saved.user = None;
+                // Friends outside the house could never sign in at the home address; send them online.
+                // A PC already signed in there (Jayden's) keeps it, since its pass only works with that server.
+                if g.saved.server == OLD_HOME_SERVER {
+                    g.saved.server = DEFAULT_SERVER.into();
+                }
             }
         }
         f(&mut g)
@@ -216,6 +238,59 @@ impl Account {
             return Err(format!("server-{}", resp.status().as_u16()));
         }
         Ok(resp)
+    }
+
+    /// Sends a JSON call (GET / POST / PATCH) with the sign-in pass and returns the JSON answer.
+    /// A rejected pass signs you out. The server's own plain-English refusal is kept when it gives one.
+    pub async fn send_json<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, SendError> {
+        let (server, token) = self.creds(app);
+        let token = token.ok_or(SendError::SignedOut)?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(concat!("GameNight/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|_| SendError::Offline)?;
+        let mut req = client.request(method, format!("{server}{path}")).bearer_auth(token);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req.send().await.map_err(|_| SendError::Offline)?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.signed_out(app);
+            return Err(SendError::SignedOut);
+        }
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            let text = text.trim();
+            // Only short plain sentences are shown (never a web page).
+            let said = (!text.is_empty() && text.len() <= 200 && !text.contains('<') && !text.contains('{')).then(|| text.to_string());
+            return Err(SendError::Refused(status.as_u16(), said));
+        }
+        resp.json().await.map_err(|_| SendError::Odd)
+    }
+
+    /// The signed-in person's name, if any.
+    pub fn user_name<R: Runtime>(&self, app: &AppHandle<R>) -> Option<String> {
+        self.with(app, |g| g.saved.user.as_ref().map(|u| u.name.clone()))
+    }
+
+    /// CI's Couch Play test only (the "e2e" build, never shipped): a test server and pass, kept in memory only.
+    #[cfg(feature = "e2e")]
+    pub fn e2e_use(&self, server: String, token: String) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.loaded = true;
+        g.saved.server = server;
+        g.saved.user = Some(UserInfo { id: "e2e".into(), name: "Host".into(), avatar: String::new() });
+        g.token = Some(token);
     }
 
     /// Starts a game download from the server, from byte `from` onward (to finish a stopped download).
@@ -408,7 +483,15 @@ mod tests {
         assert!(check_server("http://gamenight.jjsnas.xyz").is_err()); // plain http outside the home
         assert!(check_server("http://8.8.8.8").is_err());
         assert!(check_server("https://user:pw@example.com").is_err());
-        assert!(check_server("https://example.com/somewhere").is_err());
+        assert_eq!(check_server("https://play.jjsnas.xyz/gamenight").unwrap(), "https://play.jjsnas.xyz/gamenight");
+        assert_eq!(check_server("https://play.jjsnas.xyz/gamenight/").unwrap(), "https://play.jjsnas.xyz/gamenight");
+        assert_eq!(check_server("https://example.com/a/b-c").unwrap(), "https://example.com/a/b-c");
+        assert!(check_server("https://example.com/somewhere?x=1").is_err());
+        assert!(check_server("https://example.com/somewhere#x").is_err());
+        assert!(check_server("https://example.com/a//b").is_err());
+        assert!(check_server("https://example.com/a%20b").is_err());
+        assert!(check_server("https://example.com/a/../b").unwrap() == "https://example.com/b"); // tidied by the URL reader
+        assert!(check_server("http://gamenight.jjsnas.xyz/gamenight").is_err());
         assert!(check_server("file:///C:/").is_err());
         assert!(check_server("").is_err());
     }

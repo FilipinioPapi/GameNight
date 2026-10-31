@@ -12,7 +12,10 @@ export type Route =
   | { name: "login" }
   | { name: "firstrun"; step: 2 | 3 }
   | { name: "menu" }
-  | { name: "library"; console: LibraryTab }
+  | { name: "library"; console: LibraryTab; /** Couch Play: pick a game to host (NES and SNES only). */ host?: boolean }
+  | { name: "couch" }
+  | { name: "lobby" }
+  | { name: "join"; code?: string }
   | { name: "game"; id: string }
   | { name: "settings"; tab: "controllers" | "devices" | "screen" | "consoles" | "layout" | "storage" | "account"; console: ConsoleId };
 

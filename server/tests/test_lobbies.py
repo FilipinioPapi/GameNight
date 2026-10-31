@@ -15,7 +15,7 @@ GAMES = {
     8: Game(8, "Super Bomberman", "snes", "1-4", 1, "", "", "sb.sfc"),
     9: Game(9, "Sonic", "gen", "1", 1, "", "", "sonic.md"),
 }
-MARIO = {"id": "7", "title": "Super Mario Bros.", "console": "nes"}
+MARIO = {"id": "7", "title": "Super Mario Bros.", "console": "nes", "players": "1-2"}
 
 
 class Clock:

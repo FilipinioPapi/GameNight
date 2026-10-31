@@ -342,7 +342,7 @@ async def lobby_host(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="No such game.")
     if game.console not in lb.CONSOLES:
         raise web.HTTPBadRequest(text="Only NES and SNES games can be played online for now.")
-    info = {"id": str(game.id), "title": game.title, "console": game.console}
+    info = {"id": str(game.id), "title": game.title, "console": game.console, "players": game.players}
     return web.json_response(_lobby_call(request.app[LOBBIES].host, user_json(request[USER]), info, is_open))
 
 

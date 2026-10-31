@@ -5,8 +5,8 @@ Used by the Windows build (.github/workflows/app.yml) and on a Windows PC for te
 
 It downloads RetroArch's official Windows build at a fixed version, checks the downloads against the
 SHA-256 fingerprints below (so a changed or tampered file stops the build), and copies out only:
-retroarch.exe and the DLLs it loads, the NES and SNES emulators, controller profiles and one
-scanline shader. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
+retroarch.exe and the DLLs it loads, the NES and SNES emulators, controller profiles, a scanline shader,
+three CRT looks (Lottes, Geom, Royale) and the animated NES / Super Famicom bezels. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
 """
 import hashlib
 import shutil
@@ -40,6 +40,14 @@ DLLS = [
 ]
 OTHER = ["retroarch.exe", "qt.conf", "platforms/qwindows.dll"]
 SHADER = "shaders/shaders_slang/crt/shaders/zfast_crt"
+# The in-game menu's "look" choices (approved 2026-10-31): CRT Lottes, CRT Geom and CRT Royale, from the same
+# RetroArch download. Only the files each preset really uses are copied (worked out by following the presets'
+# passes, pictures and #include lines), into player/shaders/slang/ with the same folder layout.
+SLANG = "shaders/shaders_slang"
+LOOKS = ["crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp"]
+# Bezel C (approved 2026-10-31): libretro common-overlays' animated NES and Super Famicom borders (CC BY 4.0).
+BORDERS = "overlays/borders/animated-border"
+BORDER_FILES = ["nes-border.cfg", "img-nes/*", "super_famicom_animated_border.cfg", "img-sfc/*"]
 
 HERE = Path(__file__).resolve().parent
 
@@ -50,6 +58,31 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def slang_files(root: Path, presets: list[str]) -> set[str]:
+    """Every file the presets need, as paths relative to the slang shader folder."""
+    import posixpath
+    import re
+    need, todo = set(), []
+    for preset in presets:
+        need.add(preset)
+        base = posixpath.dirname(preset)
+        for line in (root / preset).read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r'\s*([A-Za-z0-9_]+)\s*=\s*"?([^"#]+?)"?\s*(#.*)?$', line)
+            if m and re.search(r"\.(slang|png|jpg|jpeg)$", m.group(2).strip(), re.I):
+                todo.append(posixpath.normpath(posixpath.join(base, m.group(2).strip())))
+    while todo:
+        f = todo.pop()
+        if f in need:
+            continue
+        if not (root / f).is_file():
+            sys.exit(f"a shader file is missing from RetroArch's download: {f}. Stopping.")
+        need.add(f)
+        if f.endswith((".slang", ".h", ".inc")):
+            for inc in re.findall(r'#include\s+"([^"]+)"', (root / f).read_text(encoding="utf-8", errors="replace")):
+                todo.append(posixpath.normpath(posixpath.join(posixpath.dirname(f), inc)))
+    return need
 
 
 def main(out: Path) -> None:
@@ -64,7 +97,8 @@ def main(out: Path) -> None:
             if got != want:
                 sys.exit(f"{name} doesn't match its fingerprint ({got}). Stopping.")
         x = tmp / "x"
-        wanted = [f"RetroArch-Win64/{n}" for n in DLLS + OTHER] + [f"RetroArch-Win64/{SHADER}/*", "RetroArch-Win64/autoconfig/*"]
+        wanted = [f"RetroArch-Win64/{n}" for n in DLLS + OTHER] + [f"RetroArch-Win64/{SHADER}/*", "RetroArch-Win64/autoconfig/*",
+                                                                 f"RetroArch-Win64/{SLANG}/*", *[f"RetroArch-Win64/{BORDERS}/{f}" for f in BORDER_FILES]]
         subprocess.run(["7z", "x", "-y", f"-o{x}", str(tmp / "RetroArch.7z"), *wanted], check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["7z", "x", "-y", f"-o{x}", str(tmp / "RetroArch_cores.7z"), *[f"RetroArch-Win64/cores/{c}" for c in CORES]],
                        check=True, stdout=subprocess.DEVNULL)
@@ -80,6 +114,10 @@ def main(out: Path) -> None:
         shutil.copytree(src / "autoconfig", out / "autoconfig")
         shutil.copytree(src / SHADER, out / "shaders" / "zfast_crt")
         shutil.copy2(HERE / "scanlines.slangp", out / "shaders" / "scanlines.slangp")
+        for f in sorted(slang_files(src / SLANG, LOOKS)):
+            (out / "shaders" / "slang" / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src / SLANG / f, out / "shaders" / "slang" / f)
+        shutil.copytree(src / BORDERS, out / "overlays" / "animated-border")
         shutil.copy2(HERE / "NOTICE.txt", out / "NOTICE.txt")
     print(f"player ready in {out}")
 

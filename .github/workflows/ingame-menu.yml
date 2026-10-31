@@ -1,0 +1,62 @@
+# In-game menu and display test (boards IG1-IG3, approved 2026-10-31): before building anything, measure on GitHub's
+# Windows machine whether (1) whole-pixel scaling, bezels and every CRT look work and can be switched live, and
+# (2) in Couch Play each person can have their own look with 0 frames out of sync, "Pause for everyone" works, and
+# RetroArch's own menu (hidden behind Game Night's) stops your presses without stopping the game for others.
+# tools/e2e/ingame_menu_test.py does the measuring. Nothing here touches Game Night's app or releases, and nothing
+# goes to the internet except the fingerprinted downloads below.
+name: In-game menu test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tools/e2e/ingame_menu_test.py", "tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py",
+            "tools/e2e/netplay_test.py", "tools/e2e/add_pretend_pads.ps1", "tools/e2e/screen_size.ps1", "tools/player/**",
+            ".github/workflows/ingame-menu.yml"]
+  workflow_dispatch:
+    inputs:
+      parts:
+        description: "Only these parts (looks couch); empty = all"
+        default: ""
+      seconds:
+        description: "How long the main sync check presses random buttons (seconds)"
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ingame-menu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ingame:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python packages for the test
+        shell: pwsh
+        run: pip install pillow==11.0.0
+      - name: Screen size like a real PC (1920x1080)
+        shell: pwsh
+        run: tools/e2e/screen_size.ps1
+      - name: Add two pretend Xbox controllers (ViGEmBus)
+        shell: pwsh
+        run: tools/e2e/add_pretend_pads.ps1
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Looks, bezels and whole-pixel scaling; then Couch Play with a look each, pause for everyone, menu open
+        shell: pwsh
+        env:
+          INGAME_PARTS: ${{ github.event.inputs.parts || '' }}
+          INGAME_MASH_SECONDS: ${{ github.event.inputs.seconds || '60' }}
+        run: python tools/e2e/ingame_menu_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/ingame" "$env:RUNNER_TEMP/ingame-results"
+      - name: Keep the results (logs, numbers, screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingame-menu-results
+          path: ${{ runner.temp }}/ingame-results
+          if-no-files-found: ignore
+          retention-days: 30

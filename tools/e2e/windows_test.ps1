@@ -154,4 +154,4 @@ if (-not $new) { $problems += "Game Night didn't start again" }
 elseif (-not $alive) { $problems += "the reopened Game Night quit within 10 s" }
 elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False in-front=True" })) { $problems += "the reopened Game Night isn't the window in front" }
 if ($problems) { Fail ("update test: " + ($problems -join '; ')) }
-Write-Host "updated from 0.0.1 to $NewVersion: the box showed 100%, checked and installing; the installer ran; Game Night came back in front and said it updated"
+Write-Host "updated from 0.0.1 to ${NewVersion}: the box showed 100%, checked and installing; the installer ran; Game Night came back in front and said it updated"

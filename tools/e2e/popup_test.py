@@ -54,6 +54,8 @@ def popup_pixels(img):
     small = img.convert("RGB")
     colours = small.getcolors(small.width * small.height)
     main = max(colours)[1]
+    if min(main) > 200:
+        return None  # a new window RetroArch hasn't drawn into yet (all white; measured in run 41229225411)
     return sum(n for n, c in colours if max(c) > max(main) + THRESHOLD)
 
 
@@ -64,6 +66,7 @@ class Watch:
         self.label, self.copies = label, copies
         self.worst = {c.name: (0, None) for c in copies}
         self.photos = 0
+        self.on_top = set()
 
     def look(self, seconds):
         end = time.time() + seconds
@@ -74,11 +77,19 @@ class Watch:
                 wins = cl.windows_of(c.proc.pid) if c.proc else []
                 if not wins:
                     continue
+                if wins[0] not in self.on_top:
+                    # Keep the game window above everything else (the CI machine's console window covered the
+                    # friend's window in run 41229225411), without moving or resizing it.
+                    cl.u32.SetWindowPos(wins[0], cl.HWND_TOPMOST, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | cl.SWP_SHOWWINDOW)
+                    self.on_top.add(wins[0])
+                    continue  # photograph it from the next round on
                 x, y, w, h = cl.client_screen_rect(wins[0])
                 if w < 32 or h < 32:
                     continue
                 crop = shot.crop((x, y, x + w, y + h))
                 n = popup_pixels(crop)
+                if n is None:
+                    continue
                 if n > self.worst[c.name][0] or self.worst[c.name][1] is None:
                     self.worst[c.name] = (n, crop)
             time.sleep(0.25)
@@ -88,7 +99,7 @@ class Watch:
         for name, (n, crop) in self.worst.items():
             if crop is not None:
                 crop.save(OUT / f"{self.label}-{name}.png")
-            out[name] = n
+            out[name] = n if crop is not None else None  # None: no usable photo of that window
         say(f"  {self.label}: most pop-up pixels in one photo {out} ({self.photos} photos)")
         return out
 
@@ -145,11 +156,15 @@ def main():
         traceback.print_exc()
         problems.append("the test itself stopped with an error (see above)")
     before, after = results["rounds"].get("before", {}), results["rounds"].get("after", {})
-    if before and not any(before.get("boot", {}).values()):
-        problems.append("BEFORE showed no pop-ups at boot, so the photos may not be able to see them (test not valid)")
+    if before and not any(before.get("boot", {}).values()) and not any(before.get("plug_in", {}).values()):
+        problems.append("BEFORE showed no pop-ups after the game started, so the photos may not be able to see them (test not valid)")
+    if before and not before.get("join", {}).get("friend-before"):
+        problems.append("BEFORE showed no pop-ups in the friend's window when joining (test not valid)")
     for moment in ("boot", "plug_in", "join"):
         for name, n in after.get(moment, {}).items():
-            if n > 0:
+            if n is None:
+                problems.append(f"AFTER: no usable photo of {name}'s window at '{moment}'")
+            elif n > 0:
                 problems.append(f"AFTER: {n} pop-up pixels in {name}'s window at '{moment}'")
     if after and not after.get("friend_joined_log"):
         problems.append("AFTER: the friend's copy didn't join, so the 'join' moment wasn't really tested")

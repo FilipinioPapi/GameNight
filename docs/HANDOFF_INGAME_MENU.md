@@ -108,3 +108,7 @@ project files `gamenight/ingame-menu/bezel-options/`.
 - Confirmed (code): RetroArch 1.22.2 has no "overlay sets the game area" option, so Game Night places the game itself.
 - Picture bezels (overlays) and shaders are separate in RetroArch, so bezel and CRT look are two independent per-player choices.
   Shader bezels (Mega Bezel, koko-aio) would be one combined choice.
+
+## Jayden's bezel pick (2026-10-31 16:30)
+- Default: B (NyNy77 dark TV frame). Alternatives: C (NES controller, buttons light up; Super Famicom one for SNES) and A (Nosh01 console photos). Each player picks their own. Our own minimal IG1 bezel and D (old TV) not chosen.
+- Open: keep the Nintendo logos on A/B or ship logo-free copies (recommended).

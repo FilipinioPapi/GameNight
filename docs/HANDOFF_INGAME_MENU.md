@@ -86,3 +86,22 @@ Labels: Confirmed (measured or read in RetroArch 1.22.2's own code), Strongly in
 ## Next (only after Jayden's OK)
 1. Windows CI test: shaders differ between players, 0 desync; pause-for-all; each "stand still" candidate; stdin SET_SHADER.
 2. Build integer scaling + bezels (solo first), then the menu (solo), then Couch Play menu.
+
+## Bezel packs (checked 2026-10-31, after Jayden approved IG1-IG3)
+Jayden wants ready-made open-source bezels for NES/SNES, picked per player. Pictures (fitted to whole-pixel 4x at 1080p):
+project files `gamenight/ingame-menu/bezel-options/`.
+- Confirmed (read the files): libretro/overlay-borders, MIT. NES + SNES in two styles: "Nosh01" (console photo strips,
+  2560x1440) and "NyNy77" (dark TV frame with logos, 1920x1080). Contains Nintendo logos and console photos (the MIT licence
+  covers the authors' work, not Nintendo's trademarks).
+- Confirmed: libretro/common-overlays, CC BY 4.0 (credit needed). Animated NES pad border (buttons light up when pressed),
+  animated Super Famicom border, old-TV photo border made for 4x scaling, game-themed borders (Mario/Castlevania art:
+  not ours to ship, skipped).
+- Confirmed: Duimon's Mega Bezel graphics, CC BY-NC-ND (non-commercial, no edits, credit). Needs the Mega Bezel shader
+  (GPL3, libretro/slang-shaders), which needs RetroArch's integer scaling OFF (does its own) and a strong graphics card.
+  Also koko-aio and uborder (GPL3): shader bezels, generic TV/monitor frames, lighter than Mega Bezel.
+- Confirmed (measured): the picture-style bezels have a full-height hole (game stretched), not a whole-pixel one. At 4x on
+  1080p the game is 896 tall, so Game Night shrinks the bezel to fit the game exactly and fills the edge black (allowed by
+  MIT and CC BY). Strongly inferred: done in Rust at game start for each screen size.
+- Confirmed (code): RetroArch 1.22.2 has no "overlay sets the game area" option, so Game Night places the game itself.
+- Picture bezels (overlays) and shaders are separate in RetroArch, so bezel and CRT look are two independent per-player choices.
+  Shader bezels (Mega Bezel, koko-aio) would be one combined choice.

@@ -63,7 +63,7 @@
       {/if}
     {/if}
   </div>
-  {#if updates.info && updates.phase !== "none"}<button class="upd" onclick={() => updates.open()}>Update ready: v{updates.info.version}</button>{/if}
+  {#if updates.offered && updates.info}<button class="upd" onclick={() => updates.open()}>Update ready: v{updates.info.version}</button>{/if}
   <div class="foot">Private to friends on Jayden's Discord · v{VERSION}</div>
 </div>
 

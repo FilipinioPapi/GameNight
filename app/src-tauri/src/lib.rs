@@ -9,9 +9,13 @@
 
 mod account;
 mod controllers;
+mod couch;
 mod covers;
+mod gamebox;
 mod games;
+mod gamewindow;
 mod pads;
+mod relay;
 mod retroports;
 mod updater;
 
@@ -188,6 +192,7 @@ pub fn run() {
         .manage(account::Account::default())
         .manage(updater::Updates::default())
         .manage(games::Games::default())
+        .manage(couch::Couch::default())
         // Box art: the window may only show pictures from here, which only fetches from our server.
         .register_asynchronous_uri_scheme_protocol("gncover", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -209,10 +214,13 @@ pub fn run() {
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
             let _ = app.deep_link().register_all();
             pads::start(app.handle().clone());
-            #[cfg(feature = "e2e")]
-            updater::e2e_autoupdate(app.handle().clone());
+            updater::log_start(app.handle());
+            let back = updater::after_update(app.handle());
+            *app.state::<updater::Updates>().came_back.lock().unwrap_or_else(|e| e.into_inner()) = back;
             #[cfg(feature = "e2e")]
             games::e2e_play(app.handle().clone());
+            #[cfg(feature = "e2e")]
+            couch::e2e_couch(app.handle().clone());
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for link in event.urls() {
@@ -243,8 +251,24 @@ pub fn run() {
             account::sign_in,
             account::sign_out,
             account::fetch_games,
+            couch::couch_list,
+            couch::couch_lookup,
+            couch::couch_host,
+            couch::couch_join,
+            couch::couch_rejoin,
+            couch::couch_state,
+            couch::couch_switch,
+            couch::couch_set_open,
+            couch::couch_seat,
+            couch::couch_leave,
+            couch::couch_box,
+            couch::couch_fullscreen,
             updater::check_update,
-            updater::install_update
+            updater::download_update,
+            updater::start_install,
+            updater::just_updated,
+            updater::update_seen,
+            updater::update_test_mode
         ])
         .run(tauri::generate_context!())
         .expect("Game Night couldn't start");

@@ -27,6 +27,11 @@ class Updates {
       if (info) {
         this.info = info;
         this.phase = "available";
+        // CI's Windows update test only: press Update through this same box, like a person would.
+        if (await invoke<boolean>("update_test_mode").catch(() => false)) {
+          this.open();
+          setTimeout(() => void this.install(), 1500);
+        }
       }
     } catch (e) {
       console.warn("Update check failed", e);
@@ -67,3 +72,13 @@ class Updates {
 }
 
 export const updates = new Updates();
+
+let lastSeen = "";
+/** Notes in the update log what the box is showing (step and percent, in tenths), to compare with the download. */
+export function reportSeen(step: string, percent: number) {
+  if (!inTauri) return;
+  const key = `${step} ${Math.floor(percent / 10) * 10}`;
+  if (key === lastSeen) return;
+  lastSeen = key;
+  void import("@tauri-apps/api/core").then(({ invoke }) => invoke("update_seen", { step, percent: Math.round(percent) }).catch(() => {}));
+}

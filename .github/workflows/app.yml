@@ -82,6 +82,14 @@ jobs:
       - name: Test on Windows (install, play a game, update, reopen)
         shell: pwsh
         run: ../tools/e2e/windows_test.ps1 -OldSetup "$env:RUNNER_TEMP/old-setup.exe" -NewSetup "$env:RUNNER_TEMP/new-setup.exe" -NewVersion $env:GN_VERSION -Tools (Resolve-Path ../tools/e2e)
+      - name: Keep the update test's screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-screens
+          path: ${{ runner.temp }}/update-screens/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: Game-Night-windows

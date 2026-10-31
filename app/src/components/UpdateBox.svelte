@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { updates } from "../lib/update.svelte";
+  import { updates, reportSeen } from "../lib/update.svelte";
   import { formatSize } from "../lib/library";
   import { VERSION } from "../lib/version";
 
   const pct = $derived(updates.total ? Math.min(100, Math.round((updates.done / updates.total) * 100)) : 0);
+  $effect(() => {
+    if (updates.info && updates.phase !== "none" && updates.phase !== "available") reportSeen(updates.phase, pct);
+  });
   let first: HTMLButtonElement | undefined = $state();
   $effect(() => {
     first?.focus();

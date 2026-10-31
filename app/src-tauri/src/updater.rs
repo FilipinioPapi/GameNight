@@ -142,6 +142,80 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Every update step goes into update\\update.log (the install helper writes to the same file), so a
+/// failed or odd update can be explained from the log instead of guessed at. Times are UTC.
+fn log_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    Some(app.path().app_cache_dir().ok()?.join("update").join("update.log"))
+}
+
+fn log<R: Runtime>(app: &AppHandle<R>, msg: &str) {
+    use std::io::Write;
+    let Some(path) = log_path(app) else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Keep it small: start again once it passes 256 KB.
+    if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{} app: {msg}", stamp());
+    }
+}
+
+/// "2026-10-31 02:54:40.123" (UTC) without pulling in a date library.
+fn stamp() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = now.as_secs();
+    let (days, rest) = (secs / 86_400, secs % 86_400);
+    // Days since 1970-01-01 to a calendar date (Howard Hinnant's civil_from_days).
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.{:03}",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60,
+        now.subsec_millis()
+    )
+}
+
+/// At start-up, if an update was tried before: note which version opened, so the log shows whether
+/// Game Night really came back after an install.
+pub fn log_start<R: Runtime>(app: &AppHandle<R>) {
+    if log_path(app).is_some_and(|p| p.exists()) {
+        log(app, &format!("Game Night {} opened (pid {})", current_version(app), std::process::id()));
+    }
+}
+
+/// The update box reports what it is showing (step and percent), so the log shows what Jayden saw on
+/// screen next to what the download really did. Only a known step name and a number are accepted.
+#[tauri::command]
+pub fn update_seen<R: Runtime>(app: AppHandle<R>, step: String, percent: u8) {
+    const STEPS: [&str; 6] = ["asking", "downloading", "checking", "installing", "restarting", "failed"];
+    if STEPS.contains(&step.as_str()) {
+        log(&app, &format!("screen shows {step} {}%", percent.min(100)));
+    }
+}
+
+/// True only in CI's Windows update test (the "e2e" build with GAMENIGHT_E2E=update-ui): the update box
+/// then presses Update by itself, so the test goes through the same screen Jayden uses.
+#[tauri::command]
+pub fn update_test_mode() -> bool {
+    #[cfg(feature = "e2e")]
+    if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("update-ui") {
+        return true;
+    }
+    false
+}
+
 fn current_version<R: Runtime>(app: &AppHandle<R>) -> String {
     app.package_info().version.to_string()
 }
@@ -207,9 +281,13 @@ pub fn e2e_autoupdate<R: Runtime>(app: AppHandle<R>) {
 async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), String> {
     let app = app.clone();
     let dir = app.path().app_cache_dir().map_err(|_| "No folder for the download.")?.join("update");
-    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|_| "Couldn't make the download folder.")?;
+    // Clear an older download, but keep update.log so earlier attempts can still be read.
     let file = dir.join("GameNightSetup.exe");
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_file(dir.join("apply.ps1"));
+    log(&app, &format!("update {} -> {}: download starts ({} bytes)", current_version(&app), m.version, m.file.size));
+    let started = std::time::Instant::now();
 
     let mut resp = http()
         .get(format!("{}{}", base(), m.file.path))
@@ -217,12 +295,17 @@ async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), Str
         .await
         .map_err(|_| "Couldn't reach the update server.")?;
     if !resp.status().is_success() {
+        log(&app, &format!("download refused by the server: {}", resp.status()));
         return Err("The update server couldn't send the update.".into());
     }
     let mut hasher = Sha256::new();
     let mut body: Vec<u8> = Vec::with_capacity(m.file.size as usize);
     let mut last = 0u64;
-    while let Some(chunk) = resp.chunk().await.map_err(|_| "The download stopped. Try again.")? {
+    let mut logged = 0u64; // last tenth written to the log
+    while let Some(chunk) = resp.chunk().await.map_err(|_| {
+        log(&app, "download stopped part-way");
+        "The download stopped. Try again."
+    })? {
         if body.len() as u64 + chunk.len() as u64 > m.file.size {
             return Err("The download was bigger than expected, so it was thrown away.".into());
         }
@@ -232,11 +315,18 @@ async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), Str
         if done - last > 256 * 1024 || done == m.file.size {
             last = done;
             let _ = app.emit("update-progress", Progress { done, total: m.file.size });
+            let tenth = done * 10 / m.file.size;
+            if tenth > logged {
+                logged = tenth;
+                log(&app, &format!("sent progress {}% ({done} bytes, {:.1} s)", tenth * 10, started.elapsed().as_secs_f32()));
+            }
         }
     }
     if body.len() as u64 != m.file.size || hex(&hasher.finalize()) != m.file.sha256.to_ascii_lowercase() {
+        log(&app, &format!("download broken: got {} of {} bytes, or the SHA-256 didn't match", body.len(), m.file.size));
         return Err("The download arrived broken, so nothing was installed. Try again.".into());
     }
+    log(&app, &format!("download complete and matches the signed SHA-256 ({:.1} s)", started.elapsed().as_secs_f32()));
     std::fs::write(&file, &body).map_err(|_| "Couldn't save the update.")?;
     run_installer(&app, &file)
 }
@@ -245,7 +335,7 @@ async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), Str
 /// update\\update.log, so a failed update can be explained, and always reopens Game Night.
 #[cfg(windows)]
 const HELPER: &str = r#"param([int]$AppPid, [string]$Setup, [string]$Exe, [string]$Log)
-function Log($m) { Add-Content -Path $Log -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m) }
+function Log($m) { Add-Content -Path $Log -Value ("{0:yyyy-MM-dd HH:mm:ss.fff} helper: {1}" -f (Get-Date).ToUniversalTime(), $m) }
 try {
   Log "waiting for Game Night ($AppPid) to close"
   $t = 0
@@ -284,7 +374,21 @@ fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Res
         "-Exe".as_ref(), exe.as_os_str(), "-Log".as_ref(), log.as_os_str(),
     ];
     let start = |flags: u32| std::process::Command::new("powershell.exe").args(args).creation_flags(flags).spawn();
-    start(NO_WINDOW | BREAKAWAY).or_else(|_| start(NO_WINDOW)).map_err(|_| "Couldn't start the installer.")?;
+    let helper = match start(NO_WINDOW | BREAKAWAY) {
+        Ok(c) => {
+            log(app, &format!("install helper started (pid {}, kept apart from Game Night)", c.id()));
+            c
+        }
+        Err(e) => {
+            log(app, &format!("install helper couldn't start apart from Game Night ({e}), trying plainly"));
+            start(NO_WINDOW).map_err(|e| {
+                log(app, &format!("install helper didn't start: {e}"));
+                "Couldn't start the installer."
+            })?
+        }
+    };
+    drop(helper);
+    log(app, "Game Night closes now for the install");
     app.exit(0);
     Ok(())
 }

@@ -59,25 +59,94 @@ if ($seconds -lt 8) { Fail "600 frames took only $seconds s: the game runs too f
 Write-Host "the game ran at real speed ($seconds s for 600 frames)"
 Remove-Item Env:GAMENIGHT_E2E, Env:GAMENIGHT_E2E_ROOT
 
-Step "Update to $NewVersion through the app's own updater"
+Step "Update to $NewVersion through the app's own update box"
+# The update is served at about home-internet speed (3 MB/s), and the old build presses Update in its own
+# update box (GAMENIGHT_E2E=update-ui), so this goes through the same screen and steps Jayden sees.
+# Screenshots are taken every second and kept with the build ("update-screens").
 $site = Join-Path $env:RUNNER_TEMP 'updates'
 $key = (python (Join-Path $Tools 'make_update.py') $NewSetup $NewVersion $site).Trim()
-$server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $site -PassThru -WindowStyle Hidden
+$server = Start-Process python -ArgumentList (Join-Path $Tools 'slow_server.py'), $site, '8765', '3000000' -PassThru -WindowStyle Hidden
 Start-Sleep 2
-$env:GAMENIGHT_E2E = 'update'
+$shots = Join-Path $env:RUNNER_TEMP 'update-screens'
+New-Item -ItemType Directory $shots -Force | Out-Null
+$camera = Start-Job -ArgumentList $shots -ScriptBlock {
+  param($dir)
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  for ($n = 0; $n -lt 150; $n++) {
+    try {
+      $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+      $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+      $g = [System.Drawing.Graphics]::FromImage($bmp)
+      $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+      $bmp.Save((Join-Path $dir ('{0:000}-{1:HHmmss}.png' -f $n, (Get-Date).ToUniversalTime())), [System.Drawing.Imaging.ImageFormat]::Png)
+      $g.Dispose(); $bmp.Dispose()
+    } catch {}
+    Start-Sleep -Milliseconds 1000
+  }
+}
+Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices; using System.Collections.Generic;
+public static class Win {
+  delegate bool EnumProc(IntPtr h, IntPtr p);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  public static List<string> Of(uint want) {
+    var r = new List<string>(); var fg = GetForegroundWindow();
+    EnumWindows((h, p) => {
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      if (pid == want && GetWindow(h, 4) == IntPtr.Zero) {
+        var t = new StringBuilder(256); GetWindowText(h, t, 256);
+        r.Add(String.Format("'{0}' visible={1} minimised={2} in-front={3}", t, IsWindowVisible(h), IsIconic(h), h == fg));
+      }
+      return true;
+    }, IntPtr.Zero);
+    return r;
+  }
+}
+"@
+$env:GAMENIGHT_E2E = 'update-ui'
 $env:GAMENIGHT_UPDATE_URL = 'http://127.0.0.1:8765/'
 $env:GAMENIGHT_UPDATE_KEY = $key
-$old = Start-Process -FilePath $exe -PassThru
-$ok = $false
-for ($i = 0; $i -lt 180; $i++) {
-  Start-Sleep 1
-  $ver = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
-  $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe -and $_.Id -ne $old.Id }
-  if ($ver -like "$NewVersion*" -and $running) { $ok = $true; break }
-}
 $updLog = Join-Path $cache 'update\update.log'
+Remove-Item $updLog -ErrorAction SilentlyContinue
+$t = [Diagnostics.Stopwatch]::StartNew()
+$old = Start-Process -FilePath $exe -PassThru
+$closedAt = $null; $new = $null
+for ($i = 0; $i -lt 360; $i++) {
+  Start-Sleep -Milliseconds 500
+  if (-not $closedAt -and $old.HasExited) { $closedAt = $t.Elapsed.TotalSeconds; Write-Host "old Game Night closed after $([math]::Round($closedAt,1)) s" }
+  $new = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe -and $_.Id -ne $old.Id } | Select-Object -First 1
+  if ($new) { Write-Host "new Game Night started after $([math]::Round($t.Elapsed.TotalSeconds,1)) s (pid $($new.Id))"; break }
+}
+$ver = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+$windows = @(); $alive = $false
+if ($new) {
+  # Give it time to show its window, then look at what a person would see.
+  Start-Sleep 10
+  $alive = -not $new.HasExited
+  $windows = [Win]::Of([uint32]$new.Id)
+  Write-Host "10 s later: still running: $alive. Its windows:"
+  $windows | ForEach-Object { Write-Host "  | $_" }
+}
+Start-Sleep 2
+Stop-Job $camera -ErrorAction SilentlyContinue; Remove-Job $camera -Force -ErrorAction SilentlyContinue
+Write-Host "update log:"
 if (Test-Path $updLog) { Get-Content $updLog | ForEach-Object { Write-Host "  | $_" } } else { Write-Host "  (no update.log)" }
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-if (-not $ok) { Fail "after 3 minutes Game Night was on version '$ver' and running: $([bool]$running) (wanted $NewVersion, running)" }
-Write-Host "updated from 0.0.1 to $NewVersion and reopened by itself"
+
+# What has to be true, measured:
+$log = if (Test-Path $updLog) { Get-Content $updLog } else { @() }
+$problems = @()
+if (-not ($log | Select-String -SimpleMatch 'screen shows downloading 100%')) { $problems += "the update box never showed the download at 100%" }
+if (-not ($ver -like "$NewVersion*")) { $problems += "installed version is '$ver', wanted $NewVersion" }
+if (-not $new) { $problems += "Game Night didn't start again" }
+elseif (-not $alive) { $problems += "the reopened Game Night quit within 10 s" }
+elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False" })) { $problems += "the reopened Game Night has no visible window" }
+if ($problems) { Fail ("update test: " + ($problems -join '; ')) }
+Write-Host "updated from 0.0.1 to $NewVersion, the box showed 100%, and Game Night reopened with its window showing"

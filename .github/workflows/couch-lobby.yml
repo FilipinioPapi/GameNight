@@ -9,7 +9,7 @@ name: Couch Play lobby test
 on:
   push:
     branches: ["claude/**"]
-    paths: ["tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py", "tools/e2e/check_snes_multitap_rom.py",
+    paths: ["tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py", "tools/e2e/check_snes_multitap_rom.py", "tools/e2e/lobby_standin.py",
             "tools/e2e/netplay_test.py", "tools/e2e/add_pretend_pads.ps1", "tools/player/**", ".github/workflows/couch-lobby.yml"]
   workflow_dispatch:
     inputs:

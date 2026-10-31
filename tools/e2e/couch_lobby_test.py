@@ -447,42 +447,25 @@ class FrameWatch(threading.Thread):
 
 # ---------------------------------------------------------------- part 1: the game in a box on the lobby screen
 
-class Lobby(threading.Thread):
-    """A stand-in lobby screen: a dark window with a magenta box where the live game should show."""
+class Lobby:
+    """A stand-in lobby screen in its own process (lobby_standin.py): a dark window with a magenta box where the
+    live game should show."""
     BG, BOX = (0x1A, 0x0F, 0x2E), (0xFF, 0x00, 0xFF)
 
-    def __init__(self, x=0, y=0, w=1000, h=700, box=(440, 140, 512, 448)):
-        super().__init__(daemon=True)
-        self.geom, self.box_geom = (x, y, w, h), box
-        self.ready = threading.Event()
-
-    def run(self):
-        import tkinter as tk
-        root = tk.Tk()
-        x, y, w, h = self.geom
-        root.geometry(f"{w}x{h}+{x}+{y}")
-        root.title("Couch Play lobby (stand-in)")
-        root.configure(bg="#%02x%02x%02x" % self.BG)
-        bx, by, bw, bh = self.box_geom
-        box = tk.Frame(root, width=bw, height=bh, bg="#%02x%02x%02x" % self.BOX)
-        box.place(x=bx, y=by)
-        tk.Label(root, text="COUCH PLAY  K7QM2X", fg="white", bg="#%02x%02x%02x" % self.BG,
-                 font=("Arial", 24)).place(x=20, y=20)
-        root.update()
-        self.root = root
-        self.box_hwnd = box.winfo_id()
-        self.top_hwnd = int(root.wm_frame(), 16)
-        self.ready.set()
-        root.mainloop()
+    def start(self):
+        self.proc = subprocess.Popen([sys.executable, str(Path(__file__).parent / "lobby_standin.py")],
+                                     stdout=subprocess.PIPE, text=True)
+        line = self.proc.stdout.readline().split()
+        if len(line) != 3 or line[0] != "READY":
+            raise RuntimeError(f"the stand-in lobby didn't start: {line}")
+        self.box_hwnd, self.top_hwnd = int(line[1]), int(line[2])
 
     def box_rect(self):
         return client_screen_rect(self.box_hwnd)
 
     def close(self):
-        try:
-            self.root.after(0, self.root.destroy)
-        except Exception:  # noqa: BLE001
-            pass
+        if self.proc.poll() is None:
+            self.proc.kill()
 
 
 def box_picture(rect, shot=None):
@@ -563,7 +546,6 @@ def part_box(rom, pad_a, slot_a):
     copy.write_config()
     lobby = Lobby()
     lobby.start()
-    lobby.ready.wait(15)
     watch = None
     try:
         copy.start(rom, [])
@@ -577,6 +559,14 @@ def part_box(rom, pad_a, slot_a):
             return res
         watch = FrameWatch(copy)
         watch.start()
+        orig, win = hwnd, {"h": hwnd}
+
+        def H():
+            # RetroArch's own full screen switch throws its window away and makes a new one (run 41178739169),
+            # so always work on whichever window it has now
+            if not u32.IsWindow(win["h"]):
+                win["h"] = copy.main_window() or win["h"]
+            return win["h"]
         style0 = u32.GetWindowLongPtrW(hwnd, GWL_STYLE)
         res["retroarch_window"] = {"class": class_name(hwnd), "rect": window_rect(hwnd), "style": hex(style0 & 0xFFFFFFFF)}
         say(f"RetroArch window {class_name(hwnd)} at {window_rect(hwnd)}; lobby box at {lobby.box_rect()}")
@@ -590,14 +580,14 @@ def part_box(rom, pad_a, slot_a):
         a = res["child_window"] = {"steps": []}
 
         def embed():
-            st = (u32.GetWindowLongPtrW(hwnd, GWL_STYLE) & ~(WS_POPUP | WS_DECOR)) | WS_CHILD | WS_VISIBLE
-            u32.SetWindowLongPtrW(hwnd, GWL_STYLE, st)
-            u32.SetParent(hwnd, lobby.box_hwnd)
+            st = (u32.GetWindowLongPtrW(H(), GWL_STYLE) & ~(WS_POPUP | WS_DECOR)) | WS_CHILD | WS_VISIBLE
+            u32.SetWindowLongPtrW(H(), GWL_STYLE, st)
+            u32.SetParent(H(), lobby.box_hwnd)
             bw, bh = lobby.box_rect()[2:]
-            u32.SetWindowPos(hwnd, HWND_TOP, 0, 0, bw, bh, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE)
+            u32.SetWindowPos(H(), HWND_TOP, 0, 0, bw, bh, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE)
 
-        a["steps"].append(step(watch, "into the box", embed, lambda: near(window_rect(hwnd), lobby.box_rect())))
-        a["rect_after"], a["box"] = window_rect(hwnd), lobby.box_rect()
+        a["steps"].append(step(watch, "into the box", embed, lambda: near(window_rect(H()), lobby.box_rect())))
+        a["rect_after"], a["box"] = window_rect(H()), lobby.box_rect()
         a["in_box"] = near(a["rect_after"], a["box"])
         a["picture_in_box"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-A1-child-in-box.png")
@@ -607,50 +597,50 @@ def part_box(rom, pad_a, slot_a):
         # RetroArch's own full screen switch, while it is a child window
         before = set(windows_of(copy.proc.pid))
         a["steps"].append(step(watch, "RetroArch's own full screen switch (child)", lambda: copy.send("FULLSCREEN_TOGGLE"),
-                               lambda: near(window_rect(copy.main_window() or hwnd), full), settle=2.5))
-        w_now = copy.main_window() or (hwnd if u32.IsWindow(hwnd) else None)
+                               lambda: near(window_rect(copy.main_window() or H()), full), settle=2.5))
+        w_now = copy.main_window() or (win['h'] if u32.IsWindow(win['h']) else None)
         a["retroarch_fullscreen"] = {
-            "same_window": w_now == hwnd, "windows_before": len(before), "windows_after": len(windows_of(copy.proc.pid)),
+            "same_window": w_now == orig, "windows_before": len(before), "windows_after": len(windows_of(copy.proc.pid)),
             "rect": window_rect(w_now) if w_now else None, "still_child_of_box": bool(w_now and u32.GetParent(w_now) == lobby.box_hwnd),
             "lobby_share_of_screen": lobby_share(grab())}
         grab().save(OUT / "box-A2-child-retroarch-fullscreen.png")
         a["steps"].append(step(watch, "RetroArch's own switch back (child)", lambda: copy.send("FULLSCREEN_TOGGLE"),
-                               lambda: near(window_rect(copy.main_window() or hwnd), lobby.box_rect()), settle=2.5))
-        w_now = copy.main_window() or (hwnd if u32.IsWindow(hwnd) else None) or hwnd
-        a["retroarch_back"] = {"same_window": w_now == hwnd, "rect": window_rect(w_now), "box": lobby.box_rect(),
+                               lambda: near(window_rect(copy.main_window() or H()), lobby.box_rect()), settle=2.5))
+        w_now = copy.main_window() or (win['h'] if u32.IsWindow(win['h']) else None) or H()
+        a["retroarch_back"] = {"same_window": w_now == orig, "rect": window_rect(w_now), "box": lobby.box_rect(),
                                "back_in_box": near(window_rect(w_now), lobby.box_rect())}
         a["retroarch_back"]["picture_in_box"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-A3-child-after-retroarch-switch.png")
         say(f"  RetroArch's own switch: {a['retroarch_fullscreen']}; back: {a['retroarch_back']}")
-        if not a["retroarch_back"]["back_in_box"] and u32.IsWindow(hwnd):
+        if not a["retroarch_back"]["back_in_box"] and u32.IsWindow(win['h']):
             embed()
             time.sleep(1)
 
         # Our own full screen: take it out of the box, cover the screen; then put it back
         def ours_full():
-            u32.SetParent(hwnd, None)
-            st = (u32.GetWindowLongPtrW(hwnd, GWL_STYLE) & ~(WS_CHILD | WS_DECOR)) | WS_POPUP | WS_VISIBLE
-            u32.SetWindowLongPtrW(hwnd, GWL_STYLE, st)
-            u32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
+            u32.SetParent(H(), None)
+            st = (u32.GetWindowLongPtrW(H(), GWL_STYLE) & ~(WS_CHILD | WS_DECOR)) | WS_POPUP | WS_VISIBLE
+            u32.SetWindowLongPtrW(H(), GWL_STYLE, st)
+            u32.SetWindowPos(H(), HWND_TOPMOST, 0, 0, sw, sh, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
         a["steps"].append(step(watch, "our full screen (out of the box, cover the screen)", ours_full,
-                               lambda: near(window_rect(hwnd), full)))
+                               lambda: near(window_rect(H()), full)))
         shot = grab()
         shot.save(OUT / "box-A4-child-our-fullscreen.png")
-        a["our_fullscreen"] = {"rect": window_rect(hwnd), "covers_screen": near(window_rect(hwnd), full), "lobby_share_of_screen": lobby_share(shot)}
+        a["our_fullscreen"] = {"rect": window_rect(H()), "covers_screen": near(window_rect(H()), full), "lobby_share_of_screen": lobby_share(shot)}
 
         def ours_back():
-            u32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x1 | 0x2 | SWP_NOACTIVATE)
+            u32.SetWindowPos(H(), HWND_NOTOPMOST, 0, 0, 0, 0, 0x1 | 0x2 | SWP_NOACTIVATE)
             embed()
-        a["steps"].append(step(watch, "our way back into the box", ours_back, lambda: near(window_rect(hwnd), lobby.box_rect())))
-        a["our_back"] = {"rect": window_rect(hwnd), "back_in_box": near(window_rect(hwnd), lobby.box_rect())}
+        a["steps"].append(step(watch, "our way back into the box", ours_back, lambda: near(window_rect(H()), lobby.box_rect())))
+        a["our_back"] = {"rect": window_rect(H()), "back_in_box": near(window_rect(H()), lobby.box_rect())}
         a["our_back"]["picture_in_box"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-A5-child-back-in-box.png")
         say(f"  our full screen: {a['our_fullscreen']}; back: {a['our_back']}")
 
         # Back to a normal window before way B
-        u32.SetParent(hwnd, None)
-        u32.SetWindowLongPtrW(hwnd, GWL_STYLE, style0)
-        u32.SetWindowPos(hwnd, HWND_TOP, 60, 60, 600, 500, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
+        u32.SetParent(H(), None)
+        u32.SetWindowLongPtrW(H(), GWL_STYLE, style0)
+        u32.SetWindowPos(H(), HWND_TOP, 60, 60, 600, 500, SWP_FRAMECHANGED | SWP_SHOWWINDOW)
         time.sleep(1.5)
 
         # ---- way B: RetroArch stays its own window, without borders, kept exactly over the box and owned by the
@@ -659,18 +649,18 @@ def part_box(rom, pad_a, slot_a):
         bres = res["owned_window"] = {"steps": []}
 
         def place_over_box():
-            st = (u32.GetWindowLongPtrW(hwnd, GWL_STYLE) & ~(WS_CHILD | WS_DECOR)) | WS_POPUP | WS_VISIBLE
-            u32.SetWindowLongPtrW(hwnd, GWL_STYLE, st)
-            u32.SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, lobby.top_hwnd)
+            st = (u32.GetWindowLongPtrW(H(), GWL_STYLE) & ~(WS_CHILD | WS_DECOR)) | WS_POPUP | WS_VISIBLE
+            u32.SetWindowLongPtrW(H(), GWL_STYLE, st)
+            u32.SetWindowLongPtrW(H(), GWLP_HWNDPARENT, lobby.top_hwnd)
             x, y, w, h = lobby.box_rect()
-            u32.SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE)
+            u32.SetWindowPos(H(), HWND_TOP, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE)
 
-        bres["steps"].append(step(watch, "over the box", place_over_box, lambda: near(window_rect(hwnd), lobby.box_rect())))
-        bres["in_box"] = near(window_rect(hwnd), lobby.box_rect())
+        bres["steps"].append(step(watch, "over the box", place_over_box, lambda: near(window_rect(H()), lobby.box_rect())))
+        bres["in_box"] = near(window_rect(H()), lobby.box_rect())
         bres["picture_in_box"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-B1-owned-over-box.png")
         bres["pad_with_lobby_in_front"] = pad_reaches_game(copy, pad_a, lobby)
-        bres["still_over_box_with_lobby_in_front"] = near(window_rect(hwnd), lobby.box_rect())
+        bres["still_over_box_with_lobby_in_front"] = near(window_rect(H()), lobby.box_rect())
         bres["picture_with_lobby_in_front"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-B2-owned-lobby-in-front.png")
         say(f"  over the box: {bres['in_box']}; picture {bres['picture_in_box']}; pad: {bres['pad_with_lobby_in_front']}; "
@@ -681,36 +671,37 @@ def part_box(rom, pad_a, slot_a):
             u32.SetWindowPos(lobby.top_hwnd, 0, 60, 40, 0, 0, 0x1 | SWP_NOZORDER | SWP_NOACTIVATE)
             time.sleep(0.2)
             x, y, w, h = lobby.box_rect()
-            u32.SetWindowPos(hwnd, 0, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
-        bres["steps"].append(step(watch, "lobby moved, game window follows", move_lobby, lambda: near(window_rect(hwnd), lobby.box_rect())))
+            u32.SetWindowPos(H(), 0, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
+        bres["steps"].append(step(watch, "lobby moved, game window follows", move_lobby, lambda: near(window_rect(H()), lobby.box_rect())))
 
         def full_b():
-            u32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW)
-        bres["steps"].append(step(watch, "our full screen (cover the screen)", full_b, lambda: near(window_rect(hwnd), full)))
+            u32.SetWindowPos(H(), HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW)
+        bres["steps"].append(step(watch, "our full screen (cover the screen)", full_b, lambda: near(window_rect(H()), full)))
         shot = grab()
         shot.save(OUT / "box-B3-owned-our-fullscreen.png")
-        bres["our_fullscreen"] = {"rect": window_rect(hwnd), "covers_screen": near(window_rect(hwnd), full), "lobby_share_of_screen": lobby_share(shot)}
+        bres["our_fullscreen"] = {"rect": window_rect(H()), "covers_screen": near(window_rect(H()), full), "lobby_share_of_screen": lobby_share(shot)}
 
         def back_b():
             x, y, w, h = lobby.box_rect()
-            u32.SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW | SWP_NOACTIVATE)
-        bres["steps"].append(step(watch, "our way back over the box", back_b, lambda: near(window_rect(hwnd), lobby.box_rect())))
-        bres["our_back"] = {"rect": window_rect(hwnd), "back_in_box": near(window_rect(hwnd), lobby.box_rect())}
+            u32.SetWindowPos(H(), HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW | SWP_NOACTIVATE)
+        bres["steps"].append(step(watch, "our way back over the box", back_b, lambda: near(window_rect(H()), lobby.box_rect())))
+        bres["our_back"] = {"rect": window_rect(H()), "back_in_box": near(window_rect(H()), lobby.box_rect())}
         bres["our_back"]["picture_in_box"], shot = live_in(lobby.box_rect())
         shot.save(OUT / "box-B4-owned-back-over-box.png")
         say(f"  our full screen: {bres['our_fullscreen']}; back: {bres['our_back']}")
 
+        orig = H()
         before = set(windows_of(copy.proc.pid))
         bres["steps"].append(step(watch, "RetroArch's own full screen switch (owned)", lambda: copy.send("FULLSCREEN_TOGGLE"),
-                                  lambda: near(window_rect(copy.main_window() or hwnd), full), settle=2.5))
+                                  lambda: near(window_rect(copy.main_window() or H()), full), settle=2.5))
         w_now = copy.main_window()
-        bres["retroarch_fullscreen"] = {"same_window": w_now == hwnd, "windows_before": len(before),
+        bres["retroarch_fullscreen"] = {"same_window": w_now == orig, "windows_before": len(before),
                                         "rect": window_rect(w_now) if w_now else None, "lobby_share_of_screen": lobby_share(grab())}
         grab().save(OUT / "box-B5-owned-retroarch-fullscreen.png")
         bres["steps"].append(step(watch, "RetroArch's own switch back (owned)", lambda: copy.send("FULLSCREEN_TOGGLE"),
-                                  lambda: near(window_rect(copy.main_window() or hwnd), lobby.box_rect()), settle=2.5))
-        w_now = copy.main_window() or hwnd
-        bres["retroarch_back"] = {"same_window": w_now == hwnd, "rect": window_rect(w_now), "box": lobby.box_rect(),
+                                  lambda: near(window_rect(copy.main_window() or H()), lobby.box_rect()), settle=2.5))
+        w_now = copy.main_window() or H()
+        bres["retroarch_back"] = {"same_window": w_now == orig, "rect": window_rect(w_now), "box": lobby.box_rect(),
                                   "back_in_box": near(window_rect(w_now), lobby.box_rect())}
         grab().save(OUT / "box-B6-owned-after-retroarch-switch.png")
         say(f"  RetroArch's own switch: {bres['retroarch_fullscreen']}; back: {bres['retroarch_back']}")

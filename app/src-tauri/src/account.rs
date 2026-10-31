@@ -319,6 +319,13 @@ impl Account {
 
 #[tauri::command]
 pub fn account_status<R: Runtime>(app: AppHandle<R>, account: tauri::State<'_, Account>) -> Status {
+    // CI's Windows controller test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=menus (or padgame)
+    // the app opens on the main menu as a test player, so the pretend controller can drive the menus.
+    #[cfg(feature = "e2e")]
+    if matches!(std::env::var("GAMENIGHT_E2E").as_deref(), Ok("menus" | "padgame")) {
+        let user = UserInfo { id: "e2e".into(), name: "Test player".into(), avatar: String::new() };
+        return Status { server: DEFAULT_SERVER.into(), user: Some(user) };
+    }
     account.with(&app, |g| Status { server: g.saved.server.clone(), user: g.saved.user.clone() })
 }
 

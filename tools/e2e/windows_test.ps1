@@ -59,17 +59,30 @@ if ($seconds -lt 8) { Fail "600 frames took only $seconds s: the game runs too f
 Write-Host "the game ran at real speed ($seconds s for 600 frames)"
 Remove-Item Env:GAMENIGHT_E2E, Env:GAMENIGHT_E2E_ROOT
 
+Step "Drive the menus with a pretend Xbox controller"
+# Settings as if the first-time setup was done, so the app opens on the main menu.
+New-Item -ItemType Directory $config -Force | Out-Null
+@{ settings = @{ firstRunDone = $true; romsFolder = $root; mappings = @{}; presets = @{}; consoles = @{}; steamTipSeen = $true } } |
+  ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $config 'settings.json')
+$shots = Join-Path $env:RUNNER_TEMP 'screens'
+python (Join-Path $Tools 'pad_test.py') menus $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the pretend controller couldn't drive the menus (screenshots are in the 'screens' download)" }
+
+Step "Play the test game with the pretend Xbox controller"
+python (Join-Path $Tools 'pad_test.py') game $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the game didn't get the pretend controller on Player 1 (screenshots are in the 'screens' download)" }
+
 Step "Update to $NewVersion through the app's own update box"
 # The update is served at about home-internet speed (3 MB/s), and the old build presses Update in its own
 # update box (GAMENIGHT_E2E=update-ui), so this goes through the same screen and steps Jayden sees.
-# Screenshots are taken every second and kept with the build ("update-screens").
+# Screenshots are taken every second and kept with the build ("screens" download, "update" folder).
 $site = Join-Path $env:RUNNER_TEMP 'updates'
 $key = (python (Join-Path $Tools 'make_update.py') $NewSetup $NewVersion $site).Trim()
 $server = Start-Process python -ArgumentList (Join-Path $Tools 'slow_server.py'), $site, '8765', '3000000' -PassThru -WindowStyle Hidden
 Start-Sleep 2
-$shots = Join-Path $env:RUNNER_TEMP 'update-screens'
-New-Item -ItemType Directory $shots -Force | Out-Null
-$camera = Start-Job -ArgumentList $shots -ScriptBlock {
+$updShots = Join-Path $env:RUNNER_TEMP 'screens\update'
+New-Item -ItemType Directory $updShots -Force | Out-Null
+$camera = Start-Job -ArgumentList $updShots -ScriptBlock {
   param($dir)
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
   for ($n = 0; $n -lt 150; $n++) {

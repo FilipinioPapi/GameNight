@@ -6,6 +6,7 @@ import { app } from "./state.svelte";
 import { play } from "./play.svelte";
 import { BUTTON_INDEX, padTypeFromId, type PadInput } from "./pads";
 import { inTauri } from "./settings";
+import { bumpRing, keepInView, startFocusRing } from "./focusring";
 
 /** One controller reading: the same shape whether it came from Windows or the browser. */
 type Reading = { id: string; usb?: string; buttons: boolean[]; axes: number[] };
@@ -13,9 +14,20 @@ type Reading = { id: string; usb?: string; buttons: boolean[]; axes: number[] };
 // In the app, Windows tells us about the controller (the web page can't see it there). The app sends a
 // "pad" event when it changes, and the menus also ask for it every frame, so a missed event can't
 // leave the menus deaf.
-type NativePad = { connected: boolean; name: string; id: string; buttons: boolean[]; axes: number[] };
+// Each reading is numbered, so an older one arriving late (the event and the every-frame answer travel
+// separately) can't undo a newer one and make a single press count twice.
+type NativePad = { connected: boolean; name: string; id: string; buttons: boolean[]; axes: number[]; seq?: number };
 let native: Reading | null = null;
+let newest = 0;
+let stale = 0;
 function useNative(p: NativePad) {
+  if (typeof p.seq === "number") {
+    if (p.seq < newest) {
+      if (stale++ < 5) void note(`ignored an older pad reading (${p.seq} after ${newest})`);
+      return;
+    }
+    newest = p.seq;
+  }
   native = p.connected ? { id: p.name || "Controller", usb: p.id, buttons: p.buttons, axes: p.axes } : null;
 }
 
@@ -70,6 +82,7 @@ type Capture = (input: PadInput) => void;
 let capture: Capture | null = null;
 let prevButtons: boolean[] = [];
 let prevAxes: number[] = [];
+let stickHeld: Dir | null = null;
 
 /** The next button or stick push goes to this function instead of the menus. */
 export function captureNext(fn: Capture | null) {
@@ -97,13 +110,32 @@ function center(r: DOMRect) {
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
-/** Moves to the nearest thing on screen in that direction (like a games console menu). The arrow keys use it too. */
+/**
+ * Which part of the screen an element belongs to: a pop-up, a scrolling list (the games, the console
+ * tabs, a settings page) or the screen itself. Left / right stay inside it, so the end of a row of games
+ * doesn't jump up to a console tab.
+ */
+function navGroup(el: HTMLElement): Element {
+  let p = el.parentElement;
+  while (p && p !== document.body) {
+    if (p.hasAttribute("data-nav-group") || p.getAttribute("aria-modal") === "true") return p;
+    const st = getComputedStyle(p);
+    if (/(auto|scroll)/.test(st.overflowY) || /(auto|scroll)/.test(st.overflowX)) return p;
+    p = p.parentElement;
+  }
+  return document.body;
+}
+
+// Going up and down keeps your column, like a console menu (from the 5th game in a row you land on the 5th).
+let column: { x: number; from: HTMLElement } | null = null;
+
+/** Moves to the next thing in that direction, like a games console menu. The arrow keys use it too. */
 export function moveFocus(dir: Dir) {
   const list = focusables();
   if (!list.length) return;
   const current = document.activeElement as HTMLElement | null;
   if (!current || !list.includes(current)) {
-    (list.find((el) => el.hasAttribute("data-autofocus")) ?? list[0]).focus();
+    goTo(list.find((el) => el.hasAttribute("data-autofocus")) ?? list[0]);
     return;
   }
   // Left and right on a drop-down list change its choice.
@@ -112,38 +144,112 @@ export function moveFocus(dir: Dir) {
     if (i >= 0 && i < current.options.length) {
       current.selectedIndex = i;
       current.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+    } else bumpRing(dir);
     return;
   }
   const from = current.getBoundingClientRect();
   const c = center(from);
+  const ahead = (r: DOMRect) => {
+    const t = center(r);
+    return dir === "right" ? t.x > c.x : dir === "left" ? t.x < c.x : dir === "down" ? t.y > c.y : t.y < c.y;
+  };
+  const others = list.filter((el) => el !== current).map((el) => ({ el, r: el.getBoundingClientRect() })).filter((o) => ahead(o.r));
+  const best = dir === "left" || dir === "right" ? sideways(dir, current, from, others) : upDown(dir, current, from, others);
+  if (!best) {
+    bumpRing(dir);
+    return;
+  }
+  void note(`move ${dir}: ${describe(current)} -> ${describe(best)}`);
+  // Moving along a row of tabs (consoles) shows that tab straight away, like a console's tab bar.
+  const tabRow = (dir === "left" || dir === "right") && current.hasAttribute("data-tab") && best.hasAttribute("data-tab");
+  goTo(best);
+  if (tabRow && !best.classList.contains("on")) {
+    best.click();
+    slideContent(dir === "right" ? 1 : -1);
+  }
+}
+
+function sideways(dir: Dir, current: HTMLElement, from: DOMRect, others: { el: HTMLElement; r: DOMRect }[]) {
+  column = null;
+  const c = center(from);
+  const sameRow = (r: DOMRect) => r.top < from.bottom && r.bottom > from.top;
+  const group = navGroup(current);
+  // Same list, same row: the nearest one.
+  const inRow = others.filter((o) => navGroup(o.el) === group && sameRow(o.r));
+  if (inRow.length) return nearestBy(inRow, (o) => Math.abs(center(o.r).x - c.x));
+  // Nothing more in this row of this list: only step across to a list that sits beside it (a settings
+  // page's side menu), never up or down to another row.
+  const clearlyAhead = (r: DOMRect) => (dir === "right" ? r.left >= from.right - 1 : r.right <= from.left + 1);
+  const body = document.body;
+  if (group !== body && others.some((o) => navGroup(o.el) === group && clearlyAhead(o.r))) return null;
+  const beside = others.filter((o) => {
+    const g = navGroup(o.el);
+    if ((g === group && g !== body) || !clearlyAhead(o.r)) return false;
+    const gr = g === body ? o.r : g.getBoundingClientRect();
+    return gr.top < from.bottom && gr.bottom > from.top;
+  });
+  return nearestBy(beside, (o) => {
+    const along = dir === "right" ? o.r.left - from.right : from.left - o.r.right;
+    return Math.max(along, 0) + Math.abs(center(o.r).y - c.y) * 2;
+  });
+}
+
+function upDown(dir: Dir, current: HTMLElement, from: DOMRect, others: { el: HTMLElement; r: DOMRect }[]) {
+  const c = center(from);
+  const along = (r: DOMRect) => (dir === "down" ? r.top - from.bottom : from.top - r.bottom);
+  // Only things roughly below / above: overlapping our column, or within a cone ahead.
+  const inCone = others.filter((o) => {
+    const overlaps = o.r.left < from.right && o.r.right > from.left;
+    return overlaps || Math.abs(center(o.r).x - c.x) <= Math.max(along(o.r), 0) * 1.5;
+  });
+  // Nothing straight ahead, but the list carries on (a short last row of games): go to that row anyway.
+  const group = navGroup(current);
+  const pool = inCone.length ? inCone : others.filter((o) => navGroup(o.el) === group);
+  const first = nearestBy(pool, (o) => Math.max(along(o.r), 0) + Math.abs(center(o.r).x - c.x) * 0.01);
+  if (!first) return null;
+  // That's the next row: everything level with it.
+  const f = first.getBoundingClientRect();
+  const row = others.filter((o) => o.r.top < f.bottom && o.r.bottom > f.top);
+  // Up into a row of tabs lands on the one that's showing.
+  const shown = row.find((o) => o.el.hasAttribute("data-tab") && o.el.classList.contains("on"));
+  if (shown && row.every((o) => o.el.hasAttribute("data-tab"))) return shown.el;
+  const x = column && column.from === current ? column.x : c.x;
+  const best = nearestBy(row, (o) => Math.abs(center(o.r).x - x));
+  if (best) column = { x, from: best };
+  return best;
+}
+
+function nearestBy<T extends { el: HTMLElement }>(items: T[], score: (o: T) => number): HTMLElement | null {
   let best: HTMLElement | null = null;
   let bestScore = Infinity;
-  for (const el of list) {
-    if (el === current) continue;
-    const r = el.getBoundingClientRect();
-    const t = center(r);
-    // Distance along the direction (must be ahead of us) and how far off to the side.
-    let along: number, side: number;
-    if (dir === "right") { along = r.left - from.right; side = Math.abs(t.y - c.y); if (t.x <= c.x) continue; }
-    else if (dir === "left") { along = from.left - r.right; side = Math.abs(t.y - c.y); if (t.x >= c.x) continue; }
-    else if (dir === "down") { along = r.top - from.bottom; side = Math.abs(t.x - c.x); if (t.y <= c.y) continue; }
-    else { along = from.top - r.bottom; side = Math.abs(t.x - c.x); if (t.y >= c.y) continue; }
-    // Only things roughly in that direction: side by side with us, or within a cone ahead.
-    const overlaps = dir === "left" || dir === "right"
-      ? r.top < from.bottom && r.bottom > from.top
-      : r.left < from.right && r.right > from.left;
-    if (!overlaps && side > Math.max(along, 0) * 1.5) continue;
-    const score = Math.max(along, 0) + side * 2;
-    if (score < bestScore) {
-      bestScore = score;
-      best = el;
+  for (const o of items) {
+    const s = score(o);
+    if (s < bestScore) {
+      bestScore = s;
+      best = o.el;
     }
   }
-  if (best) {
-    best.focus();
-    best.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
+  return best;
+}
+
+/** Highlights an element without the page jumping; the list then eases along to show it. */
+function goTo(el: HTMLElement) {
+  el.focus({ preventScroll: true });
+  keepInView(el);
+}
+
+/** The games for a new console slide in from the side they're on. */
+function slideContent(step: 1 | -1) {
+  if (typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const box = document.querySelector<HTMLElement>(".content");
+      box?.animate(
+        [{ opacity: 0, transform: `translateX(${step * 32}px)` }, { opacity: 1, transform: "none" }],
+        { duration: 200, easing: "cubic-bezier(.2,.8,.2,1)" },
+      );
+    }),
+  );
 }
 
 /** LB / RB: step through a row of tabs (consoles, settings pages) and open it. */
@@ -153,9 +259,19 @@ function switchTab(step: 1 | -1) {
   let i = tabs.findIndex((el) => el.classList.contains("on"));
   if (i < 0) i = 0;
   const next = tabs[(i + step + tabs.length) % tabs.length];
+  const wasInList = !(document.activeElement instanceof HTMLElement && document.activeElement.hasAttribute("data-tab"));
   next.click();
-  next.focus();
-  next.scrollIntoView({ block: "nearest", inline: "nearest" });
+  goTo(next);
+  slideContent(step);
+  // If you were in the games, stay in the games (on the first one of the new console).
+  if (wasInList) {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const first = document.querySelector<HTMLElement>("[data-game]");
+        if (first) goTo(first);
+      }),
+    );
+  }
 }
 
 /** The right stick scrolls whatever list you're in. */
@@ -183,7 +299,9 @@ function describe(el: Element | null) {
 
 function onPress(index: number) {
   usePadLook();
-  void note(`button ${index} pressed; focused: ${describe(document.activeElement)}; page has focus: ${document.hasFocus()}`);
+  void note(`button ${index} pressed; screen: ${app.route.name}; focused: ${describe(document.activeElement)}; page has focus: ${document.hasFocus()}`);
+  // A moment later, what the press did (the screen has redrawn by then).
+  setTimeout(() => void note(`after button ${index}: screen: ${app.route.name}; focused: ${describe(document.activeElement)}`), 300);
   const input = BUTTON_INDEX[index] ?? (index >= 12 && index <= 15 ? "dpad" : undefined);
   if (capture && input) {
     const fn = capture;
@@ -206,19 +324,22 @@ function onPress(index: number) {
   else if (index === 5) switchTab(1);
 }
 
-// Holding a direction repeats it, like a console menu.
-let held: { key: string; since: number; last: number } | null = null;
+// Holding a direction repeats it, like a console menu: a short pause, then a steady repeat that
+// speeds up a little.
+let held: { key: string; since: number; last: number; count: number } | null = null;
 function repeat(key: string, active: boolean, now: number, fire: () => void) {
   if (!active) {
     if (held?.key === key) held = null;
     return;
   }
   if (!held || held.key !== key) {
-    held = { key, since: now, last: now };
+    held = { key, since: now, last: now, count: 0 };
     return; // the first press is handled as a normal press
   }
-  if (now - held.since > 380 && now - held.last > 110) {
+  const gap = Math.max(85, 140 - held.count * 9);
+  if (now - held.since > 340 && now - held.last > gap) {
     held.last = now;
+    held.count++;
     fire();
   }
 }
@@ -243,22 +364,27 @@ function tick() {
     if (DIRS[i] && !capture) repeat("b" + i, down, now, () => moveFocus(DIRS[i]));
     prevButtons[i] = down;
   });
-  // Left stick: a strong push counts as a direction press (for changing a stick row, and menus).
+  // Left stick: a strong push counts as a direction press (for changing a stick row, and menus). It has
+  // to come back near the middle before it counts again, so a stick resting near the edge can't flicker.
   const [lx = 0, ly = 0, , ry = 0] = pad.axes;
-  const stickDir: Dir | null = Math.abs(lx) > 0.7 || Math.abs(ly) > 0.7
-    ? (Math.abs(lx) > Math.abs(ly) ? (lx > 0 ? "right" : "left") : ly > 0 ? "down" : "up")
-    : null;
-  const wasStrong = Math.abs(prevAxes[0] ?? 0) > 0.7 || Math.abs(prevAxes[1] ?? 0) > 0.7;
-  if (stickDir && !wasStrong) {
+  const push = Math.max(Math.abs(lx), Math.abs(ly));
+  let stickDir: Dir | null = stickHeld;
+  if (push > 0.7) stickDir = Math.abs(lx) > Math.abs(ly) ? (lx > 0 ? "right" : "left") : ly > 0 ? "down" : "up";
+  else if (push < 0.45) stickDir = null;
+  if (stickDir && stickDir !== stickHeld) {
     usePadLook();
     if (capture) {
       const fn = capture;
       capture = null;
       fn("ls");
     } else moveFocus(stickDir);
+    repeat("ls", false, now, () => {});
+    repeat("ls", true, now, () => {});
   } else if (stickDir && !capture) {
-    repeat("ls", true, now, () => moveFocus(stickDir));
+    const d = stickDir;
+    repeat("ls", true, now, () => moveFocus(d));
   } else repeat("ls", false, now, () => {});
+  stickHeld = stickDir;
   if (capture && pad.axes.slice(2, 4).some((a, j) => Math.abs(a) > 0.7 && Math.abs(prevAxes[j + 2] ?? 0) <= 0.7)) {
     const fn = capture;
     capture = null;
@@ -276,6 +402,7 @@ if (typeof window !== "undefined") {
 }
 
 export function startGamepad() {
+  startFocusRing();
   if (inTauri) {
     void note(`menus started (${navigator.userAgent.slice(0, 80)})`);
     listenNative().catch((e) => void note(`couldn't listen for pad events: ${String(e).slice(0, 120)}`));

@@ -366,12 +366,12 @@ fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Res
     let script = dir.join("apply.ps1");
     std::fs::write(&script, HELPER).map_err(|_| "Couldn't prepare the installer.")?;
     let pid = std::process::id().to_string();
-    let log = dir.join("update.log");
+    let log_file = dir.join("update.log");
     let args: [&std::ffi::OsStr; 16] = [
         "-NoProfile".as_ref(), "-NonInteractive".as_ref(), "-ExecutionPolicy".as_ref(), "Bypass".as_ref(),
         "-WindowStyle".as_ref(), "Hidden".as_ref(), "-File".as_ref(), script.as_os_str(),
         "-AppPid".as_ref(), pid.as_ref(), "-Setup".as_ref(), setup.as_os_str(),
-        "-Exe".as_ref(), exe.as_os_str(), "-Log".as_ref(), log.as_os_str(),
+        "-Exe".as_ref(), exe.as_os_str(), "-Log".as_ref(), log_file.as_os_str(),
     ];
     let start = |flags: u32| std::process::Command::new("powershell.exe").args(args).creation_flags(flags).spawn();
     let helper = match start(NO_WINDOW | BREAKAWAY) {

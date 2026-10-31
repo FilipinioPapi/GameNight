@@ -5,7 +5,7 @@ Started 2026-10-31 in the thread "Plan quickest online co-op for NES and SNES". 
 ## Jayden's priorities (his words, 2026-10-31)
 - Stability and proven function come first: "this would be the foundation for everything". No rush for a date.
 - Sign-in: being in his Discord server is enough. The Game Night role is optional (PR #12).
-- Go online through the domains he already has, play.jjsnas.xyz and updates.jjsnas.xyz, with no new NPM hosts.
+- Go online through the domains he already has, with no new proxy hosts.
   Nothing may break or get crossed with Roof Rage (utmost importance).
 
 ## The plan (approved shape: build in proven layers)
@@ -18,25 +18,15 @@ Started 2026-10-31 in the thread "Plan quickest online co-op for NES and SNES". 
    Jayden's real-controller check.
 2. **Room codes.** Host picks a game, server makes a code, friend's app downloads the same file and joins. The join
    screen needs a mockup and Jayden's OK first (follow the smooth-menus style).
-3. **Going online.** Game Night gets its own path, play.jjsnas.xyz/gamenight/, as one NPM custom location on the existing
-   host. The server needs base-path support. Jayden does the NPM steps. Before and after: check Roof Rage's addresses
-   answer exactly the same. Then one real test with a friend (write up the test request first).
+3. **Going online.** Jayden's existing domain, set up by Jayden. Server and proxy details are in
+   the project's private notes (project files: `gamenight/private-notes/server-setup.md`), not in the repo. Then one real test with a friend (write up the test request first).
 4. **Later.** Controller handoff, rotation up to 6, spectators, group saves.
 
 ## Open questions
 - **How games connect online** (Jayden: decide after step 1). The options are libretro's free public relay (no ports
-  opened) or our own relay on the NAS. Game traffic can't go through NPM's web proxy.
-- **play.jjsnas.xyz** (Confirmed from Roof Rage's repo, read with Jayden's OK 2026-10-31: `re/UPDATES_LOCK_SETUP.md`,
-  `re/HANDOFF_ONLINE.md`). It is Roof Rage's ntfy "online board", where games post lobbies at `/rooftop-*` topics with
-  the friends token. ntfy should be deny-all, but whether it really is on the NAS is Unknown. updates.jjsnas.xyz is the
-  `roofrage-files` nginx container. Game Night already lives in its `/gamenight/` folder.
-  Plan: one NPM custom location `/gamenight/` on the play.jjsnas.xyz host, pointing at the Game Night server. No ntfy
-  topic is called that, so there's no clash. Before and after Jayden adds it, check that
-  `https://play.jjsnas.xyz/rooftop-lobbies/json?poll=1` answers the same, and that Roof Rage's in-game `board` console
-  command still says OK. Undo = delete the custom location. Unknown: whether the host has Advanced-tab settings that a
-  custom location would change. Ask Jayden for a screenshot of that tab first.
-  Also: Roof Rage's Part C lock (server-wide token check on roofrage-files) would block `/gamenight/` updates unless
-  it goes inside `location /` with an open `location /gamenight/ {}`.
+  opened) or our own relay on the NAS. Game traffic can't go through a web proxy.
+- **Where Game Night goes online, and how it sits next to Roof Rage**: in the project's private notes (project files: `gamenight/private-notes/server-setup.md`).
+  Nothing may break or get crossed with Roof Rage.
 
 ## Facts checked
 - Confirmed: the app switches netplay off today (`games.rs` `retroarch_config`: `netplay_nat_traversal=false`,

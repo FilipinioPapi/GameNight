@@ -126,3 +126,28 @@ def move_app(app_pid, x, y, w, h):
         user32.ShowWindow(main, 9)  # restore
         user32.SetWindowPos(main, None, x, y, w, h, 0x0004 | 0x0010)  # no z-order change, no activate
     return main is not None
+
+
+def front_is_app(app_pid):
+    return _pid(user32.GetForegroundWindow()) == app_pid
+
+
+def focus_app(app_pid):
+    """Puts Game Night in front (as a player would by clicking it): a click on an empty spot near the bottom
+    of its window, tried a few times. Game Night only listens to the pad while it's the window in front."""
+    for _ in range(5):
+        main = main_window(app_pid)
+        if not main:
+            return False
+        user32.SetForegroundWindow(main)
+        time.sleep(0.3)
+        if front_is_app(app_pid):
+            return True
+        x, y, w, h = _client(main)
+        user32.SetCursorPos(x + w // 2, y + h - 40)
+        user32.mouse_event(0x0002, 0, 0, 0, 0)  # left down
+        user32.mouse_event(0x0004, 0, 0, 0, 0)  # left up
+        time.sleep(0.7)
+        if front_is_app(app_pid):
+            return True
+    return False

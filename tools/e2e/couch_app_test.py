@@ -400,6 +400,10 @@ def main():
         look("look-2-friend-connected", app, True)
         say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
         for name, full in (("look-2b-game-full-screen", True), ("look-2c-back-to-the-box", False)):
+            # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
+            if not window_watch.focus_app(app.pid):
+                fail(f"{name}: couldn't put Game Night in front for the pad presses")
+                continue
             set_pad(pad_a, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
             time.sleep(1.4)
             set_pad(pad_a, [])
@@ -481,6 +485,9 @@ def main():
         friend.kill()
         app.kill()
         app.wait(15)
+        first_log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "gamebox.log"
+        if first_log.exists():
+            (OUT / "host-gamebox-full-screen-run.log").write_bytes(first_log.read_bytes())
         info_file.unlink(missing_ok=True)
         time.sleep(2)
         app = subprocess.Popen([str(APP)], env=dict(env, GAMENIGHT_E2E_WINDOWED="1"), stdout=app_log, stderr=subprocess.STDOUT)

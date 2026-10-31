@@ -160,9 +160,11 @@ export function moveFocus(dir: Dir) {
   }
   const from = current.getBoundingClientRect();
   const c = center(from);
+  // A couple of pixels of leeway: things in one row can differ by a fraction of a pixel (box art rows
+  // that stretch to fill the width), and that must not count as "below".
   const ahead = (r: DOMRect) => {
     const t = center(r);
-    return dir === "right" ? t.x > c.x : dir === "left" ? t.x < c.x : dir === "down" ? t.y > c.y : t.y < c.y;
+    return dir === "right" ? t.x > c.x + 2 : dir === "left" ? t.x < c.x - 2 : dir === "down" ? t.y > c.y + 2 : t.y < c.y - 2;
   };
   const others = list.filter((el) => el !== current).map((el) => ({ el, r: el.getBoundingClientRect() })).filter((o) => ahead(o.r));
   const best = dir === "left" || dir === "right" ? sideways(dir, current, from, others) : upDown(dir, current, from, others);

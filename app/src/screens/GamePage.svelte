@@ -56,7 +56,7 @@
   {#if game && c}
     <main>
       <div class="col-art">
-        <div class="art big-art" style="aspect-ratio:{shapeOf(game.id)}">
+        <div class="art big-art" style="aspect-ratio:{shapeOf(game.id, game.console)}">
           {#if game.cover && !broken}<img class="cover" src={game.cover} alt="" onload={(e) => remember(game!.id, e.currentTarget)} onerror={() => (broken = true)} />{:else}<span class={c.font} style="font-size:{c.id === 'nes' ? 14 : 22}px;line-height:1.3">{game.title}</span>{/if}
         </div>
         <dl>

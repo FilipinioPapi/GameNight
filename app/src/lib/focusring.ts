@@ -11,7 +11,7 @@ let bump: { dx: number; dy: number; at: number } | null = null;
 
 /** What the frame hugs: a game card's picture rather than the whole card (title and badges sit below it). */
 function shapeOf(el: HTMLElement): HTMLElement {
-  if (el.classList.contains("card")) return el.querySelector<HTMLElement>(":scope > .art") ?? el;
+  if (el.classList.contains("card")) return el.querySelector<HTMLElement>(":scope > .art, :scope > .slot > .art") ?? el;
   return el;
 }
 

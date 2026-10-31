@@ -16,7 +16,7 @@
   import { app } from "../lib/state.svelte";
   import { PAD_NAME } from "../lib/pads";
 
-  let { items }: { items: GuideItem[] } = $props();
+  let { items, retro = false }: { items: GuideItem[]; retro?: boolean } = $props();
   const ps = $derived(app.pad.type === "dualsense");
   const NAMES: Record<Prompt, [string, string]> = {
     a: ["A", "Cross"], b: ["B", "Circle"], x: ["X", "Square"], y: ["Y", "Triangle"],
@@ -27,7 +27,7 @@
   const face = (b: Prompt) => b === "a" || b === "b" || b === "x" || b === "y";
 </script>
 
-<footer class="guide" aria-label="{PAD_NAME[app.pad.type]} controller buttons">
+<footer class="guide" class:retro aria-label="{PAD_NAME[app.pad.type]} controller buttons">
   {#each items as it (it.label + it.buttons.join())}
     <span class="item" class:right={it.right}>
       {#each it.buttons as b (b)}
@@ -43,6 +43,11 @@
     height: 60px; flex-shrink: 0; display: flex; align-items: center; gap: 26px; padding: 0 24px;
     border-top: 1px solid #5a2225; background: #0e0909; font-size: 14px; color: var(--text-2);
     box-shadow: 0 -1px 12px rgba(236, 40, 46, 0.22);
+  }
+  /* Retro glow style: old-computer lettering with a soft glow, on a see-through bar. */
+  .guide.retro {
+    padding: 0 40px; background: rgba(10, 6, 6, 0.9); box-shadow: 0 -1px 12px rgba(236, 40, 46, 0.3);
+    font-family: VT323, monospace; font-size: 20px; letter-spacing: 0.05em; color: #ffd6d6; text-shadow: 0 0 6px rgba(255, 120, 120, 0.6);
   }
   .item { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .item.right { margin-left: auto; }

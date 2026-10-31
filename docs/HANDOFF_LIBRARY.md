@@ -21,6 +21,13 @@ https://claude.ai/artifact/GFMzHHexe5DtY1hH7oFxhs, boards Main, PlayStation, Mou
 - Saved on this PC only (`settings.ts`): `favourites`, `recent` (with minutes played), `layout`, `autoLayout`.
   `play.svelte.ts` records a game in Recently played when it starts and its minutes when it closes.
 
+## Retro glow style (approved by Jayden 2026-10-31)
+The controller layout follows the "Play: retro glow style (new)" board: banded red background with a
+checkerboard blend where bands meet (`.dither` layers), VT323 lettering (bundled `@fontsource/vt323`) for the
+count, section labels, search box and button guide, and slow pulsing glows on the selected tab and the
+highlighted game (no pulse when Windows animations are turned off). No full CRT filter.
+The mouse and keyboard layout keeps the plain look (no mockup for it in this style yet).
+
 ## Controller buttons on the Library
 A open · Y favourite / unfavourite · X search · LB / RB change console · Menu (Options) co-op only / show all
 (not on Favourites) · B main menu (in the search box, B goes back to the games).
@@ -36,8 +43,6 @@ Screens claim buttons with `useScreenButtons()` in `gamepad.ts`; every other scr
 - Not yet seen on Jayden's PC or with his real controller.
 
 ## Not done yet (ideas, need Jayden's OK or a mockup first)
-- Retro board "Play: retro glow style (new)": only the glows are built (selected tab, highlighted game,
-  title, bars). The banded, dithered background and VT323 lettering wait for Jayden's OK.
 - The button guide on the other screens (Guides board): main menu, game page (Y favourite there too),
   settings. Only the Library has it so far.
 - Known (pre-existing, in `gamepad.ts`, controller thread's area): D-pad right from the last game in a short

@@ -12,3 +12,12 @@ app/src-tauri/player/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Secrets never belong in the repo (docs/SECURITY_RULES.md)
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+signing_key*
+secrets/

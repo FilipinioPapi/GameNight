@@ -5,9 +5,9 @@ cartridge together over the network, each with its own pretend Xbox pad, and we 
     python netplay_test.py <player folder> <work folder> <results folder>
 
 <player folder> is what tools/player/fetch_player.py builds (retroarch.exe + cores). Nothing is installed
-or changed outside <work folder> and <results folder>, and nothing goes to the internet: the two copies
-talk over this machine's own loopback address, with netplay's public lobby, NAT punching and relay servers
-all switched off.
+or changed outside <work folder> and <results folder>. The "direct" and "delayed" rounds stay on this
+machine (loopback address, with netplay's public lobby, NAT punching and relay servers switched off); only
+the relay rounds below go to the internet, to libretro's lobby and relay servers.
 
 The "host" copy is player 1 and reads only pretend pad A; the "friend" copy joins it as player 2 and
 reads only pretend pad B. Both copies have RetroArch's local command port on (each its own), so the test
@@ -23,13 +23,29 @@ Each round:
   4. At the end: both copies' button-change lists must be identical, every player 1 entry must be a
      button state pad A was given (pad B for player 2), and the fingerprint chain must add up.
 
-Rounds: "direct" (straight connection) and "delayed" (through a small relay in this script that adds
-internet-like delay and jitter both ways). RetroArch's own repair of a desync (netplay_check_frames)
-is off, so any desync stays visible instead of being quietly patched.
+Rounds (NETPLAY_ROUNDS picks some by name; all by default):
+  - "direct": straight connection on this machine.
+  - "delayed": through a small relay in this script that adds internet-like delay and jitter both ways.
+  - "relay-listed-<place>": through libretro's public relay the way stock RetroArch does it: the host asks
+    libretro's lobby for the relay, gets a session from it and lists the game in libretro's PUBLIC game list
+    (one connection only, so nobody else can join once the friend is in); the friend finds the session there
+    and joins.
+  - "relay-private-<place>": through the same public relay, but the host's relay session is held by a small
+    bridge in this script (TunnelBridge) and passed straight to the friend, so nothing is listed anywhere.
+    The host copy itself only listens on this machine.
+  - "reconnect-<place>": the friend joins through the relay, leaves and joins again, several times.
+Each round also measures how long a press takes to show up in your own game and in the other player's.
+RetroArch's own repair of a desync (netplay_check_frames) is off, so any desync stays visible instead of
+being quietly patched.
 """
 import asyncio
+import base64
 import ctypes
 import json
+import secrets
+import statistics
+import struct
+import urllib.request
 import os
 import random
 import socket
@@ -37,6 +53,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import vgamepad as vg
@@ -52,6 +69,11 @@ CORE = PLAYER / "cores" / "fceumm_libretro.dll"
 NETPLAY_PORT = 55435
 RELAY_PORT = 55436
 MASH_SECONDS = int(os.environ.get("NETPLAY_MASH_SECONDS", "90"))
+SHORT_MASH_SECONDS = 30  # the far-away relays get a shorter sync check
+LONG_MASH_SECONDS = 300  # the long rounds through the nearest relay
+ONLY_ROUNDS = [r for r in os.environ.get("NETPLAY_ROUNDS", "").replace(",", " ").split() if r]
+LOBBY = "http://lobby.libretro.com/"  # what RetroArch 1.22.2 itself uses (file_path_special.h)
+PRESSES = 15  # presses per pad for the press-delay measurement
 MARGIN = 60  # only compare frames at least this many frames old in both copies (newer ones may still be redone)
 B = vg.XUSB_BUTTON
 # Xbox button -> NES bit in the cartridge's $10/$11 (RetroArch's standard layout: Xbox A is the NES B spot).
@@ -104,7 +126,7 @@ class Copy:
         self.dir = WORK / name
         self.proc = None
 
-    def write_config(self, x):
+    def write_config(self, x, extra=None):
         for d in ("logs", "saves", "states", "system", "cache"):
             (self.dir / d).mkdir(parents=True, exist_ok=True)
         p = lambda q: str(q).replace('"', "")  # noqa: E731
@@ -121,7 +143,8 @@ class Copy:
             "input_exit_emulator": "nul",
             # The test reads the cartridge's RAM through this (this machine only).
             "network_cmd_enable": "true", "network_cmd_port": str(self.cmd_port),
-            # Netplay: this machine only. No public lobby, no NAT punching, no relay servers.
+            # Netplay: by default this machine only. No public lobby, no NAT punching, no relay servers.
+            # (The relay rounds change some of these through `extra`.)
             "netplay_public_announce": "false", "netplay_nat_traversal": "false", "netplay_use_mitm_server": "false",
             "netplay_check_frames": "0", "netplay_nickname": self.name, "netplay_ping_show": "false",
             # Two windows side by side; both keep running when not in front.
@@ -142,6 +165,7 @@ class Copy:
             "log_to_file": "true", "log_to_file_timestamp": "false", "log_verbosity": "true",
             "frontend_log_level": "0", "libretro_log_level": "2", "log_dir": p(self.dir / "logs"),
         }
+        settings.update(extra or {})
         self.cfg = self.dir / "retroarch.cfg"
         self.cfg.write_text("".join(f'{k} = "{v}"\n' for k, v in settings.items()), encoding="ascii")
 
@@ -170,14 +194,10 @@ class Copy:
     def ram(self, start, length):
         """Bytes of the cartridge's RAM, or None."""
         answer = self.ask(f"READ_CORE_MEMORY {start:x} {length}")
-        parts = (answer or "").split()
-        if len(parts) == length + 2 and parts[0] == "READ_CORE_MEMORY":
-            try:
-                return bytes(int(x, 16) for x in parts[2:])
-            except ValueError:
-                pass
-        self.last_bad_answer = (answer or "(no answer)")[:200]
-        return None
+        got = parse_ram(answer, length)
+        if got is None:
+            self.last_bad_answer = (answer or "(no answer)")[:200]
+        return got
 
     def quit(self):
         if self.proc and self.proc.poll() is None:
@@ -186,6 +206,36 @@ class Copy:
                 self.proc.wait(10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+
+
+def parse_ram(answer, length):
+    parts = (answer or "").split()
+    if len(parts) == length + 2 and parts[0] == "READ_CORE_MEMORY":
+        try:
+            return bytes(int(x, 16) for x in parts[2:])
+        except ValueError:
+            pass
+    return None
+
+
+def ram_at_once(copies, start, length, timeout=1.0):
+    """Asks every copy at the same moment (each answers on its next frame), so timing two copies doesn't
+    add their waits together. Returns {copy: bytes or None}."""
+    command = f"READ_CORE_MEMORY {start:x} {length}".encode()
+    by_port = {c.cmd_port: c for c in copies}
+    got = {c: None for c in copies}
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        for c in copies:
+            s.sendto(command, ("127.0.0.1", c.cmd_port))
+        for _ in copies:
+            try:
+                data, addr = s.recvfrom(65536)
+            except OSError:
+                break
+            if addr[1] in by_port:
+                got[by_port[addr[1]]] = parse_ram(data.decode(errors="replace").strip(), length)
+    return got
 
 
 def frame_of(mem):
@@ -254,6 +304,169 @@ class DelayRelay(threading.Thread):
         await sender
 
 
+# ---------------------------------------------------------------- libretro's public relay
+
+# Relay ("tunnel") messages, from RetroArch 1.22.2 network/netplay/netplay_frontend.c. Each id is a 4-byte
+# magic plus 12 bytes; an address is 16 bytes.
+RATS = 0x52415453  # session: ask for a new one (12 zero bytes) / the session id the relay gives back
+RATL = 0x5241544C  # link: a friend arrived; open a new connection to the relay and send this id on it
+RATA = 0x52415441  # address: ask for / receive the arriving friend's address
+RATP = 0x52415450  # ping: the relay checks the host is still there; answer with the same 4 bytes
+
+
+def lobby_get(path, timeout=15):
+    with urllib.request.urlopen(LOBBY + path, timeout=timeout) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
+def relay_address(place):
+    """Ask libretro's lobby where a relay is, exactly like RetroArch does (tunnel?name=<place>)."""
+    fields = dict(line.split("=", 1) for line in lobby_get(f"tunnel?name={place}").splitlines() if "=" in line)
+    return fields["tunnel_addr"], int(fields["tunnel_port"])
+
+
+def connect_times(host, port, n=5):
+    """How long a plain connection to the relay takes from this machine (one round trip), in ms."""
+    out = []
+    for _ in range(n):
+        t = time.perf_counter()
+        try:
+            with socket.create_connection((host, port), timeout=10):
+                out.append(round((time.perf_counter() - t) * 1000, 1))
+        except OSError as e:
+            out.append(None)
+            say(f"  connection to {host}:{port} failed: {e}")
+        time.sleep(0.3)
+    return out
+
+
+def find_in_lobby(nick, seconds):
+    """Our host's entry in libretro's public game list (only our own entry is kept, nobody else's)."""
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            for room in json.loads(lobby_get("list")):
+                f = room.get("fields", {})
+                if f.get("username") == nick:
+                    return f
+        except (OSError, ValueError) as e:
+            say(f"  lobby list read failed: {e}")
+        time.sleep(1)
+    return None
+
+
+class TunnelBridge(threading.Thread):
+    """Holds a relay session for the host without listing anything publicly: asks libretro's relay for a
+    session, and when a friend arrives through it, opens the link the way RetroArch's host would and passes
+    it to the host copy on this machine (127.0.0.1). Counts what went through."""
+
+    def __init__(self, relay_host, relay_port, target_port):
+        super().__init__(daemon=True)
+        self.relay = (relay_host, relay_port)
+        self.target_port = target_port
+        self.ready = threading.Event()
+        self.session = None
+        self.error = None
+        self.stats = {"session_seconds": None, "relay_pings": 0, "links": 0, "links_failed": 0,
+                      "friend_to_host_bytes": 0, "host_to_friend_bytes": 0}
+        self.loop = None
+        self.writer = None
+        self.t0 = time.time()
+        self.events = []  # what happened on the relay connections, with seconds since the bridge started
+
+    def note(self, what):
+        self.events.append((round(time.time() - self.t0, 2), what))
+        say(f"  bridge @{self.events[-1][0]} s: {what}")
+
+    def run(self):
+        try:
+            asyncio.run(self.main())
+        except Exception as e:  # noqa: BLE001 - reported by the round
+            self.error = f"{type(e).__name__}: {e}"
+            self.ready.set()
+
+    def stop(self):
+        self.note("the test is ending the session (closing our side)")
+        if self.loop and self.writer:
+            self.loop.call_soon_threadsafe(self.writer.close)
+
+    async def main(self):
+        self.loop = asyncio.get_running_loop()
+        t = time.perf_counter()
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(*self.relay), 15)
+        self.writer = writer
+        writer.write(struct.pack("!I", RATS) + bytes(12))
+        await writer.drain()
+        answer = await asyncio.wait_for(reader.readexactly(16), 15)
+        if struct.unpack("!I", answer[:4])[0] != RATS or answer[4:] == bytes(12):
+            raise RuntimeError(f"the relay gave no session: {answer.hex()}")
+        self.stats["session_seconds"] = round(time.perf_counter() - t, 2)
+        self.session = base64.b64encode(answer[4:]).decode()
+        self.ready.set()
+        waiting = {}  # link id -> future for the friend's address
+        while True:
+            try:
+                magic = struct.unpack("!I", await reader.readexactly(4))[0]
+            except (asyncio.IncompleteReadError, ConnectionError) as e:
+                self.note(f"the relay closed the session connection ({type(e).__name__})")
+                return
+            if magic == RATP:
+                writer.write(struct.pack("!I", RATP))
+                await writer.drain()
+                self.stats["relay_pings"] += 1
+            elif magic == RATL:
+                link = await reader.readexactly(12)
+                fut = self.loop.create_future()
+                waiting[link] = fut
+                asyncio.ensure_future(self.open_link(link, fut, writer))
+            elif magic == RATA:
+                link = await reader.readexactly(12)
+                addr = await reader.readexactly(16)
+                fut = waiting.pop(link, None)
+                if fut and not fut.done():
+                    fut.set_result(addr)
+            else:
+                raise RuntimeError(f"unknown message from the relay: {magic:#x}")
+
+    async def open_link(self, link, addr_future, control):
+        try:
+            up_reader, up_writer = await asyncio.wait_for(asyncio.open_connection(*self.relay), 15)
+            control.write(struct.pack("!I", RATA) + link)  # same order as RetroArch: ask for the address
+            await control.drain()
+            await asyncio.wait_for(addr_future, 15)
+            up_writer.write(struct.pack("!I", RATL) + link)
+            await up_writer.drain()
+            host_reader, host_writer = await asyncio.open_connection("127.0.0.1", self.target_port)
+            self.stats["links"] += 1
+            n = self.stats["links"]
+            self.note(f"link {n}: a friend arrived through the relay and is passed to the host")
+        except Exception as e:  # noqa: BLE001
+            self.stats["links_failed"] += 1
+            self.note(f"a friend's link failed: {type(e).__name__}: {e}")
+            return
+        await asyncio.gather(self.pipe(up_reader, host_writer, "friend_to_host_bytes", f"link {n}: relay side (friend)"),
+                             self.pipe(host_reader, up_writer, "host_to_friend_bytes", f"link {n}: host side"),
+                             return_exceptions=True)
+
+    async def pipe(self, reader, writer, counter, label):
+        """Copies one direction. Notes which side ended the link first and how, so a dropped connection
+        can be pinned on the relay, the host or this bridge."""
+        how = "closed it (end of data)"
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                self.stats[counter] += len(data)
+                writer.write(data)
+                await writer.drain()
+        except Exception as e:  # noqa: BLE001
+            how = f"broke: {type(e).__name__}: {e}"
+        finally:
+            self.note(f"{label} {how}")
+            writer.close()
+
+
 # ---------------------------------------------------------------- one round
 
 def wait_until(check, seconds, step=0.25):
@@ -320,38 +533,128 @@ def mash(pads, seconds, seed, sent, stop, timeline):
         set_pad(pad, [])
 
 
-def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
+def press_delays(host, friend, pad_a, pad_b, n=PRESSES):
+    """Press A on one pad and time how long until each game shows it: the presser's own game and the other
+    player's game. Readings come once a frame, so each number is accurate to about one frame (~17-22 ms)."""
+    out = {}
+    rng = random.Random(3)
+    for key, pad, own, other, idx in (("host_pad_a", pad_a, host, friend, 0), ("friend_pad_b", pad_b, friend, host, 1)):
+        out[key] = {"own_game_ms": [], "other_game_ms": []}
+    for _ in range(n):
+        for key, pad, own, other, idx in (("host_pad_a", pad_a, host, friend, 0), ("friend_pad_b", pad_b, friend, host, 1)):
+            seen = {own: None, other: None}
+            set_pad(pad, [B.XUSB_GAMEPAD_A])
+            t0 = time.perf_counter()
+            while time.perf_counter() - t0 < 3 and None in seen.values():
+                for c, mem in ram_at_once([c for c in seen if seen[c] is None], 0x10, 2).items():
+                    if mem and mem[idx] & 0x40:
+                        seen[c] = round((time.perf_counter() - t0) * 1000, 1)
+            set_pad(pad, [])
+            out[key]["own_game_ms"].append(seen[own])
+            out[key]["other_game_ms"].append(seen[other])
+            wait_until(lambda: all(m and not m[idx] & 0x40 for m in ram_at_once([own, other], 0x10, 2).values()), 3, 0.02)
+            time.sleep(rng.uniform(0.1, 0.3))
+    for key, v in out.items():
+        pairs = [(a, b) for a, b in zip(v["own_game_ms"], v["other_game_ms"]) if a is not None and b is not None]
+        v["missed"] = sum(1 for a, b in zip(v["own_game_ms"], v["other_game_ms"]) if a is None or b is None)
+        v["summary"] = {
+            "own_game": spread([a for a, _ in pairs]), "other_game": spread([b for _, b in pairs]),
+            "extra_for_other_player": spread([round(b - a, 1) for a, b in pairs]),
+        }
+    return out
+
+
+def spread(xs):
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return {"median": round(statistics.median(xs), 1), "p90": xs[min(len(xs) - 1, int(0.9 * len(xs)))],
+            "min": xs[0], "max": xs[-1], "n": len(xs)}
+
+
+def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, listed=False,
+              mash_seconds=MASH_SECONDS, reconnects=0):
     say(f"\n################ round: {name} ################")
     result = {"round": name, "ok": False}
     host = Copy(f"host-{name}", 55355, slot_a)
     friend = Copy(f"friend-{name}", 55356, slot_b)
-    host.write_config(0)
-    friend.write_config(520)
-    relay = None
+    host_extra, friend_extra = {}, {}
+    if place:
+        try:
+            relay_host, relay_port = relay_address(place)
+        except (OSError, KeyError, ValueError) as e:
+            fail(f"{name}: libretro's lobby didn't say where the {place} relay is ({e})")
+            return result
+        plain = connect_times(relay_host, relay_port)
+        ok_times = [t for t in plain if t is not None]
+        result["relay"] = {"place": place, "address": f"{relay_host}:{relay_port}", "plain_connect_ms": plain,
+                           "plain_connect_median_ms": statistics.median(ok_times) if ok_times else None}
+        say(f"{place} relay is {relay_host}:{relay_port}; a plain connection from this machine takes {plain} ms")
+    if listed:
+        # Stock RetroArch: the host lists the game in libretro's public list. No password: RetroArch's friend side
+        # ignores netplay_password and always pops up a box to TYPE it (netplay_handshake_init: menu_input_dialog),
+        # which stalled run 41167800601. Instead the host takes one connection only, so once our friend is in,
+        # nobody else can join; anyone sneaking in first would show up in the right-player checks.
+        nick = f"gn-ci-{secrets.token_hex(3)}"
+        host_extra = {"netplay_public_announce": "true", "netplay_use_mitm_server": "true", "netplay_mitm_server": place,
+                      "netplay_nickname": nick, "netplay_max_connections": "1"}
+    host.write_config(0, host_extra)
+    friend.write_config(520, friend_extra)
+    delayer = bridge = None
     samples = []
     try:
+        t_host = time.time()
         host.start(rom, ["--host", "--port", str(NETPLAY_PORT)])
         if not wait_until(lambda: host.ram(0, 3), 40):
             fail(f"{name}: the host copy never answered ({getattr(host, 'last_bad_answer', '')})")
             return result
         time.sleep(3)
-        port = NETPLAY_PORT
+        connect_args = ["--connect", "127.0.0.1", "--port", str(NETPLAY_PORT)]
         if delay:
-            relay = DelayRelay(RELAY_PORT, NETPLAY_PORT, *delay, seed=11)
-            relay.start()
-            relay.ready.wait(10)
-            port = RELAY_PORT
-            say(f"relay on port {RELAY_PORT}: {delay[0]} ms ± {delay[1]} ms each way")
+            delayer = DelayRelay(RELAY_PORT, NETPLAY_PORT, *delay, seed=11)
+            delayer.start()
+            delayer.ready.wait(10)
+            connect_args = ["--connect", "127.0.0.1", "--port", str(RELAY_PORT)]
+            say(f"delay relay on port {RELAY_PORT}: {delay[0]} ms ± {delay[1]} ms each way")
+        if listed:
+            entry = find_in_lobby(nick, 60)
+            if not entry:
+                fail(f"{name}: the host never showed up in libretro's public game list")
+                return result
+            result["lobby"] = {
+                "listed_after_seconds": round(time.time() - t_host, 1),
+                "fields_anyone_can_read": sorted(entry),
+                "lists_host_internet_address": bool(entry.get("ip")),
+                "country_shown": bool(entry.get("country")), "game_name_shown": entry.get("game_name"),
+                "nickname_shown": entry.get("username") == nick, "has_password": entry.get("has_password"),
+                "relay": f"{entry.get('mitm_ip')}:{entry.get('mitm_port')}", "host_method": entry.get("host_method"),
+            }
+            say(f"host listed in libretro's public game list after {result['lobby']['listed_after_seconds']} s: {result['lobby']}")
+            if not entry.get("mitm_session"):
+                fail(f"{name}: the public listing has no relay session")
+                return result
+            connect_args = ["--connect", entry["mitm_ip"], "--port", str(entry["mitm_port"]),
+                            f"--mitm-session={entry['mitm_session']}"]
+        elif place:
+            bridge = TunnelBridge(relay_host, relay_port, NETPLAY_PORT)
+            bridge.start()
+            bridge.ready.wait(30)
+            if not bridge.session:
+                fail(f"{name}: couldn't get a session from the {place} relay ({bridge.error})")
+                return result
+            say(f"bridge holds a {place} relay session (took {bridge.stats['session_seconds']} s); nothing is listed")
+            connect_args = ["--connect", relay_host, "--port", str(relay_port), f"--mitm-session={bridge.session}"]
         host_frame_before = frame_of(host.ram(0, 3))
         t_join = time.time()
-        friend.start(rom, ["--connect", "127.0.0.1", "--port", str(port)])
+        friend.start(rom, connect_args)
+        max_gap = 60 if place else 30
 
         # 1. Connect
         def joined():
             h, f = host.ram(0, 3), friend.ram(0, 3)
             if h and f:
                 fh, ff = frame_of(h), frame_of(f)
-                if ff > 60 and abs(fh - ff) < 30:
+                if ff > 60 and abs(fh - ff) < max_gap:
                     return fh, ff
             return None
         got = wait_until(joined, 45)
@@ -384,14 +687,25 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
             fail(f"{name}: buttons reached the wrong player: " + "; ".join(wrong))
         time.sleep(1)
 
+        # How long a press takes to show up: in your own game, and in the other player's game
+        delays = press_delays(host, friend, pad_a, pad_b)
+        result["press_delay"] = delays
+        for key, v in delays.items():
+            sm = v["summary"]
+            say(f"  press delay, {key}: own game {sm['own_game']}, other player's game {sm['other_game']}, "
+                f"extra for the other player {sm['extra_for_other_player']} ms; missed {v['missed']}")
+            if v["missed"]:
+                fail(f"{name}: {v['missed']} of {PRESSES} presses on {key} never showed up in both games")
+        time.sleep(1)
+
         # 3. Stay in sync
-        say(f"\nsync check: both pads press random buttons for {MASH_SECONDS} s; comparing every finished frame")
+        say(f"\nsync check: both pads press random buttons for {mash_seconds} s; comparing every finished frame")
         # states the pads were given so far (the right-player checks above), then the random ones
         sent = {"a": {0, 0x01} | {bit for _, _, bit in NES}, "b": {0, 0x42} | {bit for _, _, bit in NES}}
         stop = threading.Event()
         timeline = []
         history = {"host": {}, "friend": {}}  # change number -> (full frame, P1, P2), kept once it can't be redone
-        masher = threading.Thread(target=mash, args=({"a": pad_a, "b": pad_b}, MASH_SECONDS, 5, sent, stop, timeline), daemon=True)
+        masher = threading.Thread(target=mash, args=({"a": pad_a, "b": pad_b}, mash_seconds, 5, sent, stop, timeline), daemon=True)
         checked, mismatches, bad_frames, bad_reads = set(), [], set(), 0
         first = None
         masher.start()
@@ -438,16 +752,25 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
         say(f"  {len(samples)} looks, {len(checked)} frames compared out of about {span[1] - span[0]} played, "
             f"{len(bad_frames)} different; speed host {fps_h:.2f} / friend {fps_f:.2f} frames a second; "
             f"frame gap between the copies: biggest {result['biggest_frame_gap']}, average {result['average_frame_gap']}")
-        if mismatches:
+        drops = [l for c in (host, friend) for l in c.log_text().splitlines() if "disconnected" in l.lower()]
+        result["dropped_during_play"] = drops
+        if drops:
+            fail(f"{name}: the connection dropped during play ({'; '.join(drops)}); after a drop the two games "
+                 f"run on their own, so frames differ from then on")
+        elif mismatches:
             fail(f"{name}: the two games went out of sync (first different frame {mismatches[0]['frame']})")
-        if len(samples) < MASH_SECONDS * 2:
+        if len(samples) < mash_seconds * 2:
             fail(f"{name}: too few readings ({len(samples)}) to trust the sync check")
         if span[1] - span[0] > 0 and len(checked) < 0.9 * (span[1] - span[0] - MARGIN):
             fail(f"{name}: only {len(checked)} of ~{span[1] - span[0]} frames could be compared")
         result["two_unconnected_copies_fps"] = round(SOLO_FPS, 2)
+        # Over the internet a slower round is a finding to report, not a broken test, unless it's far off.
+        slowest = 0.8 if place else 0.95
         for who, fps in (("host", fps_h), ("friend", fps_f)):
-            if fps < 0.95 * SOLO_FPS or fps > 61:
+            if fps < slowest * SOLO_FPS or fps > 61:
                 fail(f"{name}: the {who} ran at {fps:.1f} frames a second (two unconnected copies on this machine: {SOLO_FPS:.1f})")
+            elif fps < 0.95 * SOLO_FPS:
+                say(f"  NOTE: the {who} ran at {fps:.1f} frames a second, below the {SOLO_FPS:.1f} of two unconnected copies")
 
         # 4. End checks: change lists, right player under load, fingerprint chain
         time.sleep(2.5)
@@ -504,12 +827,20 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
             say(f"\n{c.name}: {len(lines)} netplay lines in RetroArch's log, {len(bad)} look like problems")
             for l in lines[:60]:
                 say(f"  | {l}")
-        if relay:
-            result["relay"] = dict(relay.stats, delay_ms=delay[0], jitter_ms=delay[1])
-            say(f"relay: {relay.stats}")
+        if delayer:
+            result["delay_relay"] = dict(delayer.stats, delay_ms=delay[0], jitter_ms=delay[1])
+            say(f"delay relay: {delayer.stats}")
+
+        # Leave and join again (same session), checking the friend is still player 2 each time
+        if reconnects:
+            result["reconnects"] = rejoin(name, rom, host, friend, pad_b, connect_args, reconnects, max_gap)
         result["ok"] = not [f for f in failures if f.startswith(f"{name}:")]
         return result
     finally:
+        if bridge:
+            result.setdefault("relay", {})["bridge"] = dict(bridge.stats, error=bridge.error, events=bridge.events)
+            say(f"bridge: {bridge.stats} (error: {bridge.error})")
+            bridge.stop()
         for c in (friend, host):
             c.quit()
         subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
@@ -520,6 +851,36 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
         (OUT / f"{name}-samples.csv").write_text(
             "seconds,host_frame,friend_frame\n" + "".join(f"{s},{a},{b}\n" for s, a, b in samples))
         time.sleep(2)
+
+
+def rejoin(name, rom, host, friend, pad_b, connect_args, times, max_gap):
+    out = []
+    for i in range(times):
+        old_log = friend.log_text()
+        friend.quit()
+        (OUT / f"{friend.name}-before-rejoin-{i + 1}-retroarch.log").write_text(old_log, encoding="utf-8")
+        time.sleep(3)
+        t = time.time()
+        friend.start(rom, connect_args)
+
+        def joined():
+            h, f = host.ram(0, 3), friend.ram(0, 3)
+            return h and f and frame_of(f) > 60 and abs(frame_of(h) - frame_of(f)) < max_gap
+        ok = bool(wait_until(joined, 45))
+        took = round(time.time() - t, 1)
+        player2 = False
+        if ok:
+            time.sleep(2)
+            set_pad(pad_b, [B.XUSB_GAMEPAD_A])
+            time.sleep(0.5)
+            h, f = host.ram(0x10, 2), friend.ram(0x10, 2)
+            set_pad(pad_b, [])
+            player2 = bool(h and f and tuple(h) == (0, 0x40) and tuple(f) == (0, 0x40))
+        out.append({"joined": ok, "seconds": took, "friend_is_player_2": player2})
+        say(f"  rejoin {i + 1}: joined {ok} after {took} s, friend still player 2: {player2}")
+        if not ok or not player2:
+            fail(f"{name}: rejoin {i + 1} failed (joined {ok}, player 2 {player2})")
+    return out
 
 
 def keep_changes(store, ram, changes_ram, settled):
@@ -628,8 +989,30 @@ def main():
         say("  couldn't read the Xbox slots; assuming A = 0, B = 1")
         slot_a, slot_b = 0, 1
     SOLO_FPS = solo_speed(rom, slot_a, slot_b)
-    rounds = [run_round("direct", rom, pad_a, slot_a, pad_b, slot_b)]
-    rounds.append(run_round("delayed", rom, pad_a, slot_a, pad_b, slot_b, delay=(50, 20)))
+    plan = [
+        ("direct", {}),
+        ("delayed", {"delay": (50, 20)}),
+        ("relay-listed-nyc", {"place": "nyc", "listed": True}),
+        ("relay-private-nyc", {"place": "nyc", "reconnects": 5}),
+        ("relay-private-madrid", {"place": "madrid", "mash_seconds": SHORT_MASH_SECONDS}),
+        ("relay-private-saopaulo", {"place": "saopaulo", "mash_seconds": SHORT_MASH_SECONDS}),
+        ("relay-private-singapore", {"place": "singapore", "mash_seconds": SHORT_MASH_SECONDS}),
+        # Longer play through the nearest relay, both ways, to see whether connections drop (run 41169114880
+        # dropped one at ~60 s): if both drop, it's the relay or the internet; if only the private one, the bridge.
+        ("relay-listed-nyc-long", {"place": "nyc", "listed": True, "mash_seconds": LONG_MASH_SECONDS}),
+        ("relay-private-nyc-long", {"place": "nyc", "mash_seconds": LONG_MASH_SECONDS}),
+    ]
+    rounds = []
+    for name, opts in plan:
+        if ONLY_ROUNDS and name not in ONLY_ROUNDS:
+            continue
+        try:
+            rounds.append(run_round(name, rom, pad_a, slot_a, pad_b, slot_b, **opts))
+        except Exception as e:  # noqa: BLE001 - one broken round shouldn't hide the others' numbers
+            where = traceback.format_exc()
+            say(where)
+            fail(f"{name}: the round stopped with {type(e).__name__}: {e}")
+            rounds.append({"round": name, "ok": False, "error": f"{type(e).__name__}: {e}", "where": where})
     summary = {"ok": not failures, "two_unconnected_copies_fps": round(SOLO_FPS, 2), "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
     (OUT / "results.json").write_text(json.dumps(summary, indent=2))
     say("\n================ summary ================")
@@ -638,7 +1021,7 @@ def main():
         for f in failures:
             print(f"::error::netplay test: {f}", flush=True)
         sys.exit(1)
-    say("\nboth rounds: connected, every button on the right player, and the two games never went apart")
+    say("\nevery round: connected, every button on the right player, and the two games never went apart")
 
 
 if __name__ == "__main__":

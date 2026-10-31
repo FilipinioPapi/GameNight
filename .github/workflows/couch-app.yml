@@ -6,7 +6,7 @@ on:
   push:
     branches: ["claude/**"]
     paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
-            "tools/e2e/make_netplay_rom.py", "tools/e2e/window_watch.py", "tools/e2e/screen_size.ps1", "tools/player/**", ".github/workflows/couch-app.yml"]
+            "tools/e2e/make_netplay_rom.py", "tools/e2e/window_watch.py", "tools/e2e/crash_report.py", "tools/e2e/screen_size.ps1", "tools/player/**", ".github/workflows/couch-app.yml"]
   pull_request:
     paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
             "tools/e2e/window_watch.py", ".github/workflows/couch-app.yml"]
@@ -46,11 +46,19 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: tools/e2e/screen_size.ps1
+      - name: Keep a small crash dump if RetroArch crashes (this test machine only)
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\retroarch.exe'
+          New-Item -Path $k -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "$env:RUNNER_TEMP\dumps" -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 20 -Force | Out-Null
       - name: Add pretend Xbox controllers (ViGEmBus)
         shell: pwsh
         run: tools/e2e/add_pretend_pads.ps1
       - name: Server code's own packages
-        run: pip install -r server/requirements.txt pillow==11.0.0
+        run: pip install -r server/requirements.txt pillow==11.0.0 minidump==0.0.24
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         shell: pwsh
         run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
@@ -66,6 +74,10 @@ jobs:
         env:
           COUCH_MASH_SECONDS: ${{ github.event.inputs.seconds || '60' }}
         run: python tools/e2e/couch_app_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/couch" "$env:RUNNER_TEMP/couch-results" "app/src-tauri/target/debug/game-night.exe" server
+      - name: Where RetroArch crashed, if it did
+        if: always()
+        shell: pwsh
+        run: python tools/e2e/crash_report.py "$env:RUNNER_TEMP/dumps"
       - name: Keep the results (logs, numbers, screenshots)
         if: always()
         uses: actions/upload-artifact@v4

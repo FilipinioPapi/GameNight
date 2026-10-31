@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from "./lib/state.svelte";
+  import { inTauri } from "./lib/settings";
   import Login from "./screens/Login.svelte";
   import FirstRun from "./screens/FirstRun.svelte";
   import MainMenu from "./screens/MainMenu.svelte";
@@ -12,7 +13,27 @@
   import UpdateBox from "./components/UpdateBox.svelte";
 
   const r = $derived(app.route);
+
+  // F11: full screen (the default, like a console) or a window.
+  function keys(e: KeyboardEvent) {
+    if (e.key !== "F11" || !inTauri) return;
+    e.preventDefault();
+    import("@tauri-apps/api/core").then(({ invoke }) => invoke("toggle_fullscreen")).catch((err) => console.warn("F11", err));
+  }
+
+  // CI's Couch Play look test only: the test build hosts a lobby by itself and asks for the lobby screen.
+  if (inTauri)
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen("e2e-show-lobby", () => {
+          app.home();
+          app.go({ name: "lobby" });
+        }),
+      )
+      .catch(() => {});
 </script>
+
+<svelte:window onkeydown={keys} />
 
 {#if app.ready}
   {#key r.name}<div class="screen-fade">

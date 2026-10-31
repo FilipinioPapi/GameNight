@@ -213,6 +213,16 @@ pub fn run() {
             // The installer registers gamenight:// links; this covers test builds.
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
             let _ = app.deep_link().register_all();
+            // Like a console: Game Night fills the screen (F11 switches to a window and back).
+            #[cfg(feature = "e2e")]
+            let windowed = std::env::var("GAMENIGHT_E2E_WINDOWED").is_ok();
+            #[cfg(not(feature = "e2e"))]
+            let windowed = false;
+            if !windowed {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_fullscreen(true);
+                }
+            }
             pads::start(app.handle().clone());
             updater::log_start(app.handle());
             let back = updater::after_update(app.handle());
@@ -263,6 +273,7 @@ pub fn run() {
             couch::couch_leave,
             couch::couch_box,
             couch::couch_fullscreen,
+            toggle_fullscreen,
             updater::check_update,
             updater::download_update,
             updater::start_install,
@@ -310,4 +321,11 @@ mod tests {
         let other = std::env::temp_dir();
         assert!(clear_games(other.to_string_lossy().to_string()).is_err());
     }
+}
+
+/// F11: Game Night switches between full screen and a window.
+#[tauri::command]
+fn toggle_fullscreen(window: tauri::WebviewWindow) {
+    let on = window.is_fullscreen().unwrap_or(false);
+    let _ = window.set_fullscreen(!on);
 }

@@ -353,6 +353,8 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("ui_companion_enable", "false".into()),
         ("ui_companion_start_on_boot", "false".into()),
         ("desktop_menu_enable", "false".into()),
+        // No File / Command / Window bar on the game's window (it showed in the lobby's game box; measured).
+        ("ui_menubar_enable", "false".into()),
         ("menu_show_online_updater", "false".into()),
         ("menu_show_core_updater", "false".into()),
         // Off, except in CI's controller-in-a-game test (the "e2e" build), which asks the game what it sees.
@@ -376,7 +378,8 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         // Quitting goes straight back to Game Night.
         ("input_exit_emulator", "escape".into()),
         ("quit_press_twice", "false".into()),
-        ("input_quit_gamepad_combo", "3".into()),
+        // Both sticks pressed in (L3 + R3). Never Start/Select: Windows and Steam use those for their own shortcuts.
+        ("input_quit_gamepad_combo", "2".into()),
         // Screen
         ("video_driver", "d3d11".into()),
         ("video_fullscreen", "true".into()),
@@ -476,6 +479,8 @@ fn netplay_lines(n: &Netplay) -> Vec<(String, String)> {
         ("video_windowed_fullscreen", "false".into()),
         ("video_window_show_decorations", "false".into()),
         ("input_toggle_fullscreen", "nul".into()),
+        // In a lobby, L3 + R3 opens lobby controls, so it mustn't also close the game.
+        ("input_quit_gamepad_combo", "0".into()),
         ("pause_nonactive", "false".into()),
         // Netplay can't rewind or speed up.
         ("rewind_enable", "false".into()),

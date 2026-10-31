@@ -96,6 +96,11 @@ async fn call<R: Runtime>(app: &AppHandle<R>, method: reqwest::Method, path: &st
 
 // ---------- logs ----------
 
+/// A fresh gamebox.log for each game start (see gamebox.rs).
+fn box_log<R: Runtime>(app: &AppHandle<R>) -> crate::gamebox::BoxLog {
+    crate::gamebox::BoxLog::new(app.path().app_cache_dir().ok().map(|d| d.join("player").join("logs").join("gamebox.log")))
+}
+
 #[derive(Clone)]
 struct FileLog {
     path: Option<PathBuf>,
@@ -301,7 +306,7 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         None
     };
     let nickname = app.state::<Account>().user_name(app).unwrap_or_default();
-    let net = Netplay { host, seat, cmd_port, remaps, nickname, window: couch.gamebox.start_rect(), args };
+    let net = Netplay { host, seat, cmd_port, remaps, nickname, window: couch.gamebox.start_rect(main_hwnd(app)), args };
     let launch = games::prepare(app, &game.root, &game.id, &game.settings, Some(&net))?;
     let child = launch.spawn()?;
     let pid = child.id();
@@ -319,7 +324,7 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         "started RetroArch as {} (process {pid})",
         if host { "host".to_string() } else { seat.map(|s| format!("player {s}")).unwrap_or("watcher".into()) }
     ));
-    couch.gamebox.attach(pid, main_hwnd(app));
+    couch.gamebox.attach(pid, main_hwnd(app), box_log(app));
     let child = Arc::new(Mutex::new(Some(child)));
     let watched = child.clone();
     let app2 = app.clone();
@@ -351,7 +356,7 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
                 log.line(&format!("RetroArch closed straight away ({status}); starting it once more"));
                 match launch.spawn() {
                     Ok(c) => {
-                        couch.gamebox.attach(c.id(), main_hwnd(&app));
+                        couch.gamebox.attach(c.id(), main_hwnd(&app), box_log(&app));
                         *lock(&child) = Some(c);
                         started = Instant::now();
                         offset = 0;
@@ -898,8 +903,19 @@ pub fn couch_box<R: Runtime>(app: AppHandle<R>, x: f64, y: f64, w: f64, h: f64) 
     app.state::<Couch>().gamebox.set_box(x, y, w, h);
 }
 
+/// Game Night went full screen only for the game (it was windowed before): put it back afterwards.
+static MADE_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The game fills Game Night's window, and Game Night fills the screen (if it wasn't already).
 #[tauri::command]
 pub fn couch_fullscreen<R: Runtime>(app: AppHandle<R>, on: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        if on && !w.is_fullscreen().unwrap_or(true) {
+            MADE_FULL.store(w.set_fullscreen(true).is_ok(), Ordering::SeqCst);
+        } else if !on && MADE_FULL.swap(false, Ordering::SeqCst) {
+            let _ = w.set_fullscreen(false);
+        }
+    }
     app.state::<Couch>().gamebox.set_fullscreen(on);
     emit_update(&app);
 }
@@ -927,6 +943,13 @@ pub fn e2e_couch<R: Runtime>(app: AppHandle<R>) {
             couch_host(app.clone(), root.clone(), "1".into(), true, settings).await
         }
         .await;
+        if result.is_ok() {
+            // The lobby screen, like after pressing Host (a few times, in case the page was still loading).
+            for _ in 0..3 {
+                let _ = app.emit("e2e-show-lobby", ());
+                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            }
+        }
         let text = match result {
             Ok(v) => json!({ "code": v["code"], "cmd_port": lock(&app.state::<Couch>().local).cmd_port }),
             Err(e) => json!({ "error": e }),

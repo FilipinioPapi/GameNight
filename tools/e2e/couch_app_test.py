@@ -18,6 +18,11 @@ Checks: the open lobby is listed for the friend; joining gives seat 2 and the re
 connects through the relay; pad A drives player 1 and pad B player 2 in both games; 60 s of random presses
 with every finished frame compared; the friend switches to watching (pad B stops reaching the game); the
 friend's game closes (seat held, game doesn't pause); the friend rejoins with the code and gets seat 2 back.
+
+Look checks (window_watch.py, plus screenshots): the app shows the lobby screen full screen by default; the game
+sits inside Game Night's window as a child window, inside the box (not over the seat list), with no menu bar,
+and stays put (no flicker) while sampled 25 times a second. Then the app is started again as a window
+(GAMENIGHT_E2E_WINDOWED), and the same is checked before and after the window is moved and resized.
 """
 import json
 import os
@@ -36,6 +41,7 @@ import vgamepad as vg
 
 sys.path.insert(0, str(Path(__file__).parent))
 import make_netplay_rom as cart  # noqa: E402
+import window_watch  # noqa: E402
 
 PLAYER, WORK, OUT = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
 APP, SERVER = Path(sys.argv[4]).resolve(), Path(sys.argv[5]).resolve()
@@ -67,6 +73,38 @@ def fail(m):
 
 def screenshot(name):
     subprocess.run(["pwsh", "-NoProfile", "-File", str(TOOLS / "screenshot.ps1"), str(OUT / f"{name}.png")], check=False)
+
+
+def look(name, app, full_screen, game_full=False):
+    """Watches the game window for 6 s, takes 3 quick screenshots, and checks it sits still in the box."""
+    time.sleep(3)  # the lobby screen fades in, then the box is sent
+    summary, samples = window_watch.watch(app.pid, 6)
+    for i in range(3):
+        screenshot(f"{name}-{i + 1}")
+        time.sleep(0.15)
+    (OUT / f"{name}-window.json").write_text(json.dumps({"summary": summary, "samples": samples}, indent=1))
+    results.setdefault("look", {})[name] = summary
+    say(f"  {name}: {json.dumps(summary)}")
+    if not summary["last_game"]:
+        fail(f"{name}: no game window found")
+        return
+    if not summary["always_child"]:
+        fail(f"{name}: the game isn't inside Game Night's window (not a child window)")
+    if summary["ever_menu_bar"]:
+        fail(f"{name}: the game window shows RetroArch's menu bar")
+    if summary["ever_hidden"]:
+        fail(f"{name}: the game window was hidden while the lobby was showing")
+    if summary["place_changes"] > 0:
+        fail(f"{name}: the game window moved or resized {summary['place_changes']} times in 6 s (flicker)")
+    if not summary["game_inside_app"]:
+        fail(f"{name}: the game isn't inside Game Night's window: {summary['last_game']} vs {summary['last_app_inside']}")
+    elif game_full:
+        if tuple(summary["last_game"]) != tuple(summary["last_app_inside"]):
+            fail(f"{name}: the game doesn't fill Game Night's window in full screen: {summary['last_game']} vs {summary['last_app_inside']}")
+    elif summary["last_game"][2] > 0.6 * summary["last_app_inside"][2]:
+        fail(f"{name}: the game is wider than the lobby's game box (over the seat list): {summary['last_game']}")
+    if summary["app_full_screen"] != full_screen:
+        fail(f"{name}: Game Night full screen is {summary['app_full_screen']}, expected {full_screen}")
 
 
 def wait_until(check, seconds, step=0.25):
@@ -161,9 +199,9 @@ class Friend(Ask):
             "netplay_check_frames": "0", "netplay_nickname": "Friend",
             f"netplay_request_device_p{seat}": "true",
             "video_driver": "d3d11", "video_fullscreen": "false", "video_scale": "2",
-            "video_window_save_positions": "true", "video_windowed_position_x": "1300",
-            "video_windowed_position_y": "40", "video_windowed_position_width": "512",
-            "video_windowed_position_height": "480", "pause_nonactive": "false",
+            "video_window_save_positions": "true", "video_windowed_position_x": "1600",
+            "video_windowed_position_y": "760", "video_windowed_position_width": "300",
+            "video_windowed_position_height": "240", "ui_menubar_enable": "false", "pause_nonactive": "false",
             "audio_enable": "false", "video_vsync": "false", "vrr_runloop_enable": "true",
             "input_joypad_driver": "xinput", "input_autodetect_enable": "true",
             "joypad_autoconfig_dir": p(PLAYER / "autoconfig"), "input_max_users": "1",
@@ -327,6 +365,8 @@ def main():
         say(f"  app hosted lobby {code} in {results['host_ready_seconds']} s (its RetroArch command port {info['cmd_port']})")
         host = Ask(int(info["cmd_port"]))
         screenshot("1-host-lobby")
+        say("look: the lobby screen, full screen by default")
+        look("look-1-full-screen", app, True)
 
         status, listed = friend_api.call("GET", "/api/lobbies")
         mine = [x for x in (listed or {}).get("lobbies", [])] if status == 200 else []
@@ -356,6 +396,22 @@ def main():
         results["join_seconds"] = round(time.time() - t, 1)
         say(f"  connected through the relay in {results['join_seconds']} s (frames {got})")
         screenshot("2-friend-connected")
+        say("look: after the friend connected")
+        look("look-2-friend-connected", app, True)
+        say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
+        for name, full in (("look-2b-game-full-screen", True), ("look-2c-back-to-the-box", False)):
+            # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
+            if not window_watch.focus_app(app.pid):
+                fail(f"{name}: couldn't put Game Night in front for the pad presses")
+                continue
+            set_pad(pad_a, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
+            time.sleep(1.4)
+            set_pad(pad_a, [])
+            time.sleep(0.6)
+            set_pad(pad_a, [B.XUSB_GAMEPAD_Y])
+            time.sleep(0.2)
+            set_pad(pad_a, [])
+            look(name, app, True, game_full=full)
 
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)
@@ -424,13 +480,32 @@ def main():
                 results["sync_after_rejoin"] = sync_round(host, friend, pad_a, pad_b, 20, 8)
         if app.poll() is not None:
             fail(f"the Game Night app closed during the test (exit {app.returncode})")
+
+        say("look: Game Night started again as a window (not full screen), hosting a new lobby")
+        friend.kill()
+        app.kill()
+        app.wait(15)
+        first_log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "gamebox.log"
+        if first_log.exists():
+            (OUT / "host-gamebox-full-screen-run.log").write_bytes(first_log.read_bytes())
+        info_file.unlink(missing_ok=True)
+        time.sleep(2)
+        app = subprocess.Popen([str(APP)], env=dict(env, GAMENIGHT_E2E_WINDOWED="1"), stdout=app_log, stderr=subprocess.STDOUT)
+        info = wait_until(lambda: info_file.exists() and json.loads(info_file.read_text() or "{}"), 120, 0.5)
+        if not info or "code" not in info:
+            fail(f"the windowed app didn't host a lobby within 120 s: {info}")
+        else:
+            look("look-3-windowed", app, False)
+            say("look: the window is moved and made bigger")
+            window_watch.move_app(app.pid, 40, 30, 1500, 900)
+            look("look-4-windowed-moved", app, False)
     finally:
         friend.kill()
         (OUT / "friend-retroarch.log").write_text(friend.log())
         if app.poll() is None:
             app.kill()
         server.kill()
-        for name in ("retroarch.log", "relay.log", "couch.log"):
+        for name in ("retroarch.log", "relay.log", "couch.log", "gamebox.log"):
             for base in (Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs",):
                 src = base / name
                 if src.exists():

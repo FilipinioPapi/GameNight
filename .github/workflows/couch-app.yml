@@ -6,10 +6,10 @@ on:
   push:
     branches: ["claude/**"]
     paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
-            "tools/e2e/make_netplay_rom.py", "tools/player/**", ".github/workflows/couch-app.yml"]
+            "tools/e2e/make_netplay_rom.py", "tools/e2e/window_watch.py", "tools/e2e/screen_size.ps1", "tools/player/**", ".github/workflows/couch-app.yml"]
   pull_request:
     paths: ["app/**", "server/gamenight/**", "tools/e2e/couch_app_test.py", "tools/e2e/couch_server_standin.py",
-            ".github/workflows/couch-app.yml"]
+            "tools/e2e/window_watch.py", ".github/workflows/couch-app.yml"]
   workflow_dispatch:
     inputs:
       seconds:
@@ -42,6 +42,10 @@ jobs:
         with:
           workspaces: app/src-tauri
           key: couch-e2e
+      - name: Screen size like a real PC (1920x1080)
+        shell: pwsh
+        continue-on-error: true
+        run: tools/e2e/screen_size.ps1
       - name: Add pretend Xbox controllers (ViGEmBus)
         shell: pwsh
         run: tools/e2e/add_pretend_pads.ps1

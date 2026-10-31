@@ -296,14 +296,24 @@ class Couch {
   /** Your link dropped: get back in with the same code (your seat is held for you). */
   async rejoin(): Promise<boolean> {
     const l = this.lobby;
-    if (!l || !this.lastCode) return false;
+    if (!l) return false;
     const as = l.you.role === "watch" ? "watch" : "play";
-    if (!inTauri) {
+    if (inTauri) {
+      // The Windows side restarts this PC's game for the same lobby and seat (host included).
+      try {
+        this.got(await invoke<Lobby>("couch_rejoin"));
+        return true;
+      } catch (e) {
+        this.error = String(e);
+        return false;
+      }
+    }
+    if (!this.lastCode) return false;
+    {
       this.ended = null;
       this.got(sampleLobby("guest", l.game, as === "play" ? "play" : "watch"));
       return true;
     }
-    return this.join(this.lastCode, as, l.game);
   }
 
   // ---- In the lobby ----

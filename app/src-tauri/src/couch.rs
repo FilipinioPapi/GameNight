@@ -421,6 +421,7 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
         }
         if last_look.elapsed() >= Duration::from_secs(1) {
             last_look = Instant::now();
+            sync_bezel(&app);
             let text = new_log_text(&launch.log_file, &mut offset);
             if netplay_dropped(&text, host) {
                 let mut l = lock(&couch.local);
@@ -445,7 +446,9 @@ fn sync_bezel<R: Runtime>(app: &AppHandle<R>) {
     let want = if couch.gamebox.fullscreen() { 0 } else { 1 };
     let port = {
         let mut l = lock(&couch.local);
-        if !l.bezel || !l.bezel_ready || l.state != RaState::Running || l.overlay_page == want {
+        // Not straight after RetroArch's menu opened or closed (the flip could be lost); the game's monitor
+        // tries again every second.
+        if !l.bezel || !l.bezel_ready || l.state != RaState::Running || l.overlay_page == want || !crate::ingame::ra_menu_settled() {
             return;
         }
         l.overlay_page = want;

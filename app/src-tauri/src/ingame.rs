@@ -41,6 +41,8 @@ static LOG: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
 static RA_MENU: Mutex<Option<u16>> = Mutex::new(None);
 /// Couch Play host: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
 static PAUSE_HOLD: Mutex<Option<u16>> = Mutex::new(None);
+/// When Game Night last sent MENU_TOGGLE.
+static RA_MENU_AT: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Opens or closes RetroArch's hidden menu (MENU_TOGGLE) only if it isn't that way already.
 fn ra_menu(port: u16, want: bool) {
@@ -48,7 +50,14 @@ fn ra_menu(port: u16, want: bool) {
     if (*g == Some(port)) != want {
         send_cmd(port, "MENU_TOGGLE");
         *g = want.then_some(port);
+        *lock(&RA_MENU_AT) = Some(Instant::now());
     }
+}
+
+/// False for 0.5 s after a MENU_TOGGLE: commands sent right after it were sometimes lost (Quit, CI run
+/// 41238375842; Refresh's SAVE_STATE, run 41247795649; bezel page flips, runs 41236464953 and 41238376028).
+pub fn ra_menu_settled() -> bool {
+    lock(&RA_MENU_AT).is_none_or(|t| t.elapsed() >= Duration::from_millis(500))
 }
 
 /// Couch Play host, pause for everyone. Measured (CI run 41249302754): the host's pause with its hidden menu

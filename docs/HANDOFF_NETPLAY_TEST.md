@@ -54,3 +54,7 @@ build or change the Game Night app, and nothing goes to the internet.
 `pause_nonactive=false` (a window not in front keeps playing), each copy's player 1 bound to its own pad
 (`input_player1_joypad_index`), separate `network_cmd_port`s. The client's own pad goes to the player netplay gives it
 (RetroArch reads its local port 1 for that player, `get_self_input_state`).
+
+## Decision (Jayden, 2026-10-31)
+First real friend test goes through **libretro's public relay** (no router or NAS changes). Measure delay and
+reliability through it; those numbers decide whether our own relay on the NAS is worth building later.

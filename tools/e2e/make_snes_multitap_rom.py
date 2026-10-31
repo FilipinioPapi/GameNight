@@ -155,13 +155,6 @@ def build():
     a.branch(0xD0, "read1")
     a.b(0xA9, 0x7F)
     a.abs(0x8D, 0x4201)                   # I/O bit 7 low
-    # latch again before reading pads 4 and 5: RetroArch 1.22.2's snes9x doesn't restart the pads 4/5 count
-    # on the first latch (CI run 41179703825: pad 4 always read as all buttons held), a second latch with the
-    # I/O bit low does (and real multitaps are fine with it)
-    a.b(0xA9, 0x01)
-    a.abs(0x8D, 0x4016)
-    a.b(0xA9, 0x00)
-    a.abs(0x8D, 0x4016)
     a.b(0xA2, 16)
     a.label("read2")
     a.abs(0xAD, 0x4017)

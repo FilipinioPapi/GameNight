@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks the 4-player SNES test cartridge's own code on a 6502 simulator (py65), before it goes near CI.
 
-    pip install py65==1.2.0 && python check_snes_multitap_rom.py [--per-iobit-latch]
+    pip install py65==1.2.0 && python check_snes_multitap_rom.py
 
 The cartridge runs in the SNES CPU's 6502-compatible mode, so a 6502 simulator runs it exactly. The SNES
 controller ports are simulated the way snes9x does them (snes9x controls.cpp: a latch write to $4016 resets
@@ -34,19 +34,9 @@ def bit(value, r):
     return 1 if r >= 16 else (value >> (15 - r)) & 1
 
 
-# "--per-iobit-latch": a latch only restarts the count for the pads the I/O bit currently selects, which is
-# how RetroArch 1.22.2's snes9x behaved in CI run 41179703825 (pad 4 read as all buttons held). The cartridge
-# latches again with the bit low, so it must pass both ways.
-PER_IOBIT = "--per-iobit-latch" in sys.argv
-
-
 def write_4016(address, value):
     if value & 1:
-        port["idx0"] = 0
-        if not PER_IOBIT or port["iobit"]:
-            port["idx1_high"] = 0
-        if not PER_IOBIT or not port["iobit"]:
-            port["idx1_low"] = 0
+        port["idx0"] = port["idx1_high"] = port["idx1_low"] = 0
 
 
 def write_4201(address, value):
@@ -156,4 +146,4 @@ for i, entry in enumerate(log[-cart.CHANGE_SLOTS:]):
     at = cart.CHANGES_AT + (n % cart.CHANGE_SLOTS) * cart.CHANGE_SIZE
     got = bytes(mem[at:at + cart.CHANGE_SIZE])
     assert got == entry, f"change {n}: list has {got.hex()}, wanted {entry.hex()}"
-print(f"ok{' (latch per I/O bit)' if PER_IOBIT else ''}: 1000 frames, {changes} button changes on 5 pads; frame number, pads, fingerprint, both lists and the marker all match")
+print(f"ok: 1000 frames, {changes} button changes on 5 pads; frame number, pads, fingerprint, both lists and the marker all match")

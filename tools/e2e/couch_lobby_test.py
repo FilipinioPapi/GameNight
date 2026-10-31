@@ -245,7 +245,7 @@ class SnesCopy:
             "ui_companion_enable": "false", "ui_companion_start_on_boot": "false", "desktop_menu_enable": "false",
             "menu_show_online_updater": "false", "menu_show_core_updater": "false", "stdin_cmd_enable": "false",
             "cheevos_enable": "false", "discord_allow": "false", "history_list_enable": "false",
-            "game_specific_options": "false", "auto_overrides_enable": "false", "auto_remaps_enable": "false",
+            "game_specific_options": "false", "auto_overrides_enable": "false",
             "auto_shaders_enable": "false", "savestate_auto_load": "false", "savestate_auto_save": "false",
             "rewind_enable": "false", "input_hold_fast_forward": "nul", "input_toggle_fast_forward": "nul",
             "input_exit_emulator": "nul",
@@ -265,7 +265,10 @@ class SnesCopy:
             "input_joypad_driver": "xinput", "input_autodetect_enable": "true",
             "joypad_autoconfig_dir": p(PLAYER / "autoconfig"), "input_max_users": "5",
             "input_player1_joypad_index": str(self.pad_slot),
-            "input_libretro_device_p1": "1", "input_libretro_device_p2": "257",
+            # Port 2's multitap can only be chosen in a remap file: RetroArch reads input_libretro_device_pN from
+            # remap files only, never from retroarch.cfg (configuration.c; CI run 41180494922 had it in retroarch.cfg
+            # and port 2 stayed a plain pad: pad 3 went nowhere). So this copy gets its own core remap file.
+            "auto_remaps_enable": "true", "input_remapping_directory": p(self.dir / "remaps"),
             "libretro_directory": p(PLAYER / "cores"), "savefile_directory": p(self.dir / "saves"),
             "savestate_directory": p(self.dir / "states"), "system_directory": p(self.dir / "system"),
             "cache_directory": p(self.dir / "cache"),
@@ -274,11 +277,12 @@ class SnesCopy:
         }
         for n in range(2, 6):
             settings[f"input_player{n}_joypad_index"] = "15"
-        for n in range(3, 6):
-            settings[f"input_libretro_device_p{n}"] = "1"
         for n in range(1, 17):
             settings[f"netplay_request_device_p{n}"] = "false"
         settings.update(extra or {})
+        remap = self.dir / "remaps" / "Snes9x" / "Snes9x.rmp"
+        remap.parent.mkdir(parents=True, exist_ok=True)
+        remap.write_text('input_libretro_device_p1 = "1"\ninput_libretro_device_p2 = "257"\n', encoding="ascii")
         self.cfg = self.dir / "retroarch.cfg"
         self.cfg.write_text("".join(f'{k} = "{v}"\n' for k, v in settings.items()), encoding="ascii")
 
@@ -1090,6 +1094,8 @@ class Couch:
                 res.setdefault("host_start_problems", []).append({"attempt": attempt, "exit_code": code})
                 say(f"  the host's RetroArch {'never showed the game' if code is None else 'closed by itself, exit code ' + code}")
                 host.kill()
+                if code and attempt == 1:
+                    res["host_crash_debugger"] = under_debugger(host, self.rom, ["--host", "--port", str(NETPLAY_PORT)])
             else:
                 fail(f"{self.name}: the host's game never started (3 tries: {res['host_start_problems']})")
                 return res
@@ -1184,6 +1190,36 @@ class Couch:
                     c.quit()
             subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
             time.sleep(2)
+
+
+def under_debugger(c, rom, netplay_args, seconds=30):
+    """Starts the same RetroArch under Microsoft's console debugger (cdb, part of the Windows SDK on GitHub's
+    machine) to see where it crashes: the crash point, call stack and loaded modules go to a text file."""
+    cdb = next((str(x) for x in (Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"),
+                                 Path(r"C:\Program Files\Windows Kits\10\Debuggers\x64\cdb.exe")) if x.exists()), None)
+    if not cdb:
+        return "no debugger on this machine"
+    out = OUT / f"{c.name}-debugger.txt"
+    args = [cdb, "-g", "-G", "-logo", str(out), "-c", ".lastevent; r; kn 40; lm; q",
+            str(EXE), "-c", str(c.cfg), "-L", str(CORE), *netplay_args, str(rom)]
+    say(f"  running {c.name}'s RetroArch under the debugger once, to see where it crashes")
+    proc = subprocess.Popen(args, cwd=str(PLAYER), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc.wait(seconds)
+        outcome = "the debugger stopped it (it crashed)"
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        outcome = f"no crash within {seconds} s under the debugger"
+    subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+    time.sleep(2)
+    text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if "Last event" in l or "Access violation" in l), max(0, len(lines) - 60))
+    keep = lines[start:start + 70]
+    say(f"  {outcome}")
+    for l in keep:
+        say(f"  | {l}")
+    return {"outcome": outcome, "excerpt": keep}
 
 
 def keep_changes(store, ram, changes, settled):

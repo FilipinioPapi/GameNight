@@ -38,7 +38,6 @@ jobs:
         run: |
           pip install py65==1.2.0 pillow==11.0.0 minidump==0.0.24
           python tools/e2e/check_snes_multitap_rom.py
-          python tools/e2e/check_snes_multitap_rom.py --per-iobit-latch
       - name: Keep a small crash dump if RetroArch crashes (this test machine only)
         shell: pwsh
         run: |

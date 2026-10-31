@@ -9,7 +9,7 @@ name: Couch Play lobby test
 on:
   push:
     branches: ["claude/**"]
-    paths: ["tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py", "tools/e2e/check_snes_multitap_rom.py", "tools/e2e/lobby_standin.py",
+    paths: ["tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py", "tools/e2e/check_snes_multitap_rom.py", "tools/e2e/lobby_standin.py", "tools/e2e/crash_report.py",
             "tools/e2e/netplay_test.py", "tools/e2e/add_pretend_pads.ps1", "tools/player/**", ".github/workflows/couch-lobby.yml"]
   workflow_dispatch:
     inputs:
@@ -36,8 +36,17 @@ jobs:
       - name: Check the 4-player SNES test cartridge's code on a 6502 simulator first
         shell: pwsh
         run: |
-          pip install py65==1.2.0 pillow==11.0.0
+          pip install py65==1.2.0 pillow==11.0.0 minidump==0.0.24
           python tools/e2e/check_snes_multitap_rom.py
+          python tools/e2e/check_snes_multitap_rom.py --per-iobit-latch
+      - name: Keep a small crash dump if RetroArch crashes (this test machine only)
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\retroarch.exe'
+          New-Item -Path $k -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "$env:RUNNER_TEMP\dumps" -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 20 -Force | Out-Null
       - name: Add four pretend Xbox controllers (ViGEmBus)
         shell: pwsh
         run: tools/e2e/add_pretend_pads.ps1
@@ -50,6 +59,10 @@ jobs:
           COUCH_MASH_SECONDS: ${{ github.event.inputs.seconds || '90' }}
           COUCH_PARTS: ${{ github.event.inputs.parts || '' }}
         run: python tools/e2e/couch_lobby_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/couch" "$env:RUNNER_TEMP/couch-results"
+      - name: Where RetroArch crashed, if it did
+        if: always()
+        shell: pwsh
+        run: python tools/e2e/crash_report.py "$env:RUNNER_TEMP/dumps"
       - name: Keep the results (logs, numbers, screenshots)
         if: always()
         uses: actions/upload-artifact@v4

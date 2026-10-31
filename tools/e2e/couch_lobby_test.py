@@ -846,9 +846,11 @@ class Couch:
     def join_once(self, who, label, attempt):
         c = self.copies[who]
         links_before = self.bridge.stats["links"] if self.bridge else 0
+        host = self.copies["P1"]
+        gap = 90 if self.place else 40
+        h0 = host.frame() or 0
         t0, p0 = time.time(), time.perf_counter()
         c.start(self.rom, self.connect_args(c))
-        host = self.copies["P1"]
         ok = c.locate(40)
 
         def caught_up():
@@ -857,9 +859,12 @@ class Couch:
             if c.base is None:
                 c.locate(5)
             fh, fc = host.frame(), c.frame()
-            # the host's game arrived: this copy is far past where it could have got on its own, and level with the host
-            own_best = 62 * (time.time() - c.started) + 300
-            return fh and fc and fc > own_best and abs(fh - fc) < (90 if self.place else 40)
+            # the host's game arrived: this copy jumped to where the host already was when it started (it can't
+            # get there on its own, the host is at least 3 x gap frames ahead), and is level with the host.
+            # (A copy running its own game with no buttons pressed has the same RAM, so frames alone aren't enough.)
+            return fh and fc and fc > h0 - gap and abs(fh - fc) < gap
+        if h0 < 3 * gap:
+            say(f"  (host only on frame {h0}; the join check needs it further ahead)")
         ok = ok and bool(wait_for(caught_up, 45, 0.2))
         took = round(time.time() - t0, 1)
         time.sleep(1.5)
@@ -881,6 +886,11 @@ class Couch:
             fail(f"{self.name}: {who} couldn't {label} (host frame {host.frame()}, theirs {c.frame()}, "
                  f"RetroArch {'running' if c.alive() else 'closed, exit code ' + entry['exit_code']})")
         return ok
+
+    def drop(self, c):
+        c.kill()
+        if c in self.live:
+            self.live.remove(c)
 
     # --- checks
     def seats(self, c):
@@ -1124,7 +1134,7 @@ class Couch:
 
             # ---- 3b. drop-outs and rejoins, game keeps going
             p2, p3, w2 = self.copies["P2"], self.copies["P3"], self.copies["W2"]
-            self.event("P2's game closes suddenly (crash or quit)", lambda: (p2.kill(), self.live.remove(p2))[1], 8)
+            self.event("P2's game closes suddenly (crash or quit)", lambda: self.drop(p2), 8)
             res["seat_2_empty_after_drop"] = self.pad_goes_nowhere(pads[2], "after P2 dropped, pad B")
             self.join("P2", "rejoin with the same seat")
             self.seat_check(owners, "P2 rejoined")
@@ -1144,7 +1154,7 @@ class Couch:
             res["p3_copy_still_running_after_20s_silence"] = p3_alive
             self.join("P3", "rejoin after going silent")
             self.seat_check(owners, "P3 rejoined")
-            self.event("W2 (a watcher) closes suddenly", lambda: (w2.kill(), self.live.remove(w2))[1], 6)
+            self.event("W2 (a watcher) closes suddenly", lambda: self.drop(w2), 6)
             self.join("W2", "rejoin as a watcher")
 
             # ---- the window trick during online play: host's game into a box, full screen, back

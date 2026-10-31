@@ -293,6 +293,16 @@ def fmt(t, i):
     return "--" if t is None else f"{t[i]:02x}"
 
 
+def nes_view(state):
+    """What the emulator passes on for a pad state: fceumm drops Up+Down and Left+Right pressed together
+    (its "Allow opposing directions" option is off by default; libretro.c, up_down_allowed)."""
+    if state & 0x0C == 0x0C:
+        state &= ~0x0C
+    if state & 0x03 == 0x03:
+        state &= ~0x03
+    return state
+
+
 def mash(pads, seconds, seed, sent, stop, timeline):
     """Both pads press random buttons. Records every state each pad was given (as NES bits), and when."""
     rng = random.Random(seed)
@@ -303,7 +313,7 @@ def mash(pads, seconds, seed, sent, stop, timeline):
                 chosen = [(button, bit) for _, button, bit in NES if rng.random() < 0.3]
                 set_pad(pad, [b for b, _ in chosen])
                 state = sum(bit for _, bit in chosen)
-                sent[key].add(state)
+                sent[key].add(nes_view(state))
                 timeline.append((time.time(), key, state))
         time.sleep(rng.uniform(0.03, 0.15))
     for pad in pads.values():
@@ -434,10 +444,10 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
             fail(f"{name}: too few readings ({len(samples)}) to trust the sync check")
         if span[1] - span[0] > 0 and len(checked) < 0.9 * (span[1] - span[0] - MARGIN):
             fail(f"{name}: only {len(checked)} of ~{span[1] - span[0]} frames could be compared")
-        result["one_copy_alone_fps"] = SOLO_FPS
+        result["two_unconnected_copies_fps"] = round(SOLO_FPS, 2)
         for who, fps in (("host", fps_h), ("friend", fps_f)):
             if fps < 0.95 * SOLO_FPS or fps > 61:
-                fail(f"{name}: the {who} ran at {fps:.1f} frames a second (one copy alone on this machine: {SOLO_FPS:.1f})")
+                fail(f"{name}: the {who} ran at {fps:.1f} frames a second (two unconnected copies on this machine: {SOLO_FPS:.1f})")
 
         # 4. End checks: change lists, right player under load, fingerprint chain
         time.sleep(2.5)
@@ -579,24 +589,27 @@ def fingerprint_chain(ram, entries):
 SOLO_FPS = 60.0
 
 
-def solo_speed(rom, slot):
-    """How fast one copy runs alone on this machine with the same settings (no netplay), as a yardstick."""
-    solo = Copy("solo", 55357, slot)
-    solo.write_config(0)
+def solo_speed(rom, slot_a, slot_b):
+    """The yardstick for speed: the same two copies with the same settings, side by side on this machine
+    but NOT connected, so the only difference from the real rounds is netplay itself."""
+    pair = [Copy("solo-1", 55357, slot_a), Copy("solo-2", 55358, slot_b)]
     try:
-        solo.start(rom, [])
-        if not wait_until(lambda: solo.ram(0, 3), 40):
-            fail("the solo copy never answered")
+        for i, c in enumerate(pair):
+            c.write_config(i * 520)
+            c.start(rom, [])
+        if not wait_until(lambda: all(c.ram(0, 3) for c in pair), 40):
+            fail("the two unconnected copies never answered")
             return 60.0
         time.sleep(3)
-        t0, f0 = time.time(), frame_of(solo.ram(0, 3))
-        time.sleep(20)
-        t1, f1 = time.time(), frame_of(solo.ram(0, 3))
-        fps = (f1 - f0) / (t1 - t0)
-        say(f"one copy alone, no netplay: {fps:.2f} frames a second over {t1 - t0:.1f} s")
-        return fps
+        t0, f0 = time.time(), [frame_of(c.ram(0, 3)) for c in pair]
+        time.sleep(30)
+        t1, f1 = time.time(), [frame_of(c.ram(0, 3)) for c in pair]
+        fps = [(b - a) / (t1 - t0) for a, b in zip(f0, f1)]
+        say(f"two copies side by side, not connected: {fps[0]:.2f} and {fps[1]:.2f} frames a second over {t1 - t0:.1f} s")
+        return min(fps)
     finally:
-        solo.quit()
+        for c in pair:
+            c.quit()
         subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
         time.sleep(2)
 
@@ -614,10 +627,10 @@ def main():
     if slot_a is None or slot_b is None or slot_a == slot_b:
         say("  couldn't read the Xbox slots; assuming A = 0, B = 1")
         slot_a, slot_b = 0, 1
-    SOLO_FPS = solo_speed(rom, slot_a)
+    SOLO_FPS = solo_speed(rom, slot_a, slot_b)
     rounds = [run_round("direct", rom, pad_a, slot_a, pad_b, slot_b)]
     rounds.append(run_round("delayed", rom, pad_a, slot_a, pad_b, slot_b, delay=(50, 20)))
-    summary = {"ok": not failures, "one_copy_alone_fps": round(SOLO_FPS, 2), "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
+    summary = {"ok": not failures, "two_unconnected_copies_fps": round(SOLO_FPS, 2), "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
     (OUT / "results.json").write_text(json.dumps(summary, indent=2))
     say("\n================ summary ================")
     say(json.dumps(summary, indent=2))

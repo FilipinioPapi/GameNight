@@ -15,4 +15,4 @@ Strongly inferred, Unknown.
 - Plan agreed: build in proven layers, stability before speed. Details: `docs/HANDOFF_ONLINE.md`.
 - Merged: PR #12. Anyone in Jayden's Discord server can sign in, and the role is optional.
 - Next: step 1, two players in sync on GitHub's Windows runner.
-- Waiting on Jayden: what play.jjsnas.xyz does for Roof Rage, or OK to read its notes (read only).
+- play.jjsnas.xyz = Roof Rage's ntfy board; Game Night plan: its own /gamenight/ custom location, checked before and after (HANDOFF_ONLINE.md).

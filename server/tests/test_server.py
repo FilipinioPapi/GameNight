@@ -102,6 +102,15 @@ async def test_not_in_role(client, monkeypatch):
     assert "gamenight://" not in await r.text()
 
 
+def test_access_rule():
+    member = {"roles": ["20", "30"]}
+    assert da.has_access(member, "")          # no role set: being in the server is enough
+    assert da.has_access({}, "  ")
+    assert da.has_access(member, "20")        # role set and held
+    assert not da.has_access(member, "99")    # role set but not held
+    assert not da.has_access({}, "20")
+
+
 async def test_bad_or_reused_state(client):
     r = await client.get("/auth/callback", params={"state": "madeup", "code": "x"})
     assert r.status == 400

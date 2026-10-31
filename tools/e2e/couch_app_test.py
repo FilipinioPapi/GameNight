@@ -75,10 +75,10 @@ def screenshot(name):
     subprocess.run(["pwsh", "-NoProfile", "-File", str(TOOLS / "screenshot.ps1"), str(OUT / f"{name}.png")], check=False)
 
 
-def look(name, app, full_screen, game_full=False):
-    """Watches the game window for 6 s, takes 3 quick screenshots, and checks it sits still in the box."""
-    time.sleep(3)  # the lobby screen fades in, then the box is sent
-    summary, samples = window_watch.watch(app.pid, 6)
+def look(name, app, full_screen, game_full=False, settle=3, seconds=6):
+    """Watches the game window for `seconds`, takes 3 quick screenshots, and checks it sits still in the box."""
+    time.sleep(settle)  # the lobby screen fades in, then the box is sent
+    summary, samples = window_watch.watch(app.pid, seconds)
     for i in range(3):
         screenshot(f"{name}-{i + 1}")
         time.sleep(0.15)
@@ -95,7 +95,7 @@ def look(name, app, full_screen, game_full=False):
     if summary["ever_hidden"]:
         fail(f"{name}: the game window was hidden while the lobby was showing")
     if summary["place_changes"] > 0:
-        fail(f"{name}: the game window moved or resized {summary['place_changes']} times in 6 s (flicker)")
+        fail(f"{name}: the game window moved or resized {summary['place_changes']} times in {seconds} s (flicker)")
     if not summary["game_inside_app"]:
         fail(f"{name}: the game isn't inside Game Night's window: {summary['last_game']} vs {summary['last_app_inside']}")
     elif game_full == "strips":
@@ -434,8 +434,10 @@ def main():
         look("look-2b-game-full-screen", app, True, game_full=True)
         say("look: in full screen, L3 + R3 shows the gold popup and its buttons above and below the game")
         controls(pad_a)
-        look("look-2c-full-screen-lobby-controls", app, True, game_full="strips")
+        # Lobby controls close by themselves after 8 s without a press, so this look is kept short.
+        look("look-2c-full-screen-lobby-controls", app, True, game_full="strips", settle=1.5, seconds=4)
         say("look: A goes back to the lobby")
+        controls(pad_a)  # opens them again if they closed (does nothing if they're still open)
         tap(pad_a, B.XUSB_GAMEPAD_A)
         look("look-2d-back-to-the-box", app, True)
         say("full screen and back 6 more times, quickly (Jayden lost control after doing this)")

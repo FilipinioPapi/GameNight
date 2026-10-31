@@ -7,3 +7,7 @@ Player 1 is the controller you actually use, even with other devices plugged in
 New Settings page "My controllers": pick Player 1, or turn off anything that isn't really a controller
 A tip for stopping the Xbox button opening Steam
 Cleaner controller pictures in the menus
+Smooth, console-style movement: the highlight glides and lists scroll gently
+The main menu's PLAY is now LIBRARY
+A retro glow look for the Library
+Anyone in the Discord server can sign in

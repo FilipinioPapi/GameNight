@@ -922,19 +922,37 @@ class Couch:
         names = ["A", "Menu", "Left", "B", "RB"]
         for seat, pad in sorted(owners.items()):
             for name, button, value in [x for x in SNES if x[0] in names]:
-                set_pad(pad, [button])
-                time.sleep(0.45)
-                seen = {c.name.split("-")[-1]: self.seats(c) for c in self.live}
-                set_pad(pad, [])
                 want = [0] * 5
                 want[seat - 1] = value
-                bad = {k: v for k, v in seen.items() if v != want}
+                set_pad(pad, [button])
+                # Hold the button and read every copy until it shows it (or 2 s pass): watchers run a few frames
+                # behind, so one reading at a fixed moment can catch a copy that simply hasn't got there yet.
+                # How long each copy took is recorded, so a slow copy is measured, not hidden.
+                t0 = time.perf_counter()
+                seen, took = {}, {}
+                while True:
+                    for c in self.live:
+                        k = c.name.split("-")[-1]
+                        if k in took:
+                            continue
+                        seen[k] = self.seats(c)
+                        if seen[k] == want:
+                            took[k] = time.perf_counter() - t0
+                    if len(took) == len(self.live) or time.perf_counter() - t0 > 2.0:
+                        break
+                    time.sleep(0.01)
+                set_pad(pad, [])
+                lag = self.res.setdefault("seat_check_ms", {})
+                for k, t in took.items():
+                    lag[k] = max(lag.get(k, 0), round(t * 1000))
+                bad = {k: v for k, v in seen.items() if k not in took}
                 if bad:
                     wrong.append(f"seat {seat} {name}: wanted {[hex(x) for x in want]}, got " + ", ".join(f"{k} {[hex(x) for x in v] if v else None}" for k, v in bad.items()))
                 time.sleep(0.25)
             say(f"  seat {seat}: {'ok in all ' + str(len(self.live)) + ' copies' if not [w for w in wrong if w.startswith(f'seat {seat} ')] else 'WRONG'}")
         for w in wrong[:8]:
             say(f"    {w}")
+        say(f"  slowest time for a held button to show, per copy so far (ms): {self.res.get('seat_check_ms')}")
         self.res.setdefault("seat_checks", []).append({"label": label, "copies": len(self.live), "problems": wrong[:20]})
         if wrong:
             fail(f"{self.name}: buttons reached the wrong seat ({label}): {wrong[0]}")
@@ -1312,6 +1330,16 @@ def main():
         summary["eight_unconnected_fps"] = eight_alone(rom, slots)
     run_part("couch-direct", lambda: Couch("couch-direct", rom, pads, slots).run())
     run_part("couch-relay-nyc", lambda: Couch("couch-relay-nyc", rom, pads, slots, place="nyc").run())
+    # RetroArch copies that closed by themselves while joining (retried); counted so it's measured across runs
+    tally = {}
+    for part in summary["parts"]:
+        for j in part.get("joins", []) if isinstance(part, dict) else []:
+            if j.get("exit_code"):
+                tally.setdefault(part["round"], []).append(f"{j['who']} try {j['attempt']} {j['exit_code']}")
+        for h in part.get("host_start_problems", []) if isinstance(part, dict) else []:
+            tally.setdefault(part.get("round", "?"), []).append(f"host try {h['attempt']} {h['exit_code']}")
+    summary["closed_by_themselves"] = tally
+    say(f"\nRetroArch copies that closed by themselves while starting/joining: {tally or 'none'}")
     summary["ok"] = not failures
     summary["failures"] = failures
     (OUT / "results.json").write_text(json.dumps(summary, indent=2, default=str))

@@ -14,6 +14,7 @@ import "@fontsource/audiowide";
 import "@fontsource/russo-one";
 import "@fontsource/righteous";
 import "@fontsource/michroma";
+import "@fontsource/vt323";
 import "./app.css";
 import App from "./App.svelte";
 import { app } from "./lib/state.svelte";

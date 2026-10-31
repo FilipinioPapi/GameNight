@@ -233,6 +233,11 @@
     ...(current !== "fav" && !searching ? [{ buttons: ["start"], label: sort === "coop" ? "Show all" : "Co-op only" } satisfies GuideItem] : []),
     { buttons: ["b"], label: "Main menu", right: true },
   ]);
+  // Where the background's colour bands meet (percent out from the middle), and the colour blended in there.
+  const DITHER = [
+    { at: 12, color: "#3b1417" }, { at: 24, color: "#2d1012" }, { at: 38, color: "#210c0e" },
+    { at: 54, color: "#170a0b" }, { at: 72, color: "#0e0707" },
+  ];
   const STAR = "M12 2l3 6.6 7 .8-5.2 4.8 1.4 7L12 17.8 5.8 21.2l1.4-7L2 9.4l7-.8z";
 </script>
 
@@ -305,11 +310,11 @@
   </span>
 {/snippet}
 
-{#snippet searchBox(hint: string)}
+{#snippet searchBox(placeholder: string)}
   <label class="search">
     <span class="vh">Search games</span>
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8F7A7C" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg>
-    <input type="text" data-search bind:this={searchEl} placeholder="Search {games.length} games…{hint}" bind:value={search} />
+    <input type="text" data-search bind:this={searchEl} {placeholder} bind:value={search} />
   </label>
 {/snippet}
 
@@ -333,7 +338,7 @@
       </div>
     {/if}
     {#if recent.length}
-      <div class="label">RECENTLY PLAYED</div>
+      <div class="label">{mouse ? "" : "> "}RECENTLY PLAYED</div>
       <div class="recent">
         {#each recent as { r, g } (g.id)}
           {@const c = consoleById(g.console)}
@@ -383,12 +388,16 @@
   {/if}
 {/snippet}
 
-<div class="page" onfocusin={(e) => (focusedId = lastFocus = gameAt(e.target))}>
+<div class="page" class:retro={layout === "controller"} onfocusin={(e) => (focusedId = lastFocus = gameAt(e.target))}>
   {#if layout === "controller"}
+    <!-- Retro glow style: hard colour bands, with a checkerboard blend where two bands meet. -->
+    {#each DITHER as d (d.at)}
+      <div class="dither" aria-hidden="true" style="--c:{d.color};--a:{d.at}%;--b:{d.at + 3}%"></div>
+    {/each}
     <header class="pad-head">
       <span class="lucky title glow">LIBRARY</span>
       <span class="count">{plural(games.length, "game")} · {onPCCount} on this PC</span>
-      <div class="right">{@render searchBox("")}</div>
+      <div class="right">{@render searchBox(`SEARCH ${games.length} GAMES_`)}</div>
     </header>
 
     <nav class="tabbar" aria-label="Consoles">
@@ -405,12 +414,12 @@
     </nav>
 
     <section class="scroll content">{@render body(false)}</section>
-    <ButtonGuide items={guide} />
+    <ButtonGuide items={guide} retro />
   {:else}
     <header class="mk-head">
       <button class="back" onclick={() => app.back()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>Main menu</button>
       <span class="lucky title glow">LIBRARY</span>
-      <div class="right">{@render searchBox("   Ctrl+F")}</div>
+      <div class="right">{@render searchBox(`Search ${games.length} games…   Ctrl+F`)}</div>
     </header>
     <main class="mk">
       <aside class="scroll">
@@ -537,6 +546,48 @@
   .meta { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; overflow: hidden; }
   .note { font-size: 12px; color: var(--muted); margin-left: 2px; white-space: nowrap; }
   .note.amber { color: var(--amber); }
+
+  /* ---------- Retro glow style (controller layout; approved by Jayden 2026-10-31) ---------- */
+  .retro {
+    isolation: isolate;
+    background: radial-gradient(ellipse at 50% 38%, #3b1417 0% 12%, #2d1012 12% 24%, #210c0e 24% 38%, #170a0b 38% 54%, #0e0707 54% 72%, #070404 72% 100%);
+  }
+  .dither {
+    position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: repeating-conic-gradient(var(--c) 0 25%, transparent 0 50%) 0 0 / 6px 6px;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 38%, transparent var(--a), #000 var(--a), #000 var(--b), transparent var(--b));
+    mask-image: radial-gradient(ellipse at 50% 38%, transparent var(--a), #000 var(--a), #000 var(--b), transparent var(--b));
+  }
+  .retro .pad-head .count, .retro .label {
+    font-family: VT323, monospace; letter-spacing: 0.06em; color: var(--link); text-shadow: 0 0 6px rgba(255, 90, 90, 0.8);
+  }
+  .retro .pad-head .count { font-size: 20px; text-transform: uppercase; }
+  /* Room for the pulsing glow around the selected tab, so the scrolling row doesn't cut it off. */
+  .retro .tabs { padding: 22px; margin: -16px -18px; }
+  .retro .tabbar { gap: 28px; }
+  .retro .label { font-size: 22px; font-weight: 400; }
+  .retro .search input {
+    font-family: VT323, monospace; font-size: 20px; border-color: #6a2a2d; background: rgba(30, 20, 21, 0.8);
+    box-shadow: 0 0 10px rgba(236, 40, 46, 0.25) inset;
+  }
+  .retro .rcard { border-color: #4a2427; background: rgba(30, 20, 21, 0.85); }
+  .retro .rtext b { text-shadow: 0 0 6px rgba(255, 220, 220, 0.35); }
+  .retro .tab.on { animation: tabPulse 2.6s ease-in-out infinite; }
+  :global(.pad-mode) .retro .card:focus .art,
+  :global(.pad-mode) .retro .rcard:focus { animation: neonGold 2.6s ease-in-out infinite; }
+  /* The tab's glow stays within about 20px, which is the room the scrolling tab row leaves around it. */
+  @keyframes tabPulse {
+    0%, 100% { box-shadow: 0 0 0 1px #ffd0d2, 0 0 8px 2px #ff2a33, 0 0 16px 3px rgba(255, 30, 40, 0.6), inset 0 0 14px rgba(255, 190, 190, 0.4); }
+    50% { box-shadow: 0 0 0 1px #ffd0d2, 0 0 10px 3px #ff3c44, 0 0 19px 4px rgba(255, 40, 50, 0.75), inset 0 0 18px rgba(255, 200, 200, 0.5); }
+  }
+  @keyframes neonGold {
+    0%, 100% { box-shadow: 0 0 0 1px #fff3c4, 0 0 8px 2px #ffb21e, 0 0 22px 4px rgba(255, 150, 0, 0.65), 0 0 44px 8px rgba(255, 120, 0, 0.25), inset 0 0 12px rgba(255, 170, 40, 0.45); }
+    50% { box-shadow: 0 0 0 1px #fff3c4, 0 0 10px 3px #ffc23e, 0 0 28px 6px rgba(255, 160, 0, 0.8), 0 0 56px 12px rgba(255, 130, 0, 0.35), inset 0 0 16px rgba(255, 180, 60, 0.55); }
+  }
+  /* People who turn off animations in Windows get the glow without the pulse. */
+  @media (prefers-reduced-motion: reduce) {
+    .retro .tab.on, :global(.pad-mode) .retro .card:focus .art, :global(.pad-mode) .retro .rcard:focus { animation: none; }
+  }
 
   /* ---------- Mouse and keyboard layout ---------- */
   .mk-head { height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 24px; border-bottom: 1px solid var(--line-soft); }

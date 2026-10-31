@@ -1,4 +1,6 @@
-# 0.3.7
-Couch Play: in full screen, holding L3 + R3 now shows the gold lobby controls popup and its buttons above and below the game
-Press A to go back to the lobby. Y only takes you into full screen now
-New: Refresh game (RB in lobby controls). If your controller stops working in a game, it saves your spot, restarts the game and puts you right back where you were
+# 0.3.6
+Couch Play: the game now sits inside Game Night's window, right in the lobby's box. No more flicker, and it no longer covers the seat list
+Game Night opens full screen, like a console. Press F11 to switch to a window and back
+Press Y for full screen in a lobby: the game fills the whole screen
+Lobby controls while you play: hold both sticks in (L3 + R3) for a second. VIEW + MENU clashed with Steam and Windows shortcuts
+To quit a game on your own: press both sticks in (L3 + R3), or Esc

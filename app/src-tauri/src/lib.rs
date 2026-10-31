@@ -11,6 +11,7 @@ mod account;
 mod controllers;
 mod covers;
 mod games;
+mod gamewindow;
 mod pads;
 mod retroports;
 mod updater;

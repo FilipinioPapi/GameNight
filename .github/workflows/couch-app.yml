@@ -54,6 +54,27 @@ jobs:
           New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "$env:RUNNER_TEMP\dumps" -Force | Out-Null
           New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
           New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 20 -Force | Out-Null
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\dumps" -Force | Out-Null
+          # Last run saved no dump: make sure Windows Error Reporting is on, and also ask Microsoft's debugger
+          # (cdb, already on the test machine) to write the call stack itself when any program crashes.
+          $w = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+          New-ItemProperty -Path $w -Name Disabled -PropertyType DWord -Value 0 -Force | Out-Null
+          New-ItemProperty -Path $w -Name DontShowUI -PropertyType DWord -Value 1 -Force | Out-Null
+          Set-Service WerSvc -StartupType Manual -ErrorAction SilentlyContinue
+          Start-Service WerSvc -ErrorAction SilentlyContinue
+          Get-Service WerSvc | Format-Table -AutoSize | Out-String | Write-Host
+          $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+          if (Test-Path $cdb) {
+            $d = "$env:RUNNER_TEMP\dumps"
+            $cmd = "`"$cdb`" -p %ld -e %ld -g -loga $d\crash.txt -c `".echo CRASH; |; .exr -1; .ecxr; r; kn 40; lmf; .dump /mi /u $d\cdb.dmp; q`""
+            foreach ($a in 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug',
+                           'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug') {
+              New-Item -Path $a -Force | Out-Null
+              New-ItemProperty -Path $a -Name Debugger -PropertyType String -Value $cmd -Force | Out-Null
+              New-ItemProperty -Path $a -Name Auto -PropertyType String -Value '1' -Force | Out-Null
+            }
+            Write-Host "crash debugger: $cmd"
+          } else { Write-Host "cdb not found" }
       - name: Add pretend Xbox controllers (ViGEmBus)
         shell: pwsh
         run: tools/e2e/add_pretend_pads.ps1

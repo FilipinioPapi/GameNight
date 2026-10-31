@@ -40,3 +40,12 @@ for d in dumps[:6]:
         lines = r.stdout.splitlines()
         start = next((i for i, l in enumerate(lines) if ".ecxr" in l), 0)
         print("\n".join(lines[start:start + 45]))
+
+# The workflow also sets Microsoft's debugger (cdb) as the crash debugger: it writes what it saw to crash.txt.
+log = folder / "crash.txt"
+if log.exists():
+    text = log.read_text(errors="replace").splitlines()
+    print(f"\n==== crash.txt from the crash debugger ({len(text)} lines)")
+    print("\n".join(text[:400]))
+else:
+    print("no crash.txt from the crash debugger")

@@ -9,6 +9,7 @@
   <Overview>Game Night server: Discord sign-in (members of your Discord server only) and the game list from RomM, for the Game Night app. Read-only to RomM.</Overview>
   <Category>GameServers:</Category>
   <WebUI></WebUI>
+  <Icon>https://raw.githubusercontent.com/FilipinioPapi/GameNight/main/server/unraid/icon.png</Icon>
   <ExtraParams>--read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL</ExtraParams>
   <Config Name="Port" Target="8094" Default="8094" Mode="tcp" Description="The port the Game Night app talks to" Type="Port" Display="always" Required="true" Mask="false">8094</Config>
   <Config Name="Public address" Target="PUBLIC_URL" Default="http://192.168.1.33:8094" Mode="" Description="How the app reaches this server. Your LAN address for now; later https://gamenight.jjsnas.xyz" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.33:8094</Config>

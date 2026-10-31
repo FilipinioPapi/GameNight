@@ -24,20 +24,33 @@
           <div class="label">WHAT'S NEW</div>
           <ul>{#each updates.info.notes as n}<li>{n}</li>{/each}</ul>
         {/if}
-        <p class="muted small">Game Night closes, updates itself and opens again. Your settings and games stay.</p>
+        <p class="muted small">It downloads here, then Game Night closes for a moment while it installs and opens again by itself. Your settings and games stay.</p>
         <div class="row">
           <button class="btn" bind:this={first} onclick={() => updates.later()}>Not now</button>
           <button class="btn primary" onclick={() => updates.install()}>Update now</button>
         </div>
       {:else if updates.phase === "downloading"}
         <div class="kicker">UPDATING TO V{updates.info.version}</div>
-        <h2 id="upd-title" class="lucky">DOWNLOADING…</h2>
+        <h2 id="upd-title" class="lucky">DOWNLOADING… {pct}%</h2>
         <div class="bar" role="progressbar" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100"><div style="width:{pct}%"></div></div>
         <p class="muted">{formatSize(updates.done)} of {formatSize(updates.total)} · checked against Jayden's signature before installing</p>
-      {:else if updates.phase === "restarting"}
-        <div class="kicker">UPDATE READY</div>
-        <h2 id="upd-title" class="lucky">RESTARTING…</h2>
-        <p class="muted">Game Night opens again by itself in a few seconds.</p>
+      {:else if updates.phase === "checking"}
+        <div class="kicker">UPDATING TO V{updates.info.version}</div>
+        <h2 id="upd-title" class="lucky">DOWNLOADED</h2>
+        <div class="bar" role="progressbar" aria-valuenow={100} aria-valuemin="0" aria-valuemax="100"><div style="width:100%"></div></div>
+        <p class="muted">100% · {formatSize(updates.total)} · checked against Jayden's signature ✓</p>
+      {:else if updates.phase === "installing"}
+        <div class="kicker">UPDATING TO V{updates.info.version}</div>
+        <h2 id="upd-title" class="lucky">INSTALLING…</h2>
+        <div class="bar" role="progressbar" aria-valuenow={100} aria-valuemin="0" aria-valuemax="100"><div style="width:100%"></div></div>
+        <p class="muted">Game Night closes for a moment while the installer shows its progress, then opens again by itself.</p>
+      {:else if updates.phase === "updated"}
+        <div class="kicker">UPDATE DONE</div>
+        <h2 id="upd-title" class="lucky">UPDATED TO V{updates.info.version}</h2>
+        <p class="muted">You're on the newest Game Night. Your settings and games are all still here.</p>
+        <div class="row">
+          <button class="btn primary" bind:this={first} onclick={() => updates.dismiss()}>OK</button>
+        </div>
       {:else if updates.phase === "failed"}
         <div class="kicker bad">UPDATE DIDN'T WORK</div>
         <h2 id="upd-title" class="lucky">NOTHING CHANGED</h2>

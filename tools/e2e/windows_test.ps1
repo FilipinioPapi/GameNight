@@ -1,8 +1,8 @@
 # CI only (GitHub's Windows machine): tests Game Night the way Jayden uses it, before any release.
 #  1. Installs an old test build (the "e2e" build, version 0.0.1).
 #  2. Plays a test game with the bundled player: it must start, run at real speed, and the log must be written.
-#  3. Updates the old build to the new installer through the app's own updater (signed list, download,
-#     install, restart) and checks the new version is installed and running.
+#  3. Updates the old build to the new installer through the app's own update box (signed list, download,
+#     install, restart) and checks every step was shown and the new version came back in front.
 # Any failure stops the build, so nothing untested reaches the NAS.
 param([string]$OldSetup, [string]$NewSetup, [string]$NewVersion, [string]$Tools)
 $ErrorActionPreference = 'Stop'
@@ -142,11 +142,16 @@ Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 
 # What has to be true, measured:
 $log = if (Test-Path $updLog) { Get-Content $updLog } else { @() }
+function At($text) { $l = $log | Select-String -SimpleMatch $text | Select-Object -First 1; if ($l) { [datetime]::ParseExact($l.Line.Substring(0, 23), 'yyyy-MM-dd HH:mm:ss.fff', $null) } }
+$closing = At 'Game Night closes now'; $back = At "Game Night $NewVersion opened"
+if ($closing -and $back) { Write-Host "time between the old window closing and the new one opening: $([math]::Round(($back - $closing).TotalSeconds, 1)) s" }
 $problems = @()
-if (-not ($log | Select-String -SimpleMatch 'screen shows downloading 100%')) { $problems += "the update box never showed the download at 100%" }
+foreach ($want in 'screen shows downloading 100%', 'screen shows checking 100%', 'screen shows installing', 'helper: installer finished with code 0', 'back after the update', 'screen shows updated') {
+  if (-not ($log | Select-String -SimpleMatch $want)) { $problems += "the update log never says '$want'" }
+}
 if (-not ($ver -like "$NewVersion*")) { $problems += "installed version is '$ver', wanted $NewVersion" }
 if (-not $new) { $problems += "Game Night didn't start again" }
 elseif (-not $alive) { $problems += "the reopened Game Night quit within 10 s" }
-elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False" })) { $problems += "the reopened Game Night has no visible window" }
+elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False in-front=True" })) { $problems += "the reopened Game Night isn't the window in front" }
 if ($problems) { Fail ("update test: " + ($problems -join '; ')) }
-Write-Host "updated from 0.0.1 to $NewVersion, the box showed 100%, and Game Night reopened with its window showing"
+Write-Host "updated from 0.0.1 to $NewVersion: the box showed 100%, checked and installing; the installer ran; Game Night came back in front and said it updated"

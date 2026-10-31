@@ -4,7 +4,9 @@
 import { inTauri } from "./settings";
 
 export interface UpdateInfo { version: string; notes: string[]; size: number; }
-type Phase = "none" | "available" | "asking" | "downloading" | "restarting" | "failed";
+// Steps: asking -> downloading (0-100%) -> checking (100%, signature OK) -> installing (Game Night closes,
+// the installer shows its own progress bar and opens Game Night again) -> updated (shown by the new version).
+type Phase = "none" | "available" | "asking" | "downloading" | "checking" | "installing" | "updated" | "failed";
 
 const RECHECK_MS = 30 * 60 * 1000;
 
@@ -61,13 +63,38 @@ class Updates {
         });
         this.listening = true;
       }
-      this.phase = "downloading";
-      await invoke("install_update");
-      this.phase = "restarting"; // Game Night closes itself in a moment
+      await invoke("download_update");
+      // The download is complete and matches Jayden's signature: show the full bar before moving on.
+      this.done = this.total;
+      this.phase = "checking";
+      await new Promise((r) => setTimeout(r, 1500));
+      this.phase = "installing";
+      await new Promise((r) => setTimeout(r, 300)); // let the box show the new step first
+      await invoke("start_install"); // Game Night closes once the installer is on its way
     } catch (e) {
       this.error = String(e);
       this.phase = "failed";
     }
+  }
+
+  /** On start-up: did this start finish an update? Then say so. */
+  async cameBack() {
+    if (!inTauri) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const v = await invoke<string | null>("just_updated");
+      if (v) {
+        this.info = { version: v, notes: [], size: 0 };
+        this.phase = "updated";
+      }
+    } catch (e) {
+      console.warn("Update check failed", e);
+    }
+  }
+
+  dismiss() {
+    this.phase = "none";
+    this.info = null;
   }
 }
 

@@ -71,6 +71,10 @@ pub struct UpdateInfo {
 #[derive(Default)]
 pub struct Updates {
     found: Mutex<Option<Manifest>>,
+    /// The checked download, waiting for start_install.
+    ready: Mutex<Option<(Manifest, std::path::PathBuf)>>,
+    /// Set at start-up when this start is the end of an update: the version now running.
+    pub came_back: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -145,7 +149,7 @@ fn hex(bytes: &[u8]) -> String {
 /// Every update step goes into update\\update.log (the install helper writes to the same file), so a
 /// failed or odd update can be explained from the log instead of guessed at. Times are UTC.
 fn log_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
-    Some(app.path().app_cache_dir().ok()?.join("update").join("update.log"))
+    Some(update_dir(app)?.join("update.log"))
 }
 
 fn log<R: Runtime>(app: &AppHandle<R>, msg: &str) {
@@ -199,7 +203,7 @@ pub fn log_start<R: Runtime>(app: &AppHandle<R>) {
 /// screen next to what the download really did. Only a known step name and a number are accepted.
 #[tauri::command]
 pub fn update_seen<R: Runtime>(app: AppHandle<R>, step: String, percent: u8) {
-    const STEPS: [&str; 6] = ["asking", "downloading", "checking", "installing", "restarting", "failed"];
+    const STEPS: [&str; 6] = ["asking", "downloading", "checking", "installing", "updated", "failed"];
     if STEPS.contains(&step.as_str()) {
         log(&app, &format!("screen shows {step} {}%", percent.min(100)));
     }
@@ -248,39 +252,34 @@ pub async fn check_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'
     Ok(Some(info))
 }
 
-/// Downloads the installer, checks it against the signed SHA-256, runs it quietly and reopens Game Night.
+/// Step 1 of an update: downloads the installer and checks it against the signed SHA-256, showing
+/// progress in the update box. Game Night stays open; nothing is installed yet.
 #[tauri::command]
-pub async fn install_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<(), String> {
+pub async fn download_update<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<(), String> {
     let m = updates.found.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("No update to install.")?;
-    install(&app, &m).await
+    let file = download(&app, &m).await?;
+    *updates.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some((m, file));
+    Ok(())
 }
 
-/// CI's Windows update test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=update the app
-/// finds and installs the update by itself, exactly as if the Update button had been pressed.
-#[cfg(feature = "e2e")]
-pub fn e2e_autoupdate<R: Runtime>(app: AppHandle<R>) {
-    if std::env::var("GAMENIGHT_E2E").as_deref() != Ok("update") {
-        return;
+/// Step 2: hands the checked installer to the install helper and closes Game Night. The installer shows
+/// its own progress bar, then opens Game Night again.
+#[tauri::command]
+pub async fn start_install<R: Runtime>(app: AppHandle<R>, updates: tauri::State<'_, Updates>) -> Result<(), String> {
+    let (m, file) = updates.ready.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("No update to install.")?;
+    // Re-check the saved file, in case anything touched it since the download.
+    let bytes = std::fs::read(&file).map_err(|_| "The update file went missing. Try again.")?;
+    if bytes.len() as u64 != m.file.size || hex(&Sha256::digest(&bytes)) != m.file.sha256.to_ascii_lowercase() {
+        log(&app, "the saved installer changed after the download, refused");
+        return Err("The update file changed after the download, so nothing was installed. Try again.".into());
     }
-    tauri::async_runtime::spawn(async move {
-        match find_update(&app).await {
-            Some(m) => {
-                if let Err(e) = install(&app, &m).await {
-                    eprintln!("e2e update failed: {e}");
-                    app.exit(3);
-                }
-            }
-            None => {
-                eprintln!("e2e: no update found");
-                app.exit(2);
-            }
-        }
-    });
+    drop(bytes);
+    run_installer(&app, &file, &m.version).await
 }
 
-async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), String> {
+async fn download<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<std::path::PathBuf, String> {
     let app = app.clone();
-    let dir = app.path().app_cache_dir().map_err(|_| "No folder for the download.")?.join("update");
+    let dir = update_dir(&app).ok_or("No folder for the download.")?;
     std::fs::create_dir_all(&dir).map_err(|_| "Couldn't make the download folder.")?;
     // Clear an older download, but keep update.log so earlier attempts can still be read.
     let file = dir.join("GameNightSetup.exe");
@@ -328,36 +327,96 @@ async fn install<R: Runtime>(app: &AppHandle<R>, m: &Manifest) -> Result<(), Str
     }
     log(&app, &format!("download complete and matches the signed SHA-256 ({:.1} s)", started.elapsed().as_secs_f32()));
     std::fs::write(&file, &body).map_err(|_| "Couldn't save the update.")?;
-    run_installer(&app, &file)
+    Ok(file)
 }
 
-/// The helper that installs an update after Game Night has closed. It writes every step to
-/// update\\update.log, so a failed update can be explained, and always reopens Game Night.
+fn update_dir<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    Some(app.path().app_cache_dir().ok()?.join("update"))
+}
+
+/// Left by the old version just before it closes for an install: the version it is updating to.
+/// The new version finds it on start-up, comes to the front and says it updated.
+const MARKER: &str = "just-updated.txt";
+
+/// At start-up: if this start is the end of an update (the marker names this version and is less than
+/// 10 minutes old), note it in the log, bring the window to the front and return the version, so the
+/// update box can say "Updated". The marker is removed either way.
+pub fn after_update<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    let marker = update_dir(app)?.join(MARKER);
+    let text = std::fs::read_to_string(&marker).ok();
+    let fresh = std::fs::metadata(&marker)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < Duration::from_secs(600));
+    let _ = std::fs::remove_file(&marker);
+    let wanted = text?.trim().to_string();
+    let now = current_version(app);
+    if !fresh || number(&wanted) != number(&now) {
+        log(app, &format!("start-up after an update to {wanted}, but this is {now}"));
+        return None;
+    }
+    log(app, &format!("back after the update: {now} is running, bringing the window to the front"));
+    if let Some(w) = app.get_webview_window("main") {
+        // Windows doesn't let a program that was started in the background jump in front of the window
+        // you're using, so it would open behind it. Pinning it on top for a moment brings it forward.
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_focus();
+        let w2 = w.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio_sleep(Duration::from_millis(1500)).await;
+            let _ = w2.set_always_on_top(false);
+            let _ = w2.set_focus();
+        });
+    }
+    Some(now)
+}
+
+async fn tokio_sleep(d: Duration) {
+    let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
+}
+
+/// The update box asks once on start-up whether Game Night just came back from an update.
+#[tauri::command]
+pub fn just_updated(updates: tauri::State<'_, Updates>) -> Option<String> {
+    updates.came_back.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// The helper that installs an update after Game Night has closed. It runs the installer in its
+/// "passive" mode, which shows the installer's own progress bar and needs no clicks, and with /R, so the
+/// installer opens the new Game Night itself when it is done. Every step goes into update\update.log.
+/// If the install fails twice, it opens the old Game Night again so nobody is left with nothing.
 #[cfg(windows)]
 const HELPER: &str = r#"param([int]$AppPid, [string]$Setup, [string]$Exe, [string]$Log)
 function Log($m) { Add-Content -Path $Log -Value ("{0:yyyy-MM-dd HH:mm:ss.fff} helper: {1}" -f (Get-Date).ToUniversalTime(), $m) }
+$ok = $false
 try {
   Log "waiting for Game Night ($AppPid) to close"
   $t = 0
-  while ((Get-Process -Id $AppPid -ErrorAction SilentlyContinue) -and $t -lt 60) { Start-Sleep -Milliseconds 500; $t++ }
-  Start-Sleep -Seconds 1
-  Log ("old version: " + (Get-Item $Exe).VersionInfo.ProductVersion)
+  while ((Get-Process -Id $AppPid -ErrorAction SilentlyContinue) -and $t -lt 120) { Start-Sleep -Milliseconds 250; $t++ }
+  Log ("Game Night closed; old version: " + (Get-Item $Exe).VersionInfo.ProductVersion)
   for ($try = 1; $try -le 2; $try++) {
-    $p = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru -Wait -ErrorAction Stop
+    $p = Start-Process -FilePath $Setup -ArgumentList '/P', '/UPDATE', '/R' -WindowStyle Normal -PassThru -Wait -ErrorAction Stop
     Log "installer finished with code $($p.ExitCode) (try $try)"
-    if ($p.ExitCode -eq 0) { break }
-    Start-Sleep -Seconds 3
+    if ($p.ExitCode -eq 0) { $ok = $true; break }
+    Start-Sleep -Seconds 2
   }
   Log ("now installed: " + (Get-Item $Exe).VersionInfo.ProductVersion)
 } catch {
   Log ("install failed: " + $_)
 }
-Start-Process -FilePath $Exe
-Log "reopened Game Night"
+if ($ok) {
+  Log "the installer opens Game Night again"
+} else {
+  Start-Process -FilePath $Exe -WindowStyle Normal
+  Log "install didn't work: reopened the old Game Night"
+}
 "#;
 
 #[cfg(windows)]
-fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Result<(), String> {
+async fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path, version: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const NO_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
     const BREAKAWAY: u32 = 0x0100_0000; // CREATE_BREAKAWAY_FROM_JOB: keep running after Game Night closes
@@ -365,6 +424,7 @@ fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Res
     let dir = setup.parent().ok_or("No folder for the update.")?;
     let script = dir.join("apply.ps1");
     std::fs::write(&script, HELPER).map_err(|_| "Couldn't prepare the installer.")?;
+    std::fs::write(dir.join(MARKER), version).map_err(|_| "Couldn't prepare the installer.")?;
     let pid = std::process::id().to_string();
     let log_file = dir.join("update.log");
     let args: [&std::ffi::OsStr; 16] = [
@@ -382,19 +442,30 @@ fn run_installer<R: Runtime>(app: &AppHandle<R>, setup: &std::path::Path) -> Res
         Err(e) => {
             log(app, &format!("install helper couldn't start apart from Game Night ({e}), trying plainly"));
             start(NO_WINDOW).map_err(|e| {
+                let _ = std::fs::remove_file(dir.join(MARKER));
                 log(app, &format!("install helper didn't start: {e}"));
                 "Couldn't start the installer."
             })?
         }
     };
     drop(helper);
+    // Stay on screen until the helper is really running (it writes its first line when it is), so the
+    // gap with nothing on screen is as short as possible. Give up waiting after 15 seconds.
+    let before = std::fs::read_to_string(&log_file).map(|s| s.matches("helper: waiting").count()).unwrap_or(0);
+    for _ in 0..60 {
+        tokio_sleep(Duration::from_millis(250)).await;
+        let now = std::fs::read_to_string(&log_file).map(|s| s.matches("helper: waiting").count()).unwrap_or(0);
+        if now > before {
+            break;
+        }
+    }
     log(app, "Game Night closes now for the install");
     app.exit(0);
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn run_installer<R: Runtime>(_app: &AppHandle<R>, setup: &std::path::Path) -> Result<(), String> {
+async fn run_installer<R: Runtime>(_app: &AppHandle<R>, setup: &std::path::Path, _version: &str) -> Result<(), String> {
     Err(format!("Updates install on Windows only. The checked installer is at {}", setup.display()))
 }
 

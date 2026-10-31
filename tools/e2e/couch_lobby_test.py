@@ -786,6 +786,19 @@ class FreezableBridge(np.TunnelBridge):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         self.frozen = set()
+        self.link_tasks = set()
+
+    async def open_link(self, link, addr_future, control):
+        # Keep a strong reference to this link's task: asyncio only keeps weak ones, and Python's garbage collector
+        # threw running links away in run 41178993059 ("Task was destroyed but it is pending!"), closing friends'
+        # relay links. The relay thread has the same fix for netplay_test.py itself (PR #21); this keeps the Couch
+        # test correct whichever version of netplay_test.py it runs with.
+        task = asyncio.current_task()
+        self.link_tasks.add(task)
+        try:
+            await super().open_link(link, addr_future, control)
+        finally:
+            self.link_tasks.discard(task)
 
     async def pipe(self, reader, writer, counter, label):
         n = int(label.split()[1].rstrip(":"))

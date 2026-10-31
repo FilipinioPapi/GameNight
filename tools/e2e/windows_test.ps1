@@ -21,6 +21,20 @@ if (-not $exe) { Fail "Game Night isn't in $installDir after installing" }
 $exe = $exe.FullName
 Write-Host "installed $exe, version $((Get-Item $exe).VersionInfo.ProductVersion)"
 if (-not (Test-Path (Join-Path $installDir 'player\retroarch.exe'))) { Fail "the game player wasn't installed" }
+# The installer's firewall rule: blocks the network from reaching Game Night's RetroArch (traffic inside this PC,
+# which the game tests below use, is never blocked).
+function Check-FirewallRule($when) {
+  $want = Join-Path $installDir 'player\retroarch.exe'
+  $rules = @(Get-NetFirewallRule -DisplayName 'Game Night: keep RetroArch off the network' -ErrorAction SilentlyContinue)
+  foreach ($r in $rules) {
+    $prog = ($r | Get-NetFirewallApplicationFilter).Program
+    Write-Host "firewall rule ${when}: enabled $($r.Enabled), $($r.Direction), $($r.Action), profiles $($r.Profile), program $prog"
+  }
+  $ok = $rules | Where-Object { $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' -and ($_ | Get-NetFirewallApplicationFilter).Program -eq $want }
+  if (-not $ok) { Fail "no enabled inbound block rule for $want $when" }
+  if ($rules.Count -ne 1) { Fail "$($rules.Count) Game Night firewall rules $when (want exactly 1)" }
+}
+Check-FirewallRule "after installing"
 
 Step "Play a test game"
 $root = Join-Path $env:RUNNER_TEMP 'gn\Game Night'
@@ -179,4 +193,5 @@ if (-not $new) { $problems += "Game Night didn't start again" }
 elseif (-not $alive) { $problems += "the reopened Game Night quit within 10 s" }
 elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False in-front=True" })) { $problems += "the reopened Game Night isn't the window in front" }
 if ($problems) { Fail ("update test: " + ($problems -join '; ')) }
+Check-FirewallRule "after the update"
 Write-Host "updated from 0.0.1 to ${NewVersion}: the box showed 100%, checked and installing; the installer ran; Game Night came back in front and said it updated"

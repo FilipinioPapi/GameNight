@@ -1,6 +1,6 @@
-# 0.3.6
-Couch Play: the game now sits inside Game Night's window, right in the lobby's box. No more flicker, and it no longer covers the seat list
-Game Night opens full screen, like a console. Press F11 to switch to a window and back
-Press Y for full screen in a lobby: the game fills the whole screen
-Lobby controls while you play: hold both sticks in (L3 + R3) for a second. VIEW + MENU clashed with Steam and Windows shortcuts
-To quit a game on your own: press both sticks in (L3 + R3), or Esc
+# 0.3.7
+New looks for your games: three lighter old-TV (CRT) looks and four smoothing looks, chosen per console in Settings. Each PC uses its own look, so friends never go out of sync
+A bezel around your games: a dark TV frame by default, or a console photo or a controller that lights up (Settings, per console). Solo games for now
+Solo games use sharp whole-pixel scaling, so every pixel is the same size
+Safer online: Game Night now stops other computers on your network from reaching the game player. Windows asks for permission once while installing this update
+Library: box art now shows in its real shape for each console

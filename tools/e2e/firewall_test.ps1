@@ -20,10 +20,10 @@ $image = 'mcr.microsoft.com/windows/nanoserver:ltsc2022'
 docker pull -q $image | Out-Null
 $hostIp = (docker network inspect nat | ConvertFrom-Json)[0].IPAM.Config[0].Gateway
 Write-Host "this PC as the container sees it: $hostIp"
-docker run --rm $image cmd /c "where curl.exe" 2>&1 | ForEach-Object { Write-Host "  | $_" }
+docker run --rm $image curl.exe --version 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host "  | $_" }
 function From-OtherPC($port) {
   $o = (docker run --rm $image curl.exe -s -v -m 5 "telnet://${hostIp}:$port" 2>&1) -join "`n"
-  $reached = $o -match 'Connected to'
+  $reached = $o -match 'Connected to|Established connection'  # curl's wording changed between versions
   Write-Host "  other PC -> ${hostIp}:$port reached: $reached"
   ($o -split "`n" | Select-Object -First 4) | ForEach-Object { Write-Host "    | $_" }
   return $reached

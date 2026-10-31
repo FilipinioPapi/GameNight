@@ -293,8 +293,8 @@ def fmt(t, i):
     return "--" if t is None else f"{t[i]:02x}"
 
 
-def mash(pads, seconds, seed, sent, stop):
-    """Both pads press random buttons. Records every state each pad was given (as NES bits)."""
+def mash(pads, seconds, seed, sent, stop, timeline):
+    """Both pads press random buttons. Records every state each pad was given (as NES bits), and when."""
     rng = random.Random(seed)
     end = time.time() + seconds
     while time.time() < end and not stop.is_set():
@@ -302,7 +302,9 @@ def mash(pads, seconds, seed, sent, stop):
             if rng.random() < 0.5:
                 chosen = [(button, bit) for _, button, bit in NES if rng.random() < 0.3]
                 set_pad(pad, [b for b, _ in chosen])
-                sent[key].add(sum(bit for _, bit in chosen))
+                state = sum(bit for _, bit in chosen)
+                sent[key].add(state)
+                timeline.append((time.time(), key, state))
         time.sleep(rng.uniform(0.03, 0.15))
     for pad in pads.values():
         set_pad(pad, [])
@@ -374,9 +376,12 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
 
         # 3. Stay in sync
         say(f"\nsync check: both pads press random buttons for {MASH_SECONDS} s; comparing every finished frame")
-        sent = {"a": {0}, "b": {0}}
+        # states the pads were given so far (the right-player checks above), then the random ones
+        sent = {"a": {0, 0x01} | {bit for _, _, bit in NES}, "b": {0, 0x42} | {bit for _, _, bit in NES}}
         stop = threading.Event()
-        masher = threading.Thread(target=mash, args=({"a": pad_a, "b": pad_b}, MASH_SECONDS, 5, sent, stop), daemon=True)
+        timeline = []
+        history = {"host": {}, "friend": {}}  # change number -> (full frame, P1, P2), kept once it can't be redone
+        masher = threading.Thread(target=mash, args=({"a": pad_a, "b": pad_b}, MASH_SECONDS, 5, sent, stop, timeline), daemon=True)
         checked, mismatches, bad_frames, bad_reads = set(), [], set(), 0
         first = None
         masher.start()
@@ -389,6 +394,11 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
                 time.sleep(0.25)
                 continue
             fa, fb = frame_of(a), frame_of(b)
+            settled = min(fa, fb) - MARGIN
+            for who, mem, c in (("host", a, host), ("friend", b, friend)):
+                lst = c.ram(0x400, 1024)
+                if lst:
+                    keep_changes(history[who], mem, lst, settled)
             first = first or (t, fa, fb)
             samples.append((round(t - first[0], 2), fa, fb))
             lo, hi = max(fa, fb) - 255, min(fa, fb) - MARGIN
@@ -424,9 +434,10 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
             fail(f"{name}: too few readings ({len(samples)}) to trust the sync check")
         if span[1] - span[0] > 0 and len(checked) < 0.9 * (span[1] - span[0] - MARGIN):
             fail(f"{name}: only {len(checked)} of ~{span[1] - span[0]} frames could be compared")
+        result["one_copy_alone_fps"] = SOLO_FPS
         for who, fps in (("host", fps_h), ("friend", fps_f)):
-            if not 55 <= fps <= 65:
-                fail(f"{name}: the {who} ran at {fps:.1f} frames a second (wanted about 60)")
+            if fps < 0.95 * SOLO_FPS or fps > 61:
+                fail(f"{name}: the {who} ran at {fps:.1f} frames a second (one copy alone on this machine: {SOLO_FPS:.1f})")
 
         # 4. End checks: change lists, right player under load, fingerprint chain
         time.sleep(2.5)
@@ -442,13 +453,30 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
         say(f"\nend: {ch} button changes seen by the host's game, {cf} by the friend's; lists identical: {lists_same}")
         if not lists_same:
             fail(f"{name}: the two games' button-change lists differ")
-        entries = changes_in_order(end_h[0], end_h[1], ch)
+        keep_changes(history["host"], end_h[0], end_h[1], frame_of(end_h[0]))
+        keep_changes(history["friend"], end_f[0], end_f[1], frame_of(end_f[0]))
+        hh, hf = history["host"], history["friend"]
+        full_same = hh == hf
+        missing = [k for k in range(ch) if k not in hh]
+        result["whole_change_history_identical"] = full_same
+        result["changes_never_read"] = len(missing)
+        say(f"  whole button-change history ({len(hh)} of {ch} changes read along the way): identical in both copies: {full_same}")
+        if not full_same:
+            diff = [k for k in sorted(set(hh) | set(hf)) if hh.get(k) != hf.get(k)][:10]
+            say(f"  first differences: {[(k, hh.get(k), hf.get(k)) for k in diff]}")
+            fail(f"{name}: the two games' button-change histories differ")
+        if missing:
+            fail(f"{name}: {len(missing)} button changes were never read (first {missing[0]})")
+        entries = [hh[k] for k in sorted(hh)]
         stray_1 = sorted({p1 for _, p1, _ in entries} - sent["a"])
         stray_2 = sorted({p2 for _, _, p2 in entries} - sent["b"])
         result["player1_states_not_from_pad_a"] = stray_1
         result["player2_states_not_from_pad_b"] = stray_2
         say(f"  every player 1 state came from pad A: {not stray_1}; every player 2 state from pad B: {not stray_2}"
             f" (pad A was given {len(sent['a'])} different states, pad B {len(sent['b'])})")
+        explain_strays(entries, stray_1, stray_2, samples, first, timeline, result)
+        (OUT / f"{name}-changes.csv").write_text("change,frame,p1,p2\n" + "".join(f"{k},{f},{p1},{p2}\n" for k, (f, p1, p2) in sorted(hh.items())))
+        (OUT / f"{name}-pad-timeline.csv").write_text("seconds,pad,state\n" + "".join(f"{round(t - first[0], 3)},{k},{st}\n" for t, k, st in timeline))
         if stray_1 or stray_2:
             fail(f"{name}: buttons crossed between players during play (P1 extra {stray_1}, P2 extra {stray_2})")
         chain_ok, chain_frames = fingerprint_chain(end_h[0], entries)
@@ -484,7 +512,35 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None):
         time.sleep(2)
 
 
-def changes_in_order(ram, changes_ram, total):
+def keep_changes(store, ram, changes_ram, settled):
+    """Adds the change list's entries to store (change number -> (full frame, P1, P2)), for frames up to
+    `settled` only (newer ones can still be redone by netplay). Skips the 16 oldest slots, which a change
+    made between the two reads could have overwritten."""
+    total = ram[8] | ram[9] << 8
+    for full, k, p1, p2 in changes_in_order(ram, changes_ram, total, numbered=True):
+        if full <= settled and k >= total - 240:
+            store[k] = (full, p1, p2)
+
+
+def explain_strays(entries, stray_1, stray_2, samples, first, timeline, result):
+    """For each unexpected button state, show when it happened and what each pad was doing then."""
+    notes = []
+    for player, strays in ((1, stray_1), (2, stray_2)):
+        for state in strays:
+            for f, p1, p2 in entries:
+                if (p1 if player == 1 else p2) != state:
+                    continue
+                # frame -> seconds, from the readings (host frame against time)
+                near = min(samples, key=lambda x: abs(x[1] - f))
+                at = near[0] - (near[1] - f) / 60.0
+                around = [(round(t - first[0] - at, 3), k, st) for t, k, st in timeline if abs(t - first[0] - at) < 0.5]
+                note = {"player": player, "state": state, "frame": f, "about_s": round(at, 2), "pads_around (seconds from it, pad, state)": around}
+                notes.append(note)
+                say(f"  unexpected player {player} state {state:#04x} at frame {f} (~{at:.2f} s): pads around then {around}")
+    result["unexpected_states"] = notes[:20]
+
+
+def changes_in_order(ram, changes_ram, total, numbered=False):
     """The button-change list as (full frame, P1, P2), oldest first."""
     now = frame_of(ram)
     n = min(total, 256)
@@ -495,7 +551,7 @@ def changes_in_order(ram, changes_ram, total):
         full = (now & ~0xFFFF) | f16
         if full > now:
             full -= 0x10000
-        out.append((full, e[2], e[3]))
+        out.append((full, k, e[2], e[3]) if numbered else (full, e[2], e[3]))
     return out
 
 
@@ -520,7 +576,33 @@ def fingerprint_chain(ram, entries):
     return ok, now - first + 1
 
 
+SOLO_FPS = 60.0
+
+
+def solo_speed(rom, slot):
+    """How fast one copy runs alone on this machine with the same settings (no netplay), as a yardstick."""
+    solo = Copy("solo", 55357, slot)
+    solo.write_config(0)
+    try:
+        solo.start(rom, [])
+        if not wait_until(lambda: solo.ram(0, 3), 40):
+            fail("the solo copy never answered")
+            return 60.0
+        time.sleep(3)
+        t0, f0 = time.time(), frame_of(solo.ram(0, 3))
+        time.sleep(20)
+        t1, f1 = time.time(), frame_of(solo.ram(0, 3))
+        fps = (f1 - f0) / (t1 - t0)
+        say(f"one copy alone, no netplay: {fps:.2f} frames a second over {t1 - t0:.1f} s")
+        return fps
+    finally:
+        solo.quit()
+        subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+        time.sleep(2)
+
+
 def main():
+    global SOLO_FPS
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
     rom = WORK / "netplay-test.nes"
@@ -532,9 +614,10 @@ def main():
     if slot_a is None or slot_b is None or slot_a == slot_b:
         say("  couldn't read the Xbox slots; assuming A = 0, B = 1")
         slot_a, slot_b = 0, 1
+    SOLO_FPS = solo_speed(rom, slot_a)
     rounds = [run_round("direct", rom, pad_a, slot_a, pad_b, slot_b)]
     rounds.append(run_round("delayed", rom, pad_a, slot_a, pad_b, slot_b, delay=(50, 20)))
-    summary = {"ok": not failures, "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
+    summary = {"ok": not failures, "one_copy_alone_fps": round(SOLO_FPS, 2), "failures": failures, "rounds": rounds, "mash_seconds": MASH_SECONDS}
     (OUT / "results.json").write_text(json.dumps(summary, indent=2))
     say("\n================ summary ================")
     say(json.dumps(summary, indent=2))

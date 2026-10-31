@@ -14,6 +14,7 @@ RetroArch's local command port, on in this test build only) which player's butto
 Any step that doesn't do what it should fails the test.
 """
 import ctypes
+import json
 import os
 import socket
 import subprocess
@@ -45,6 +46,36 @@ def in_front():
     pid = ctypes.c_ulong()
     user32.GetWindowThreadProcessId(w, ctypes.byref(pid))
     return f'"{buf.value}" (process {pid.value})'
+
+
+def front_is_game():
+    """True when the window in front belongs to RetroArch (the game player)."""
+    user32 = ctypes.windll.user32
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid.value}", "/FO", "CSV", "/NH"], capture_output=True, text=True)
+    return "retroarch.exe" in out.stdout.lower()
+
+
+def game_night_minimized(pid):
+    """True when Game Night's visible main window is minimized."""
+    user32 = ctypes.windll.user32
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def each(hwnd, _):
+        h = ctypes.c_void_p(hwnd)
+        p = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetWindowTextW(h, buf, 64)
+        if p.value == pid and buf.value == "Game Night":
+            found.append(bool(user32.IsIconic(h)))
+        return True
+
+    user32.EnumWindows(proc(each), 0)
+    say(f"Game Night's window minimized: {found}")
+    return any(found)
 
 
 def log_lines():
@@ -135,14 +166,17 @@ def menus():
     try:
         dump_log("pads.txt so far:")
         screenshot("0-main-menu")
-        step(pad, "1-dpad-down", B.XUSB_GAMEPAD_DPAD_DOWN, 13, "menu", "settings")
-        step(pad, "2-dpad-up", B.XUSB_GAMEPAD_DPAD_UP, 12, "menu", "focused: button \"LIBRARY")
-        step(pad, "3-a-opens-library", B.XUSB_GAMEPAD_A, 0, "library")
-        step(pad, "4-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu")
+        # The main menu is a row of cards (LIBRARY, COUCH PLAY, SETTINGS, QUIT); the picked one grows.
+        step(pad, "1-dpad-right", B.XUSB_GAMEPAD_DPAD_RIGHT, 15, "menu", "focused: button \"COUCH PLAY")
+        step(pad, "2-dpad-right", B.XUSB_GAMEPAD_DPAD_RIGHT, 15, "menu", "focused: button \"SETTINGS")
+        step(pad, "3-dpad-left", B.XUSB_GAMEPAD_DPAD_LEFT, 14, "menu", "focused: button \"COUCH PLAY")
+        step(pad, "4-dpad-left", B.XUSB_GAMEPAD_DPAD_LEFT, 14, "menu", "focused: button \"LIBRARY")
+        step(pad, "5-a-opens-library", B.XUSB_GAMEPAD_A, 0, "library")
+        step(pad, "6-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu", "focused: button \"LIBRARY")
     finally:
         app.kill()
         dump_log("\nwhole pads.txt:")
-    return "the pretend controller drove the main menu: down, up, A opens the Library, B goes back"
+    return "the pretend controller drove the main menu: right, right, left, left, A opens the Library, B goes back"
 
 
 def ask_game(command):
@@ -205,7 +239,7 @@ def game(idle_pad, reader=""):
         dead, pad = None, vg.VX360Gamepad(vid=0x045E, pid=0x02FF)
         time.sleep(2)
         say(f"one pretend Xbox pad plugged in, index {pad.get_index()}")
-    for f in (CACHE / "player" / "logs" / "retroarch.log",):
+    for f in (CACHE / "player" / "logs" / "retroarch.log", ROOT / "e2e-result.json"):
         f.unlink(missing_ok=True)
     app = start_app("padgame", reader)
     try:
@@ -216,7 +250,13 @@ def game(idle_pad, reader=""):
             if not ask_game("VERSION").startswith("(no answer"):
                 break
         time.sleep(3)
-        say(f"game version answer: {ask_game('VERSION')}; in front {in_front()}")
+        front = in_front()
+        say(f"game version answer: {ask_game('VERSION')}; in front {front}")
+        # Seen from outside the app: the game's window is in front and Game Night is minimized.
+        if not front_is_game():
+            failures.append(f"{tag}: the game wasn't the window in front ({front})")
+        if not game_night_minimized(app.pid):
+            failures.append(f"{tag}: Game Night wasn't minimized while the game ran")
         controllers = CACHE / "player" / "logs" / "controllers.txt"
         say("controllers.txt (what Game Night told the game):")
         for line in controllers.read_text(errors="replace").splitlines() if controllers.exists() else ["(missing)"]:
@@ -249,6 +289,12 @@ def game(idle_pad, reader=""):
             app.wait(30)
         except subprocess.TimeoutExpired:
             pass
+        # Game Night reports whether it came back to the front once the game closed.
+        result = ROOT / "e2e-result.json"
+        window = json.loads(result.read_text()).get("window") if result.exists() else None
+        say(f"window steps Game Night saw: {window}")
+        if not (window or {}).get("back_in_front"):
+            failures.append(f"{tag}: Game Night didn't come back to the front after the game closed")
     finally:
         if app.poll() is None:
             app.kill()

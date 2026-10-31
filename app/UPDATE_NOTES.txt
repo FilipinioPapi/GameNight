@@ -1,13 +1,6 @@
-# 0.3.3
-A new Library: consoles across the top, your favourites first, and the last 3 games you played
-Press Y on any game to make it a favourite
-A button guide along the bottom shows what each controller button does
-Settings, Layout: switch to a mouse and keyboard layout
-Player 1 is the controller you actually use, even with other devices plugged in
-New Settings page "My controllers": pick Player 1, or turn off anything that isn't really a controller
-A tip for stopping the Xbox button opening Steam
-Cleaner controller pictures in the menus
-Smooth, console-style movement: the highlight glides and lists scroll gently
-The main menu's PLAY is now LIBRARY
-A retro glow look for the Library
-Anyone in the Discord server can sign in
+# 0.3.4
+Updates show the download all the way to 100%, then the install, step by step
+Game Night opens again by itself after an update, in front of your other windows
+It says "Updated" when it's back, so you know it worked
+Game Night steps aside when a game starts, so the game is in front, and comes back when you quit
+New main menu: big glowing cards, the picked one grows, plus your last three games to jump back in

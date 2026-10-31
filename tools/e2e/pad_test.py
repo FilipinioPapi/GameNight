@@ -135,14 +135,17 @@ def menus():
     try:
         dump_log("pads.txt so far:")
         screenshot("0-main-menu")
-        step(pad, "1-dpad-down", B.XUSB_GAMEPAD_DPAD_DOWN, 13, "menu", "settings")
-        step(pad, "2-dpad-up", B.XUSB_GAMEPAD_DPAD_UP, 12, "menu", "focused: button \"LIBRARY")
-        step(pad, "3-a-opens-library", B.XUSB_GAMEPAD_A, 0, "library")
-        step(pad, "4-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu")
+        # The main menu is a row of cards (LIBRARY, COUCH PLAY, SETTINGS, QUIT); the picked one grows.
+        step(pad, "1-dpad-right", B.XUSB_GAMEPAD_DPAD_RIGHT, 15, "menu", "focused: button \"COUCH PLAY")
+        step(pad, "2-dpad-right", B.XUSB_GAMEPAD_DPAD_RIGHT, 15, "menu", "focused: button \"SETTINGS")
+        step(pad, "3-dpad-left", B.XUSB_GAMEPAD_DPAD_LEFT, 14, "menu", "focused: button \"COUCH PLAY")
+        step(pad, "4-dpad-left", B.XUSB_GAMEPAD_DPAD_LEFT, 14, "menu", "focused: button \"LIBRARY")
+        step(pad, "5-a-opens-library", B.XUSB_GAMEPAD_A, 0, "library")
+        step(pad, "6-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu", "focused: button \"LIBRARY")
     finally:
         app.kill()
         dump_log("\nwhole pads.txt:")
-    return "the pretend controller drove the main menu: down, up, A opens the Library, B goes back"
+    return "the pretend controller drove the main menu: right, right, left, left, A opens the Library, B goes back"
 
 
 def ask_game(command):

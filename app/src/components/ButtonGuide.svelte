@@ -7,6 +7,8 @@
     label: string;
     /** Pushes this one (and anything after it) to the right end, like "B Back". */
     right?: boolean;
+    /** Text arrows (like "◄ ►") shown in place of button pictures. */
+    glyph?: string;
   }
 </script>
 
@@ -16,7 +18,7 @@
   import { app } from "../lib/state.svelte";
   import { PAD_NAME } from "../lib/pads";
 
-  let { items, retro = false }: { items: GuideItem[]; retro?: boolean } = $props();
+  let { items, retro = false, note = "" }: { items: GuideItem[]; retro?: boolean; note?: string } = $props();
   const ps = $derived(app.pad.type === "dualsense");
   const NAMES: Record<Prompt, [string, string]> = {
     a: ["A", "Cross"], b: ["B", "Circle"], x: ["X", "Square"], y: ["Y", "Triangle"],
@@ -30,12 +32,14 @@
 <footer class="guide" class:retro aria-label="{PAD_NAME[app.pad.type]} controller buttons">
   {#each items as it (it.label + it.buttons.join())}
     <span class="item" class:right={it.right}>
+      {#if it.glyph}<span class="glyph">{it.glyph}</span>{/if}
       {#each it.buttons as b (b)}
         <img class:face={face(b)} src={src(b)} alt={NAMES[b][ps ? 1 : 0]} draggable="false" />
       {/each}
       <span>{it.label}</span>
     </span>
   {/each}
+  {#if note}<span class="note">{note}</span>{/if}
 </footer>
 
 <style>
@@ -51,6 +55,10 @@
   }
   .item { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .item.right { margin-left: auto; }
+  .glyph { font-size: 24px; }
+  /* Small grey text at the right end, like the version number. */
+  .note { margin-left: auto; color: var(--muted-2); text-shadow: none; }
+  .item.right ~ .note { margin-left: 0; }
   /* Pixel art: twice its real size, with sharp pixels. */
   img { height: 18px; width: auto; image-rendering: pixelated; }
   img.face { height: 26px; }

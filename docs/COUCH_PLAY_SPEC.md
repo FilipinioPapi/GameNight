@@ -48,7 +48,7 @@ Nginx Proxy Manager can forward `/gamenight/` with or without stripping it. `PUB
 Rate limit lookups/joins by code: 20 a minute per user (stops guessing codes).
 
 ```
-LobbySummary = {"code","open","game":{"id","title","console"},"host":{"id","name","avatar"},"players":n,"watchers":n,"started":bool}
+LobbySummary = {"code","open","game":{"id","title","console","players"},"host":{"id","name","avatar"},"players":n,"watchers":n,"started":bool}
 Lobby = LobbySummary + {
   "you": {"id","role":"host"|"play"|"watch","seat":1-4|null},
   "seats": [{"n":1..4,"user":User|null,"status":"playing"|"held"|"empty","held_left":seconds|null}],

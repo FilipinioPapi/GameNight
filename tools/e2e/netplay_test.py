@@ -28,7 +28,8 @@ Rounds (NETPLAY_ROUNDS picks some by name; all by default):
   - "delayed": through a small relay in this script that adds internet-like delay and jitter both ways.
   - "relay-listed-<place>": through libretro's public relay the way stock RetroArch does it: the host asks
     libretro's lobby for the relay, gets a session from it and lists the game in libretro's PUBLIC game list
-    (with a random password so nobody else can join); the friend finds the session there and joins.
+    (one connection only, so nobody else can join once the friend is in); the friend finds the session there
+    and joins.
   - "relay-private-<place>": through the same public relay, but the host's relay session is held by a small
     bridge in this script (TunnelBridge) and passed straight to the friend, so nothing is listed anywhere.
     The host copy itself only listens on this machine.
@@ -571,11 +572,13 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, l
                            "plain_connect_median_ms": statistics.median(ok_times) if ok_times else None}
         say(f"{place} relay is {relay_host}:{relay_port}; a plain connection from this machine takes {plain} ms")
     if listed:
-        # Stock RetroArch: the host lists the game in libretro's public list, with a password so nobody else joins.
-        password, nick = secrets.token_hex(8), f"gn-ci-{secrets.token_hex(3)}"
+        # Stock RetroArch: the host lists the game in libretro's public list. No password: RetroArch's friend side
+        # ignores netplay_password and always pops up a box to TYPE it (netplay_handshake_init: menu_input_dialog),
+        # which stalled run 41167800601. Instead the host takes one connection only, so once our friend is in,
+        # nobody else can join; anyone sneaking in first would show up in the right-player checks.
+        nick = f"gn-ci-{secrets.token_hex(3)}"
         host_extra = {"netplay_public_announce": "true", "netplay_use_mitm_server": "true", "netplay_mitm_server": place,
-                      "netplay_password": password, "netplay_spectate_password": password, "netplay_nickname": nick}
-        friend_extra = {"netplay_password": password}
+                      "netplay_nickname": nick, "netplay_max_connections": "1"}
     host.write_config(0, host_extra)
     friend.write_config(520, friend_extra)
     delayer = bridge = None

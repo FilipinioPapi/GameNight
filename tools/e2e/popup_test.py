@@ -7,9 +7,9 @@
 <player folder> is what tools/player/fetch_player.py builds. Nothing is installed or changed outside <work folder>
 and <results folder>, and nothing goes to the internet (the two copies play on this machine only).
 
-The test cartridge (make_test_rom.py) draws nothing, so its picture is one flat colour. Anything else in the
-game's window is a pop-up. Each copy's window is photographed about 4 times a second, and for each photo we count
-the "pop-up pixels": pixels clearly different from the picture's main colour. Three moments, each measured twice,
+The test cartridge (make_test_rom.py) draws nothing, so its picture is one flat grey (black bars around it).
+RetroArch's pop-ups are white/light text and icons. Each copy's window is photographed about 4 times a second,
+and for each photo we count the "pop-up pixels": pixels clearly brighter than the picture's main colour. Three moments, each measured twice,
 once with RetroArch's normal settings ("before") and once with Game Night's quiet settings added ("after",
 app/src-tauri/src/quiet_retroarch.cfg, the same file the app uses):
   1. boot:    the game starts ("loading", "controller connected" messages).
@@ -48,11 +48,13 @@ def quiet_settings():
 
 
 def popup_pixels(img):
-    """Pixels clearly different from the picture's main colour (the test cartridge's flat screen)."""
+    """Pixels clearly brighter than the picture's main colour: pop-up text and icons are white or light grey,
+    while the test cartridge's screen is one flat grey and the bars around it are black (measured, first run:
+    counting every "different" pixel also counted those black bars and tearing in the photos)."""
     small = img.convert("RGB")
     colours = small.getcolors(small.width * small.height)
     main = max(colours)[1]
-    return sum(n for n, c in colours if max(abs(c[i] - main[i]) for i in range(3)) > THRESHOLD)
+    return sum(n for n, c in colours if max(c) > max(main) + THRESHOLD)
 
 
 class Watch:
@@ -113,7 +115,7 @@ def run(variant, quiet, rom):
         w = Watch(f"{variant}-3-join", [host, friend])
         w.look(10)
         r["join"] = w.save()
-        joined = "[Netplay] Received input from" in host.log_text() or "[Netplay] Received mode change" in friend.log_text()
+        joined = "has joined as player 2" in host.log_text()
         r["friend_joined_log"] = joined
         say(f"  friend joined (from the logs): {joined}")
     finally:

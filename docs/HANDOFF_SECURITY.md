@@ -36,7 +36,7 @@ Before going public:
 1. Done 2026-10-31 (Jayden): "Keep my email addresses private" is on, so new merges don't show it.
 2. Done 2026-10-31: the server-setup notes (#5) moved to the project's private notes
    (`gamenight/private-notes/server-setup.md`), with pointers in the docs. ntfy: signed-out reads are refused
-   with 403 (Confirmed), so deny-all is Strongly inferred. Jayden confirms the setting.
+   with 403 (Confirmed), and Jayden confirmed deny-all is set (2026-10-31).
 3. Done 2026-10-31: Jayden says all the pictures (#11) can be public.
 4. After going public: turn on secret scanning and push protection, require approval for outside PRs,
    and add branch protection on `main` (free for public repos: Strongly inferred, from GitHub's plan rules).

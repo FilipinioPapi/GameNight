@@ -189,6 +189,11 @@ impl Couch {
             RaState::Running => "running",
             RaState::Stopped => "stopped",
         };
+        // This PC's own game, for the screens (lock the pad while playing, offer Rejoin).
+        let game = if l.disconnected && l.state != RaState::Stopped { "disconnected" } else { state };
+        if v.get("you").is_some_and(Value::is_object) {
+            v["you"]["game"] = json!(game);
+        }
         v["local"] = json!({
             "retroarch": state,
             "netplay": if l.disconnected { "disconnected" } else { "ok" },
@@ -961,6 +966,26 @@ mod tests {
         assert_eq!(say(SendError::Refused(409, Some("All 4 seats are taken. You can watch.".into()))), "All 4 seats are taken. You can watch.");
         assert_eq!(say(SendError::Refused(404, None)), "That code doesn't match an open lobby.");
         assert!(!say(SendError::Refused(500, None)).contains("500"));
+    }
+
+    #[test]
+    fn lobby_view_says_how_the_local_game_is() {
+        let c = Couch::default();
+        assert!(c.view().is_none());
+        *lock(&c.latest) = Some(json!({"code": "ABC234", "you": {"id": "1", "role": "play", "seat": 2}}));
+        assert_eq!(c.view().unwrap()["you"]["game"], "stopped");
+        assert_eq!(c.beat_state(), "stopped");
+        lock(&c.local).state = RaState::Starting;
+        assert_eq!(c.view().unwrap()["you"]["game"], "starting");
+        assert_eq!(c.beat_state(), "starting");
+        lock(&c.local).state = RaState::Running;
+        assert_eq!(c.view().unwrap()["you"]["game"], "running");
+        lock(&c.local).disconnected = true;
+        let v = c.view().unwrap();
+        assert_eq!(v["you"]["game"], "disconnected");
+        assert_eq!(v["local"]["rejoin"], true);
+        assert_eq!(c.beat_state(), "stopped");
+        assert_eq!(v["you"]["seat"], 2); // the server's fields are kept
     }
 
     #[test]

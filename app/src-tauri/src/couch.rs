@@ -38,6 +38,16 @@ pub fn normalize_code(raw: &str) -> Option<String> {
     (c.chars().count() == 6 && c.chars().all(|ch| CODE_LETTERS.contains(ch))).then_some(c)
 }
 
+/// Most players a game takes, from RomM's text ("1", "1-2", "1-4", "2 players"...). Unknown = 2.
+pub fn most_players(raw: &str) -> u8 {
+    raw.split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse::<u32>().ok())
+        .filter(|n| (1..=16).contains(n))
+        .max()
+        .map(|n| n as u8)
+        .unwrap_or(2)
+}
+
 /// The relay details from a lobby, only if they look right (the server checks them too).
 fn relay_of(lobby: &Value) -> Option<(String, u16, String)> {
     let r = lobby.get("relay")?;
@@ -145,6 +155,8 @@ struct Game {
     id: String,
     console: String,
     settings: PlaySettings,
+    /// Most players the game takes (from the lobby; RomM's "1-4" etc.).
+    players: u8,
 }
 
 struct Ra {
@@ -280,7 +292,8 @@ pub fn netplay_dropped(log: &str, host: bool) -> bool {
 fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Option<u8>, args: Vec<String>, log: &FileLog) -> Result<Ra, String> {
     let couch = app.state::<Couch>();
     let cmd_port = free_udp_port()?;
-    let remaps = if game.console == "snes" {
+    // SNES multitap (port 2) only for games that take 3 or more players; 2-player games get plain pads.
+    let remaps = if game.console == "snes" && game.players > 2 {
         let dir = app.path().app_config_dir().map_err(|_| "No settings folder.")?.join("player").join("couch-remaps");
         games::write_snes_remap(&dir)?;
         Some(dir)
@@ -605,7 +618,7 @@ pub async fn couch_host<R: Runtime>(app: AppHandle<R>, root: String, game_id: St
         return Err("A game is already running.".into());
     }
     let log = FileLog::new(&app, "couch.log");
-    let game = Game { root, id: game_id, console, settings };
+    let game = Game { root, id: game_id, console, settings, players: 2 };
     match host_steps(&app, game, open, &log).await {
         Ok(s) => {
             *g = Some(s);
@@ -621,9 +634,10 @@ pub async fn couch_host<R: Runtime>(app: AppHandle<R>, root: String, game_id: St
     }
 }
 
-async fn host_steps<R: Runtime>(app: &AppHandle<R>, game: Game, open: bool, log: &FileLog) -> Result<Session, String> {
+async fn host_steps<R: Runtime>(app: &AppHandle<R>, mut game: Game, open: bool, log: &FileLog) -> Result<Session, String> {
     let lobby = call(app, reqwest::Method::POST, "/api/lobbies", Some(json!({ "game_id": game.id, "open": open }))).await?;
     let code = lobby["code"].as_str().and_then(normalize_code).ok_or("The server sent something odd.")?;
+    game.players = most_players(lobby["game"]["players"].as_str().unwrap_or(""));
     log.line(&format!("hosting lobby {code} (game {}, {})", game.id, if open { "open" } else { "code only" }));
     let mut s = Session {
         code: code.clone(),
@@ -771,7 +785,7 @@ async fn join_steps<R: Runtime>(app: &AppHandle<R>, root: PathBuf, code: &str, a
     let mut s = Session {
         code: code.to_string(),
         host: false,
-        game: Game { root, id, console, settings },
+        game: Game { root, id, console, settings, players: most_players(lobby["game"]["players"].as_str().unwrap_or("")) },
         relay: Some(relay),
         bridge: None,
         netplay_port: 0,
@@ -931,6 +945,19 @@ mod tests {
         assert_eq!(normalize_code("ABCDEI"), None);
         assert_eq!(normalize_code("ABC/../"), None);
         assert_eq!(normalize_code("ÄBC234"), None);
+    }
+
+    #[test]
+    fn multitap_only_for_3_or_more_players() {
+        assert_eq!(most_players("1-4"), 4);
+        assert_eq!(most_players("1-2"), 2);
+        assert_eq!(most_players("1"), 1);
+        assert_eq!(most_players("2 players"), 2);
+        assert_eq!(most_players("1-5"), 5);
+        assert_eq!(most_players(""), 2);
+        assert_eq!(most_players("lots"), 2);
+        assert_eq!(most_players("99999999999"), 2);
+        assert!(most_players("1-3") > 2 && most_players("1-2") <= 2);
     }
 
     #[test]

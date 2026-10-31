@@ -1,0 +1,72 @@
+# Couch Play lobby test (design boards CQ4 and CQ6, approved 2026-10-31): before building anything, measure on
+# GitHub's Windows machine whether (1) the game's own window can sit in a box on a lobby screen and switch to full
+# screen and back, (2) 4 players on SNES (multitap) plus 4 watchers stay in sync online, here and through
+# libretro's relay the private way, and (3) people can switch between playing and watching mid-game, and drop out
+# and rejoin, without the game pausing. tools/e2e/couch_lobby_test.py does the measuring. Nothing here touches
+# Game Night's app or releases. Only the relay round goes to the internet (libretro's lobby and relay servers).
+name: Couch Play lobby test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tools/e2e/couch_lobby_test.py", "tools/e2e/make_snes_multitap_rom.py", "tools/e2e/check_snes_multitap_rom.py", "tools/e2e/lobby_standin.py", "tools/e2e/crash_report.py",
+            "tools/e2e/netplay_test.py", "tools/e2e/add_pretend_pads.ps1", "tools/player/**", ".github/workflows/couch-lobby.yml"]
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "How long the main sync check presses random buttons (seconds)"
+        default: "90"
+      parts:
+        description: "Only these parts (box couch-direct couch-relay-nyc); empty = all"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: couch-lobby-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  couch:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the 4-player SNES test cartridge's code on a 6502 simulator first
+        shell: pwsh
+        run: |
+          pip install py65==1.2.0 pillow==11.0.0 minidump==0.0.24
+          python tools/e2e/check_snes_multitap_rom.py
+      - name: Keep a small crash dump if RetroArch crashes (this test machine only)
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\retroarch.exe'
+          New-Item -Path $k -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpFolder -PropertyType ExpandString -Value "$env:RUNNER_TEMP\dumps" -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path $k -Name DumpCount -PropertyType DWord -Value 20 -Force | Out-Null
+      - name: Add four pretend Xbox controllers (ViGEmBus)
+        shell: pwsh
+        run: tools/e2e/add_pretend_pads.ps1
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Game box, then 4 players + 4 watchers (here and through libretro's relay, privately)
+        shell: pwsh
+        env:
+          COUCH_MASH_SECONDS: ${{ github.event.inputs.seconds || '90' }}
+          COUCH_PARTS: ${{ github.event.inputs.parts || '' }}
+        run: python tools/e2e/couch_lobby_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/couch" "$env:RUNNER_TEMP/couch-results"
+      - name: Where RetroArch crashed, if it did
+        if: always()
+        shell: pwsh
+        run: python tools/e2e/crash_report.py "$env:RUNNER_TEMP/dumps"
+      - name: Keep the results (logs, numbers, screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: couch-lobby-results
+          path: ${{ runner.temp }}/couch-results
+          if-no-files-found: ignore
+          retention-days: 30

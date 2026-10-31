@@ -32,6 +32,15 @@ Strongly inferred, Unknown.
 - Next: step 1, two players in sync on GitHub's Windows runner.
 - Going-online server notes live in the project's private notes, not the repo (see HANDOFF_ONLINE.md).
 
+## Couch Play lobby test (thread "Prove the Couch Play lobby can work")
+- Design CQ1-CQ6 approved 2026-10-31. Cloud test only, app unchanged. Details: `docs/HANDOFF_COUCH_PLAY_TEST.md`.
+- Confirmed (runs 41181330618 and 41183819291, both all green): live game in a lobby box and full screen and back (app must do full screen
+  itself); 4 SNES players (multitap) + 4 watchers in sync on one machine and through the relay the private way;
+  play/watch switching and drop/rejoin without pausing, except a silent internet drop freezes everyone ~5 s.
+- Confirmed, cause Unknown: RetroArch sometimes closes by itself (0xc0000005) right after starting, 0-6 times
+  a run; a second try always worked, so the app should retry once.
+- Unknown: real PCs and internet, real pads, the real app window.
+
 ## Updates (thread "Fix auto-update progress and restart")
 - In review: the update box now shows the download to 100%, then Downloaded (checked), then Installing; the
   installer's own progress window runs; Game Night comes back in front and says Updated. Branch

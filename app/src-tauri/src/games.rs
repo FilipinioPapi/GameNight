@@ -50,11 +50,20 @@ pub struct WantGame {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaySettings {
+    /// "4:3" (TV shape), "pixel" (square pixels), both whole-pixel with a bezel; "stretch" (fill the screen).
     screen: String,
+    /// The look: "sharp", "smooth", or a shader look from display::look_preset.
     picture: String,
     rewind: bool,
     fast_forward: bool,
     show_fps: bool,
+    /// The bezel around the game: "tv" (default), "pad", "photo", "none".
+    #[serde(default = "default_bezel")]
+    bezel: String,
+}
+
+fn default_bezel() -> String {
+    "tv".into()
 }
 
 /// Couch Play (online) additions to RetroArch's settings. None = a normal game on your own.
@@ -292,6 +301,16 @@ pub fn remove_game(root: String, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The size in pixels of the screen Game Night is on.
+fn screen_size<R: Runtime>(app: &AppHandle<R>) -> Option<(u32, u32)> {
+    let m = match app.get_webview_window("main").and_then(|w| w.current_monitor().ok().flatten()) {
+        Some(m) => m,
+        None => app.primary_monitor().ok().flatten()?,
+    };
+    let s = m.size();
+    Some((s.width, s.height))
+}
+
 /// Where the bundled RetroArch lives.
 fn player_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
@@ -308,6 +327,10 @@ pub struct ConfigPaths {
     pub states: PathBuf,
     pub system: PathBuf,
     pub cache: PathBuf,
+    /// The bezel for this game and screen (display::prepare_bezel), if any.
+    pub overlay: Option<PathBuf>,
+    /// The see-through theme for RetroArch's hidden menu, when Game Night's in-game menu is on.
+    pub menu_theme: Option<PathBuf>,
 }
 
 /// Ways RetroArch can play sound on Windows, best first. If one doesn't start on a PC
@@ -338,8 +361,11 @@ fn e2e_mode() -> Option<&'static str> {
 pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &crate::controllers::Plan, net: Option<&Netplay>) -> String {
     let path = |p: &Path| p.to_string_lossy().replace('"', "");
     let yes = |b: bool| if b { "true" } else { "false" };
+    // Whole-pixel scaling for both shapes (boards IG1, approved 2026-10-31); display.rs has the bezel lines.
+    // Couch Play keeps these (the game fills its box or the screen); a game on your own gets whole-pixel
+    // scaling and the bezel from display.rs below.
     let (aspect, integer) = match s.screen.as_str() {
-        "pixel" => (22, true),   // the console's own shape, sharp whole-pixel scaling
+        "pixel" => (22, true),    // the console's own shape, sharp whole-pixel scaling
         "stretch" => (24, false), // fill the screen
         _ => (0, false),          // 4:3, like an old TV
     };
@@ -387,7 +413,7 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("aspect_ratio_index", aspect.to_string()),
         ("video_scale_integer", yes(integer).into()),
         ("video_smooth", yes(s.picture == "smooth").into()),
-        ("video_shader_enable", yes(s.picture == "scanlines").into()),
+        ("video_shader_enable", yes(crate::display::look_preset(&p.player, &s.picture).is_some()).into()),
         ("fps_show", yes(s.show_fps).into()),
         // Sound, and normal speed. RetroArch keeps games at their real speed by pacing them with
         // the sound, so without sound they race at the screen's refresh rate (e.g. 144 Hz).
@@ -425,13 +451,25 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
     .chain(quiet_lines(s.show_fps))
     .collect();
     let mut lines: Vec<(String, String)> = base.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-    if let Some(n) = net {
-        for (k, v) in netplay_lines(n) {
+    let mut set = |more: Vec<(String, String)>| {
+        for (k, v) in more {
             match lines.iter_mut().find(|(have, _)| *have == k) {
                 Some(line) => line.1 = v,
                 None => lines.push((k, v)),
             }
         }
+    };
+    // On your own: whole-pixel scaling and the bezel (display.rs). Not yet in Couch Play: its window changes size
+    // (box <-> full screen) and the bezel is fitted to one size (measured: couch-app run 41227307054).
+    if net.is_none() {
+        set(crate::display::config_lines(p.overlay.as_deref(), s.screen != "pixel", s.screen == "stretch"));
+    }
+    // The hidden menu, when the in-game menu is on.
+    if let Some(theme) = &p.menu_theme {
+        set(crate::display::hidden_menu_lines(theme, net.is_some()));
+    }
+    if let Some(n) = net {
+        set(netplay_lines(n));
     }
     let mut out = String::from("# Written by Game Night for each game. Changes here are replaced.\n");
     for (k, v) in lines {
@@ -638,11 +676,29 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         states: states.join(&entry.console),
         system: root.join("bios"),
         cache,
+        overlay: None,
+        menu_theme: None,
     };
+    let mut paths = paths;
+    let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
+    // The bezel, fitted to this screen (or to Couch Play's window). A missing or broken bezel never
+    // stops the game: it just plays without one, and the log says why.
+    if net.is_none() && settings.screen != "stretch" && settings.bezel != "none" {
+        if let Some(size) = screen_size(app) {
+            match crate::display::prepare_bezel(&player, &paths.cache, &settings.bezel, &entry.console, size, settings.screen != "pixel") {
+                Ok(o) => {
+                    bezel_note += &format!("screen {size:?}: {o:?}\n");
+                    paths.overlay = o;
+                }
+                Err(e) => bezel_note += &format!("screen {size:?}: no bezel ({e})\n"),
+            }
+        }
+    }
     let log_file = paths.logs.join("retroarch.log");
     for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache, &paths.logs] {
         fs::create_dir_all(d).map_err(|_| "Couldn't make the saves folder.")?;
     }
+    let _ = fs::write(paths.logs.join("bezel.txt"), bezel_note);
     let cfg = cfg_dir.join("retroarch.cfg");
     if let Some(id) = &pads.player1 {
         let _ = fs::write(&pad_file, id);
@@ -654,9 +710,9 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         None => args.push("--fullscreen".into()),
         Some(n) => args.extend(n.args.iter().map(Into::into)),
     }
-    if settings.picture == "scanlines" {
+    if let Some(look) = crate::display::look_preset(&player, &settings.picture) {
         args.push("--set-shader".into());
-        args.push(player.join("shaders").join("scanlines.slangp").into_os_string());
+        args.push(look.into_os_string());
     }
     // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
     // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
@@ -816,8 +872,10 @@ mod tests {
             states: PathBuf::from("/g/states/nes"),
             system: PathBuf::from("/g/bios"),
             cache: PathBuf::from("/c"),
+            overlay: None,
+            menu_theme: None,
         };
-        let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false };
+        let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false, bezel: "tv".into() };
         let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
         let cfg = retroarch_config(&p, &s, 0, &pads, None);
         for want in [
@@ -870,7 +928,7 @@ mod tests {
         assert!(last.contains("audio_driver = \"dsound\"") && last.contains("vrr_runloop_enable = \"true\""));
         assert!(sound_failed("[ERROR] Failed to initialize audio driver. Will continue without audio.\n"));
         assert!(!sound_failed("[INFO] [Audio]: Started synchronous audio driver.\n"));
-        assert!(cfg.contains("aspect_ratio_index = \"22\"") && cfg.contains("video_scale_integer = \"true\""));
+        assert!(cfg.contains("aspect_ratio_index = \"21\"") && cfg.contains("video_scale_integer = \"true\""));
         assert!(cfg.contains("video_shader_enable = \"false\""));
         assert!(cfg.contains("video_fullscreen = \"true\"") && cfg.contains("network_cmd_enable = \"false\""));
         assert!(!cfg.contains("netplay_request_device"));
@@ -884,6 +942,8 @@ mod tests {
             states: PathBuf::from("/g/states/snes"),
             system: PathBuf::from("/g/bios"),
             cache: PathBuf::from("/c"),
+            overlay: Some(PathBuf::from("/c/bezels/tv.cfg")),
+            menu_theme: Some(PathBuf::from("/c/hidden.cfg")),
         }
     }
 
@@ -893,7 +953,7 @@ mod tests {
 
     #[test]
     fn couch_play_settings() {
-        let s = PlaySettings { screen: "4:3".into(), picture: "sharp".into(), rewind: true, fast_forward: true, show_fps: false };
+        let s = PlaySettings { screen: "4:3".into(), picture: "sharp".into(), rewind: true, fast_forward: true, show_fps: false, bezel: "tv".into() };
         let host = Netplay {
             host: true,
             seat: Some(1),
@@ -930,7 +990,10 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         // Each setting once: Couch Play's values replace the normal ones instead of adding a second line.
-        for key in ["video_fullscreen", "network_cmd_enable", "auto_remaps_enable", "rewind_enable", "netplay_nat_traversal"] {
+        // The bezel, whole-pixel TV shape, and the hidden menu that never pauses the game for the others.
+        assert!(!cfg.contains("input_overlay_enable = \"true\"") && cfg.contains("video_scale_integer = \"false\""));
+        assert!(cfg.contains("menu_pause_libretro = \"false\""));
+        for key in ["video_fullscreen", "network_cmd_enable", "auto_remaps_enable", "rewind_enable", "netplay_nat_traversal", "video_scale_integer", "aspect_ratio_index"] {
             assert_eq!(line(&cfg, key).len(), 1, "{key}");
         }
 

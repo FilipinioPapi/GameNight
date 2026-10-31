@@ -5,14 +5,16 @@ Used by the Windows build (.github/workflows/app.yml) and on a Windows PC for te
 
 It downloads RetroArch's official Windows build at a fixed version, checks the downloads against the
 SHA-256 fingerprints below (so a changed or tampered file stops the build), and copies out only:
-retroarch.exe and the DLLs it loads, the NES and SNES emulators, controller profiles and one
-scanline shader. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
+retroarch.exe and the DLLs it loads, the NES and SNES emulators, controller profiles, a scanline shader,
+three CRT looks (Lottes, Geom, Royale), the animated NES / Super Famicom bezels, and the NyNy77 and Nosh01
+bezel pictures from libretro/overlay-borders. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
 """
 import hashlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -40,6 +42,34 @@ DLLS = [
 ]
 OTHER = ["retroarch.exe", "qt.conf", "platforms/qwindows.dll"]
 SHADER = "shaders/shaders_slang/crt/shaders/zfast_crt"
+# The in-game menu's "look" choices (approved 2026-10-31): CRT Lottes, CRT Geom and CRT Royale, from the same
+# RetroArch download. Only the files each preset really uses are copied (worked out by following the presets'
+# passes, pictures and #include lines), into player/shaders/slang/ with the same folder layout.
+SLANG = "shaders/shaders_slang"
+# "nearest" is the plain look (sharp pixels, no effect): switching to it is how a look is turned off live.
+# Lighter CRT looks and smoothing looks (Jayden asked 2026-10-31): easymode, lottes-fast, hyllian; sharp bilinear,
+# xBR, ScaleFX, HQ4x. "Old TV scanlines" is zfast CRT (above).
+LOOKS = ["nearest.slangp", "crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp",
+         "crt/crt-easymode.slangp", "crt/crt-lottes-fast.slangp", "crt/crt-hyllian.slangp",
+         "pixel-art-scaling/sharp-bilinear.slangp", "edge-smoothing/xbr/xbr-lv2.slangp",
+         "edge-smoothing/scalefx/scalefx.slangp", "edge-smoothing/hqx/hq4x.slangp"]
+# Bezel C (approved 2026-10-31): libretro common-overlays' animated NES and Super Famicom borders (CC BY 4.0).
+BORDERS = "overlays/borders/animated-border"
+BORDER_FILES = ["nes-border.cfg", "img-nes/*", "super_famicom_animated_border.cfg", "img-sfc/*"]
+# Bezels B (default) and A (approved 2026-10-31): libretro/overlay-borders (MIT) at a fixed commit, each picture
+# checked against its fingerprint. Game Night fits them to the whole-pixel game at game start (display.rs).
+BEZEL_BASE = "https://raw.githubusercontent.com/libretro/overlay-borders/9aceca2dd514c589a57d40086557b804851aafcf/"
+BEZELS = {
+    "tv-nes.png": ("16x9 Collections/NyNy77 1080 Bezel/NintendoEntertainmentSystem-nyny77.png",
+                   "cdc92e63595f96f07cdfc47a30764e8008859182b612d5e057b744dd8efb1c63"),
+    "tv-snes.png": ("16x9 Collections/NyNy77 1080 Bezel/NintendoSuperNintendo-nyny77.png",
+                    "5442ba0a64380781356b126146c08627801c0f52429319dcd9d846331bf7f4f4"),
+    "photo-nes.png": ("16x9 Collections/Nosh01 1440 Plain/Nintendo-Entertainment-System-Bezel-16x9-2560x1440.png",
+                      "3a147ba0211f084771cffb01034264f19512c914c63e7c75aa6c741a64d2edd3"),
+    "photo-snes.png": ("16x9 Collections/Nosh01 1440 Plain/Super-Nintendo-Entertainment-System-Bezel-16x9-2560x1440.png",
+                       "6e05ebda89d1d34c3b199ca9a2ba05cdb8f9ae86cb1b6a1ea927052b2042ab4e"),
+    "LICENSE-overlay-borders.txt": ("LICENSE", "afb11426e09da40a1ae4f8fa17ddcc6b6a52d14df04c29bc5bcd06eb8730624d"),
+}
 
 HERE = Path(__file__).resolve().parent
 
@@ -50,6 +80,31 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
+
+
+def slang_files(root: Path, presets: list[str]) -> set[str]:
+    """Every file the presets need, as paths relative to the slang shader folder."""
+    import posixpath
+    import re
+    need, todo = set(), []
+    for preset in presets:
+        need.add(preset)
+        base = posixpath.dirname(preset)
+        for line in (root / preset).read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r'\s*([A-Za-z0-9_]+)\s*=\s*"?([^"#]+?)"?\s*(#.*)?$', line)
+            if m and re.search(r"\.(slang|png|jpg|jpeg)$", m.group(2).strip(), re.I):
+                todo.append(posixpath.normpath(posixpath.join(base, m.group(2).strip())))
+    while todo:
+        f = todo.pop()
+        if f in need:
+            continue
+        if not (root / f).is_file():
+            sys.exit(f"a shader file is missing from RetroArch's download: {f}. Stopping.")
+        need.add(f)
+        if f.endswith((".slang", ".h", ".inc")):
+            for inc in re.findall(r'#include\s+"([^"]+)"', (root / f).read_text(encoding="utf-8", errors="replace")):
+                todo.append(posixpath.normpath(posixpath.join(posixpath.dirname(f), inc)))
+    return need
 
 
 def main(out: Path) -> None:
@@ -64,7 +119,8 @@ def main(out: Path) -> None:
             if got != want:
                 sys.exit(f"{name} doesn't match its fingerprint ({got}). Stopping.")
         x = tmp / "x"
-        wanted = [f"RetroArch-Win64/{n}" for n in DLLS + OTHER] + [f"RetroArch-Win64/{SHADER}/*", "RetroArch-Win64/autoconfig/*"]
+        wanted = [f"RetroArch-Win64/{n}" for n in DLLS + OTHER] + [f"RetroArch-Win64/{SHADER}/*", "RetroArch-Win64/autoconfig/*",
+                                                                 f"RetroArch-Win64/{SLANG}/*", *[f"RetroArch-Win64/{BORDERS}/{f}" for f in BORDER_FILES]]
         subprocess.run(["7z", "x", "-y", f"-o{x}", str(tmp / "RetroArch.7z"), *wanted], check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["7z", "x", "-y", f"-o{x}", str(tmp / "RetroArch_cores.7z"), *[f"RetroArch-Win64/cores/{c}" for c in CORES]],
                        check=True, stdout=subprocess.DEVNULL)
@@ -80,6 +136,18 @@ def main(out: Path) -> None:
         shutil.copytree(src / "autoconfig", out / "autoconfig")
         shutil.copytree(src / SHADER, out / "shaders" / "zfast_crt")
         shutil.copy2(HERE / "scanlines.slangp", out / "shaders" / "scanlines.slangp")
+        for f in sorted(slang_files(src / SLANG, LOOKS)):
+            (out / "shaders" / "slang" / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src / SLANG / f, out / "shaders" / "slang" / f)
+        shutil.copytree(src / BORDERS, out / "overlays" / "animated-border")
+        (out / "overlays" / "bezels").mkdir(parents=True)
+        for name, (path, want) in BEZELS.items():
+            dest = out / "overlays" / "bezels" / name
+            with urllib.request.urlopen(BEZEL_BASE + urllib.parse.quote(path), timeout=120) as r:
+                dest.write_bytes(r.read())
+            got = sha256(dest)
+            if got != want:
+                sys.exit(f"bezel {name} doesn't match its fingerprint ({got}). Stopping.")
         shutil.copy2(HERE / "NOTICE.txt", out / "NOTICE.txt")
     print(f"player ready in {out}")
 

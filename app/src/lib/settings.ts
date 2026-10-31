@@ -7,7 +7,11 @@ import type { PadInput, PadType } from "./pads";
 
 export interface ConsoleSettings {
   screen: "4:3" | "pixel" | "stretch";
-  picture: "scanlines" | "sharp" | "smooth";
+  /** The look (each PC runs its own; it never changes the game). See display.rs look_preset. */
+  picture: "scanlines" | "sharp" | "smooth" | "easymode" | "lottesfast" | "hyllian" | "lottes" | "geom" | "royale"
+    | "sharpsmooth" | "xbr" | "scalefx" | "hq4x";
+  /** Around the game: "tv" dark TV frame (default), "photo" console photo, "pad" lit-up controller, "none". */
+  bezel: "tv" | "photo" | "pad" | "none";
   rewind: boolean;
   fastForward: boolean;
   showFps: boolean;
@@ -40,7 +44,7 @@ export interface RecentPlay {
   minutes?: number;
 }
 
-export const DEFAULT_CONSOLE: ConsoleSettings = { screen: "4:3", picture: "scanlines", rewind: true, fastForward: true, showFps: false };
+export const DEFAULT_CONSOLE: ConsoleSettings = { screen: "4:3", picture: "scanlines", bezel: "tv", rewind: true, fastForward: true, showFps: false };
 
 export const DEFAULTS: Settings = {
   firstRunDone: false, romsFolder: "", mappings: {}, presets: {}, consoles: {},

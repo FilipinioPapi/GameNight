@@ -43,6 +43,7 @@ Nginx Proxy Manager can forward `/gamenight/` with or without stripping it. `PUB
 | `POST /api/lobbies/{code}/relay` | `{"server": "host", "port": 55435, "session": "base64"}` host only | `Lobby` |
 | `PATCH /api/lobbies/{code}` | `{"open": bool}` host only | `Lobby` |
 | `POST /api/lobbies/{code}/seat` | `{"seat": 2, "action": "hold" \| "give" \| "empty", "user": "discord id"}` host only | `Lobby` |
+| `POST /api/lobbies/{code}/pause` | `{"on": true \| false}`. On: anyone with a seat (not watchers). Off: the one who paused, or the host (else 403). Ends by itself after 10 min, or when the one who paused drops, watches or leaves | `Lobby` |
 | `POST /api/lobbies/{code}/leave` | | `{"ok": true}` (host leaving = lobby ends) |
 
 Rate limit lookups/joins by code: 20 a minute per user (stops guessing codes).
@@ -54,7 +55,8 @@ Lobby = LobbySummary + {
   "seats": [{"n":1..4,"user":User|null,"status":"playing"|"held"|"empty","held_left":seconds|null}],
   "watchers": [User],
   "relay": {"server","port","session"} | null,     // only for members
-  "ended": null | "host-left" | "host-ended"
+  "ended": null | "host-left" | "host-ended",
+  "paused": {"by": User, "seconds": n} | null       // "Pause for everyone" (in-game menu); the host's app pauses RetroArch
 }
 ```
 

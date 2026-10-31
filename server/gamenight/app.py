@@ -369,6 +369,12 @@ async def lobby_heartbeat(request: web.Request) -> web.Response:
                                          request[USER].discord_id, state))
 
 
+async def lobby_pause(request: web.Request) -> web.Response:
+    on = _flag(await _body(request, {"on"}), "on")
+    return web.json_response(_lobby_call(request.app[LOBBIES].pause, request.match_info["code"],
+                                         request[USER].discord_id, on))
+
+
 async def lobby_relay(request: web.Request) -> web.Response:
     body = await _body(request, {"server", "port", "session"})
     server, port, session = body.get("server"), body.get("port"), body.get("session")
@@ -447,6 +453,7 @@ def build(cfg, db: Database | None = None, romm_factory=None, lobbies: lb.LobbyB
         ("POST", "/api/lobbies/{code}/heartbeat", lobby_heartbeat),
         ("POST", "/api/lobbies/{code}/relay", lobby_relay),
         ("POST", "/api/lobbies/{code}/seat", lobby_seat),
+        ("POST", "/api/lobbies/{code}/pause", lobby_pause),
         ("POST", "/api/lobbies/{code}/leave", lobby_leave),
     ]
     # Every address answers both as /x and, with BASE_PATH set, as BASE_PATH/x.

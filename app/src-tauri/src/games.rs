@@ -51,9 +51,9 @@ pub struct WantGame {
 #[serde(rename_all = "camelCase")]
 pub struct PlaySettings {
     /// "4:3" (TV shape), "pixel" (square pixels), both whole-pixel with a bezel; "stretch" (fill the screen).
-    screen: String,
+    pub(crate) screen: String,
     /// The look: "sharp", "smooth", or a shader look from display::look_preset.
-    picture: String,
+    pub(crate) picture: String,
     rewind: bool,
     fast_forward: bool,
     show_fps: bool,
@@ -312,7 +312,7 @@ fn screen_size<R: Runtime>(app: &AppHandle<R>) -> Option<(u32, u32)> {
 }
 
 /// Where the bundled RetroArch lives.
-fn player_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+pub(crate) fn player_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
     if let Ok(p) = std::env::var("GAMENIGHT_PLAYER_DIR") {
         return Some(PathBuf::from(p));
@@ -331,6 +331,8 @@ pub struct ConfigPaths {
     pub overlay: Option<PathBuf>,
     /// The see-through theme for RetroArch's hidden menu, when Game Night's in-game menu is on.
     pub menu_theme: Option<PathBuf>,
+    /// RetroArch's command port on this PC (127.0.0.1), for Game Night's in-game menu. None = off.
+    pub cmd_port: Option<u16>,
 }
 
 /// Ways RetroArch can play sound on Windows, best first. If one doesn't start on a PC
@@ -383,8 +385,10 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("ui_menubar_enable", "false".into()),
         ("menu_show_online_updater", "false".into()),
         ("menu_show_core_updater", "false".into()),
-        // Off, except in CI's controller-in-a-game test (the "e2e" build), which asks the game what it sees.
-        ("network_cmd_enable", yes(e2e_mode() == Some("padgame")).into()),
+        // On only for Game Night's in-game menu (and CI's controller-in-a-game test, which asks the game what it
+        // sees). The installer's firewall rule keeps other PCs off it.
+        ("network_cmd_enable", yes(p.cmd_port.is_some() || e2e_mode() == Some("padgame")).into()),
+        ("network_cmd_port", p.cmd_port.unwrap_or(55355).to_string()),
         ("stdin_cmd_enable", "false".into()),
         ("netplay_nat_traversal", "false".into()),
         ("cheevos_enable", "false".into()),
@@ -404,8 +408,9 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         // Quitting goes straight back to Game Night.
         ("input_exit_emulator", "escape".into()),
         ("quit_press_twice", "false".into()),
-        // Both sticks pressed in (L3 + R3). Never Start/Select: Windows and Steam use those for their own shortcuts.
-        ("input_quit_gamepad_combo", "2".into()),
+        // No controller shortcut quits: the Xbox / PS button (or holding L3 + R3) opens Game Night's in-game
+        // menu, which has "Quit to Library". Never Start/Select: Windows and Steam use those for their own shortcuts.
+        ("input_quit_gamepad_combo", "0".into()),
         // Screen
         ("video_driver", "d3d11".into()),
         ("video_fullscreen", "true".into()),
@@ -504,7 +509,10 @@ fn netplay_lines(n: &Netplay) -> Vec<(String, String)> {
         ("netplay_max_ping", "0".into()),
         ("netplay_check_frames", "0".into()),
         ("netplay_ping_show", "false".into()),
-        ("netplay_allow_pausing", "false".into()),
+        // Only the host's "Pause for everyone" (in-game menu, through the server) pauses; RetroArch's own pause
+        // key is off, and the hidden menu never pauses the game for the others (menu_pause_libretro, display.rs).
+        ("netplay_allow_pausing", "true".into()),
+        ("input_pause_toggle", "nul".into()),
         ("netplay_password", "".into()),
         ("netplay_spectate_password", "".into()),
         ("netplay_nickname", name),
@@ -517,7 +525,6 @@ fn netplay_lines(n: &Netplay) -> Vec<(String, String)> {
         ("video_windowed_fullscreen", "false".into()),
         ("video_window_show_decorations", "false".into()),
         ("input_toggle_fullscreen", "nul".into()),
-        // In a lobby, L3 + R3 opens lobby controls, so it mustn't also close the game.
         ("input_quit_gamepad_combo", "0".into()),
         ("pause_nonactive", "false".into()),
         // Netplay can't rewind or speed up.
@@ -580,6 +587,11 @@ pub(crate) struct Launch {
     pub log_file: PathBuf,
     sound_file: PathBuf,
     sound: usize,
+    /// RetroArch's command port (in-game menu).
+    pub cmd_port: u16,
+    pub console: String,
+    pub look: String,
+    pub player: PathBuf,
 }
 
 impl Launch {
@@ -661,6 +673,7 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         cache,
         overlay: None,
         menu_theme: None,
+        cmd_port: None,
     };
     let mut paths = paths;
     let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
@@ -681,6 +694,20 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
     for d in [&cfg_dir, &paths.saves, &paths.states, &paths.system, &paths.cache, &paths.logs] {
         fs::create_dir_all(d).map_err(|_| "Couldn't make the saves folder.")?;
     }
+    // Game Night's in-game menu: RetroArch's own menu, fully see-through, holds your presses back while it's open.
+    let theme = paths.cache.join("hidden-menu.cfg");
+    if fs::write(&theme, crate::display::hidden_menu_theme()).is_ok() {
+        paths.menu_theme = Some(theme);
+    }
+    // On your own, the menu talks to RetroArch on a port of its own (Couch Play's comes with `net`).
+    let cmd_port = match net {
+        Some(n) => n.cmd_port,
+        None if e2e_mode() == Some("padgame") => 55355,
+        None => crate::ingame::free_port(),
+    };
+    if net.is_none() && cmd_port != 0 {
+        paths.cmd_port = Some(cmd_port);
+    }
     let _ = fs::write(paths.logs.join("bezel.txt"), bezel_note);
     let cfg = cfg_dir.join("retroarch.cfg");
     if let Some(id) = &pads.player1 {
@@ -698,14 +725,14 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         args.push(look.into_os_string());
     }
     // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
-    // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
+    // speed), the controller-in-a-game and in-game menu tests up to 3 minutes (they close the game once done).
     match e2e_mode() {
         Some("play") => args.push("--max-frames=600".into()),
-        Some("padgame") => args.push("--max-frames=3600".into()),
+        Some("padgame") => args.push("--max-frames=10800".into()),
         _ => {}
     }
     args.push(rom.into_os_string());
-    Ok(Launch { exe, cwd: player, args, log_file, sound_file, sound })
+    Ok(Launch { exe, cwd: player.clone(), args, log_file, sound_file, sound, cmd_port, console: entry.console.clone(), look: settings.picture.clone(), player: player.clone() })
 }
 
 /// Marks a game as running (only one at a time, alone or online). False = one already is.
@@ -725,7 +752,7 @@ pub(crate) fn release<R: Runtime>(app: &AppHandle<R>) {
 
 /// Starts a downloaded game fullscreen. "game-closed" fires when the player quits.
 #[tauri::command]
-pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settings: PlaySettings) -> Result<(), String> {
+pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, title: Option<String>, settings: PlaySettings) -> Result<(), String> {
     let root = root_of(&root)?;
     if !claim(&app, &id) {
         return Err("A game is already running.".into());
@@ -738,6 +765,13 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
             return Err(e);
         }
     };
+    // The in-game menu (Xbox / PS button) works from now on.
+    let title: String = title.unwrap_or_default().chars().filter(|c| !c.is_control()).take(80).collect();
+    crate::ingame::solo_started(
+        &app,
+        crate::ingame::Solo { pid: child.id(), cmd_port: launch.cmd_port, title, console: launch.console.clone(), look: launch.look.clone(), player: launch.player.clone() },
+    );
+    crate::ingame::prepare(&app);
     // Game Night steps aside (minimizes) once the game's window is up, and comes back when it closes.
     // (Couch Play games don't do this: the lobby stays on screen with the game in its box.)
     crate::gamewindow::reset();
@@ -755,6 +789,7 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     let handle = app.clone();
     std::thread::spawn(move || {
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        crate::ingame::solo_ended(&handle);
         release(&handle);
         let silent = launch.after_exit();
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
@@ -800,7 +835,7 @@ fn e2e_start<R: Runtime>(app: AppHandle<R>) {
         "screen": "4:3", "picture": "scanlines", "rewind": false, "fastForward": false, "showFps": true
     }))
     .expect("settings");
-    if let Err(e) = play_game(app.clone(), root.clone(), "1".into(), settings) {
+    if let Err(e) = play_game(app.clone(), root.clone(), "1".into(), Some("Test game".into()), settings) {
         let _ = fs::write(PathBuf::from(&root).join("e2e-result.json"), serde_json::json!({ "error": e }).to_string());
         app.exit(4);
     }
@@ -857,6 +892,7 @@ mod tests {
             cache: PathBuf::from("/c"),
             overlay: None,
             menu_theme: None,
+            cmd_port: None,
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false, bezel: "tv".into() };
         let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
@@ -910,11 +946,32 @@ mod tests {
             cache: PathBuf::from("/c"),
             overlay: Some(PathBuf::from("/c/bezels/tv.cfg")),
             menu_theme: Some(PathBuf::from("/c/hidden.cfg")),
+            cmd_port: None,
         }
     }
 
     fn line(cfg: &str, key: &str) -> Vec<String> {
         cfg.lines().filter(|l| l.starts_with(&format!("{key} = "))).map(String::from).collect()
+    }
+
+    #[test]
+    fn in_game_menu_settings() {
+        // On your own: no controller shortcut quits (the Xbox / PS button opens Game Night's menu instead), and
+        // the menu talks to RetroArch on its own local port.
+        let s = PlaySettings { screen: "4:3".into(), picture: "sharp".into(), rewind: true, fast_forward: true, show_fps: false, bezel: "tv".into() };
+        let mut p = paths();
+        p.cmd_port = Some(50123);
+        let cfg = retroarch_config(&p, &s, 0, &Default::default(), None);
+        for want in ["input_quit_gamepad_combo = \"0\"", "network_cmd_enable = \"true\"", "network_cmd_port = \"50123\"", "menu_pause_libretro = \"true\"", "kiosk_mode_enable = \"true\""] {
+            assert!(cfg.contains(want), "missing {want}");
+        }
+        assert!(!cfg.contains("input_quit_gamepad_combo = \"2\""));
+        // Couch Play: only the host's "Pause for everyone" pauses; RetroArch's own pause key is off.
+        let host = Netplay { host: true, seat: Some(1), cmd_port: 55123, remaps: None, nickname: "J".into(), window: None, args: vec![] };
+        let cfg = retroarch_config(&paths(), &s, 0, &Default::default(), Some(&host));
+        for want in ["netplay_allow_pausing = \"true\"", "input_pause_toggle = \"nul\"", "menu_pause_libretro = \"false\"", "pause_nonactive = \"false\"", "network_cmd_port = \"55123\""] {
+            assert_eq!(line(&cfg, want.split(" = ").next().unwrap()), vec![want.to_string()], "{want}");
+        }
     }
 
     #[test]

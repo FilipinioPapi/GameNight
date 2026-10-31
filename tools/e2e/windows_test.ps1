@@ -104,6 +104,10 @@ Step "Play the test game with the pretend Xbox controller"
 python (Join-Path $Tools 'pad_test.py') game $exe $root $shots
 if ($LASTEXITCODE -ne 0) { Fail "the game didn't get the pretend controller on Player 1 (screenshots are in the 'screens' download)" }
 
+Step "Game Night's in-game menu over the test game (Xbox button, L3 + R3, pause, look, quit)"
+python (Join-Path $Tools 'pad_test.py') ingame $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the in-game menu test failed (screenshots are in the 'screens' download)" }
+
 Step "Update to $NewVersion through the app's own update box"
 # The update is served at about home-internet speed (3 MB/s), and the old build presses Update in its own
 # update box (GAMENIGHT_E2E=update-ui), so this goes through the same screen and steps Jayden sees.

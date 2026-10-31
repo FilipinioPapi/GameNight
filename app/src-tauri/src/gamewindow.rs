@@ -126,6 +126,17 @@ fn front() -> String {
     os::front()
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Where the game's window is on the screen (x, y, width, height), for the in-game menu to cover it.
+pub fn window_rect(pid: u32) -> Option<(i32, i32, u32, u32)> {
+    os::game_window(pid).and_then(os::rect)
+}
+
+/// Puts the game's window in front again (after the in-game menu closes).
+pub fn focus_game(pid: u32) -> bool {
+    os::game_window(pid).map(os::bring_to_front).unwrap_or(false)
+}
+
 #[cfg(windows)]
 mod os {
     use windows::core::BOOL;
@@ -171,6 +182,13 @@ mod os {
         unsafe { GetForegroundWindow().0 as isize == w }
     }
 
+    pub fn rect(w: isize) -> Option<(i32, i32, u32, u32)> {
+        let mut r = windows::Win32::Foundation::RECT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(HWND(w as *mut _), &mut r) }.ok()?;
+        let (cw, ch) = (r.right - r.left, r.bottom - r.top);
+        (cw > 0 && ch > 0).then_some((r.left, r.top, cw as u32, ch as u32))
+    }
+
     pub fn bring_to_front(w: isize) -> bool {
         unsafe { SetForegroundWindow(HWND(w as *mut _)).as_bool() }
     }
@@ -203,6 +221,10 @@ mod os {
     }
     pub fn is_front(_w: isize) -> bool {
         false
+    }
+    #[allow(dead_code)]
+    pub fn rect(_w: isize) -> Option<(i32, i32, u32, u32)> {
+        None
     }
     pub fn bring_to_front(_w: isize) -> bool {
         false

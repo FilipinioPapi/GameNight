@@ -81,7 +81,7 @@ class Play {
   async play(g: Game) {
     delete this.errors[g.id];
     try {
-      await invoke("play_game", { root: app.settings.romsFolder, id: g.id, settings: app.consoleSettings(g.console) });
+      await invoke("play_game", { root: app.settings.romsFolder, id: g.id, title: g.title, settings: app.consoleSettings(g.console) });
       this.playing = g.id;
       app.startedPlaying(g.id);
     } catch (e) {

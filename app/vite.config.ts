@@ -11,5 +11,10 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(tauriConf.version) },
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "es2022", sourcemap: false },
+  // Two pages: the app (index.html) and the in-game menu's see-through window (menu.html).
+  build: {
+    target: "es2022",
+    sourcemap: false,
+    rollupOptions: { input: { main: "index.html", menu: "menu.html" } },
+  },
 });

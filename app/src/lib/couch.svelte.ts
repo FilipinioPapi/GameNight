@@ -151,6 +151,15 @@ class Couch {
       this.ended = { reason: e.payload?.reason || "ended" };
       this.fullscreen = false;
     });
+    // "Leave lobby" / "End game for everyone" in the in-game menu: the Windows side has already left.
+    await listen("ingame-left-lobby", () => {
+      this.lobby = null;
+      this.ended = null;
+      this.fullscreen = false;
+      this.lastBox = "";
+      app.history = [{ name: "menu" }];
+      app.route = { name: "couch" };
+    });
   }
 
   private got(l: Lobby | null) {

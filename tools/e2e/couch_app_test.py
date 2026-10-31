@@ -200,7 +200,7 @@ class Friend(Ask):
             "cheevos_enable": "false", "discord_allow": "false", "rewind_enable": "false", "input_exit_emulator": "nul",
             "network_cmd_enable": "true", "network_cmd_port": str(self.cmd_port),
             "netplay_public_announce": "false", "netplay_nat_traversal": "false", "netplay_use_mitm_server": "false",
-            "netplay_check_frames": "0", "netplay_nickname": "Friend",
+            "netplay_check_frames": "0", "netplay_nickname": "Friend", "netplay_allow_pausing": "true",
             f"netplay_request_device_p{seat}": "true",
             "video_driver": "d3d11", "video_fullscreen": "false", "video_scale": "2",
             "video_window_save_positions": "true", "video_windowed_position_x": "1600",
@@ -238,12 +238,57 @@ def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
 
 
-def controls(pad):
-    """Holds L3 + R3 for 1.4 s: the lobby controls open."""
-    set_pad(pad, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
-    time.sleep(1.4)
-    set_pad(pad, [])
-    time.sleep(0.6)
+def menu_window(pid):
+    """Game Night's in-game menu window: (visible, (x, y, w, h)) or None."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+
+    def each(hwnd, _):
+        h = ctypes.c_void_p(hwnd)
+        p = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetWindowTextW(h, buf, 64)
+        if p.value == pid and buf.value == "Game Night menu":
+            r = RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            found.append((bool(user32.IsWindowVisible(h)), (r.l, r.t, r.r - r.l, r.b - r.t)))
+        return True
+
+    user32.EnumWindows(proc(each), 0)
+    return found[0] if found else None
+
+
+def menu_shown(app):
+    w = menu_window(app.pid)
+    return bool(w and w[0])
+
+
+# The host's in-game menu, HOME tab (not paused): RESUME, PAUSE FOR EVERYONE, FULL SCREEN / BACK TO LOBBY,
+# REFRESH GAME, END GAME FOR EVERYONE.
+HOST_ITEMS = {"resume": 0, "pause": 1, "full": 2, "lobby": 2, "refresh": 3}
+
+
+def menu(app, pad, item=None):
+    """The Xbox button opens the in-game menu; then D-pad down to `item` and A (None = leave it open)."""
+    tap(pad, B.XUSB_GAMEPAD_GUIDE)
+    if not wait_until(lambda: menu_shown(app), 4, 0.1):
+        fail(f"the in-game menu didn't open with the Xbox button (for {item})")
+        return False
+    time.sleep(0.5)
+    if item is None:
+        return True
+    for _ in range(HOST_ITEMS[item]):
+        tap(pad, B.XUSB_GAMEPAD_DPAD_DOWN)
+        time.sleep(0.3)
+    tap(pad, B.XUSB_GAMEPAD_A)
+    time.sleep(0.8)
+    return True
 
 
 def tap(pad, button):
@@ -425,30 +470,99 @@ def main():
         screenshot("2-friend-connected")
         say("look: after the friend connected")
         look("look-2-friend-connected", app, True)
-        say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
+        say("look: Xbox button for the in-game menu, then FULL SCREEN: the game goes full screen")
         if not window_watch.focus_app(app.pid):
             # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
             fail("couldn't put Game Night in front for the pad presses")
-        controls(pad_a)
-        tap(pad_a, B.XUSB_GAMEPAD_Y)
+        menu(app, pad_a, "full")
+        if menu_shown(app):
+            fail("the in-game menu stayed open after FULL SCREEN")
         look("look-2b-game-full-screen", app, True, game_full=True)
-        say("look: in full screen, L3 + R3 shows the gold popup and its buttons above and below the game")
-        controls(pad_a)
-        # Lobby controls close by themselves after 8 s without a press, so this look is kept short.
-        look("look-2c-full-screen-lobby-controls", app, True, game_full="strips", settle=1.5, seconds=4)
-        say("look: A goes back to the lobby")
-        controls(pad_a)  # opens them again if they closed (does nothing if they're still open)
-        tap(pad_a, B.XUSB_GAMEPAD_A)
+        say("look: in full screen, the in-game menu over the game (the game stays full screen behind it)")
+        menu(app, pad_a)
+        w = menu_window(app.pid)
+        say(f"  menu window: {w}")
+        if w and w[0] and (w[1][2] < 1000 or w[1][3] < 600):
+            fail(f"the in-game menu doesn't cover Game Night's window: {w}")
+        look("look-2c-full-screen-menu-open", app, True, game_full=True, settle=1.0, seconds=4)
+        say("menu open: the host's presses stop reaching the game, the friend's still do")
+        set_pad(pad_a, [B.XUSB_GAMEPAD_X])  # X does nothing in the menu
+        set_pad(pad_b, [B.XUSB_GAMEPAD_A])
+        time.sleep(1.5)
+        a, b = host.ram(0x10, 2), friend.ram(0x10, 2)
+        set_pad(pad_a, [])
+        set_pad(pad_b, [])
+        results["menu_open_buttons"] = {"host": a.hex() if a else None, "friend": b.hex() if b else None}
+        say(f"  with the host's menu open, holding X on pad A and A on pad B: host game {results['menu_open_buttons']['host']}, friend game {results['menu_open_buttons']['friend']}")
+        if not a or not b or a[0] != 0 or b[0] != 0 or a[1] != 0x40 or b[1] != 0x40:
+            fail(f"menu open: pad A should go nowhere and pad B reach player 2 in both games: {results['menu_open_buttons']}")
+        m1 = friend.ram(0, 3)
+        time.sleep(1)
+        m2 = friend.ram(0, 3)
+        if not m1 or not m2 or frame_of(m2) - frame_of(m1) < 30:
+            fail(f"the game didn't keep going for the friend while the host's menu was open: {m1} {m2}")
+        tap(pad_a, B.XUSB_GAMEPAD_B)
+        time.sleep(1)
+        if menu_shown(app):
+            fail("B didn't close the in-game menu")
+        buttons_check(host, friend, pad_a, "A (after the host's menu closed)", 0)
+        say("look: the in-game menu's BACK TO LOBBY")
+        menu(app, pad_a, "lobby")
         look("look-2d-back-to-the-box", app, True)
-        say("full screen and back 6 more times, quickly (Jayden lost control after doing this)")
+        say("full screen and back 6 more times through the menu, quickly (Jayden lost control after doing this)")
         for _ in range(6):
-            controls(pad_a)
-            tap(pad_a, B.XUSB_GAMEPAD_Y)
+            menu(app, pad_a, "full")
             time.sleep(1)
-            controls(pad_a)
-            tap(pad_a, B.XUSB_GAMEPAD_A)
+            menu(app, pad_a, "lobby")
             time.sleep(1)
         look("look-2e-after-switching", app, True)
+
+        say("pause for everyone (host's menu), then resume for everyone")
+        menu(app, pad_a, "pause")
+        paused = wait_until(lambda: friend_api.call("GET", f"/api/lobbies/{code}")[1].get("paused"), 6, 0.5)
+        f1 = friend.ram(0, 3)
+        time.sleep(2)
+        f2 = friend.ram(0, 3)
+        results["pause_host"] = {"server": paused, "friend_frames": [frame_of(f1) if f1 else None, frame_of(f2) if f2 else None]}
+        screenshot("2f-host-paused-for-everyone")
+        say(f"  {results['pause_host']}")
+        if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
+            fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
+        tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
+        time.sleep(3)
+        f1 = friend.ram(0, 3)
+        time.sleep(1)
+        f2 = friend.ram(0, 3)
+        if not f1 or not f2 or frame_of(f2) - frame_of(f1) < 30:
+            fail(f"RESUME FOR EVERYONE didn't start the game again for the friend: {f1} {f2}")
+        tap(pad_a, B.XUSB_GAMEPAD_B)
+        time.sleep(1)
+
+        say("a friend pauses for everyone (through the server); the host's app pauses the game and shows who")
+        status, view = friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": True})
+        if status != 200 or not (view or {}).get("paused"):
+            fail(f"the friend couldn't pause through the server: {status} {view}")
+        time.sleep(5)  # the host's app hears it with its next heartbeat (every 3 s)
+        h1 = host.ram(0, 3)
+        time.sleep(2)
+        h2 = host.ram(0, 3)
+        w = menu_window(app.pid)
+        screenshot("2g-paused-by-friend")
+        results["pause_friend"] = {"host_frames": [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None], "paused_by_window": w}
+        say(f"  {results['pause_friend']}")
+        if not h1 or not h2 or frame_of(h2) != frame_of(h1):
+            fail(f"the friend's pause didn't pause the game: {results['pause_friend']}")
+        if not (w and w[0]):
+            fail("the host's screen didn't show \"Paused by\" while the friend had paused")
+        friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": False})
+        time.sleep(5)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        if not h1 or not h2 or frame_of(h2) - frame_of(h1) < 30:
+            fail(f"the game didn't carry on after the friend resumed: {h1} {h2}")
+        if menu_shown(app):
+            fail("\"Paused by\" stayed on the host's screen after the friend resumed")
 
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)
@@ -518,13 +632,12 @@ def main():
         if app.poll() is not None:
             fail(f"the Game Night app closed during the test (exit {app.returncode})")
 
-        say("refresh: L3 + R3, then RB. The host's game saves its spot, restarts and loads the spot again")
+        say("refresh: the in-game menu's REFRESH GAME. The host's game saves its spot, restarts and loads the spot again")
         window_watch.focus_app(app.pid)
         old_port = ra_cmd_port()
         m = host.ram(0, 3)
         before = frame_of(m) if m else None
-        controls(pad_a)
-        tap(pad_a, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        menu(app, pad_a, "refresh")
         new_port = wait_until(lambda: (p := ra_cmd_port()) and p != old_port and p, 30, 0.5)
         if not new_port or before is None:
             fail(f"refresh: the game didn't restart (port {old_port} -> {new_port}, frame before {before})")

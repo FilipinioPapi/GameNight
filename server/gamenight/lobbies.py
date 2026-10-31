@@ -29,6 +29,7 @@ DROP_SECONDS = 10        # no heartbeat for this long = dropped
 HOLD_SECONDS = 120       # a dropped player's seat is kept for them this long
 HOST_GONE_SECONDS = 30   # host silent this long = lobby closed
 ENDED_KEEP_SECONDS = 60  # members can still see "this lobby ended" for a minute
+PAUSE_MAX_SECONDS = 600  # a "pause for everyone" ends by itself after 10 minutes
 CONSOLES = ("nes", "snes")
 RETROARCH_STATES = ("running", "starting", "stopped")
 
@@ -103,6 +104,8 @@ class Lobby:
     relay: dict | None = None
     ended: str | None = None      # None, "host-left" or "host-ended"
     ended_at: float = 0.0
+    paused_by: str | None = None  # who paused the game for everyone (in-game menu), if anyone
+    paused_at: float = 0.0
 
     def free_seat(self) -> int | None:
         return next((n for n, uid in self.seats.items() if uid is None), None)
@@ -134,6 +137,12 @@ class LobbyBook:
                 self._end(lobby, "host-left", host.last_seen + HOST_GONE_SECONDS)
                 self._say("%s's lobby for %s closed: the host went quiet", host.user["name"], lobby.game["title"])
                 continue
+            if lobby.paused_by is not None:
+                who = lobby.members.get(lobby.paused_by)
+                if now - lobby.paused_at >= PAUSE_MAX_SECONDS or not who or who.seat is None \
+                        or now - who.last_seen >= DROP_SECONDS:
+                    lobby.paused_by = None
+                    self._say("%s in %s carries on (the pause ended by itself)", lobby.game["title"], lobby.code)
             for uid, m in list(lobby.members.items()):
                 if uid == lobby.host_id or now - m.last_seen < DROP_SECONDS:
                     continue
@@ -159,6 +168,8 @@ class LobbyBook:
         m = lobby.members.pop(uid, None)
         if not m:
             return
+        if lobby.paused_by == uid:
+            lobby.paused_by = None
         if m.seat is not None and lobby.seats.get(m.seat) == uid:
             lobby.seats[m.seat] = None
         if uid in lobby.watchers:
@@ -243,6 +254,8 @@ class LobbyBook:
             "watchers": [dict(lobby.members[w].user) for w in lobby.watchers],
             "relay": dict(lobby.relay) if lobby.relay and not lobby.ended else None,
             "ended": lobby.ended,
+            "paused": ({"by": dict(lobby.members[lobby.paused_by].user), "seconds": max(0, int(now - lobby.paused_at))}
+                       if lobby.paused_by in lobby.members and not lobby.ended else None),
         })
         return out
 
@@ -336,6 +349,8 @@ class LobbyBook:
             lobby.seats[m.seat] = None
             m.seat, m.held_until = None, None
             lobby.watchers.append(uid)
+            if lobby.paused_by == uid:
+                lobby.paused_by = None
         elif as_ == "play" and m.seat is None:
             seat = lobby.free_seat()
             if seat is None:
@@ -343,6 +358,26 @@ class LobbyBook:
             lobby.watchers.remove(uid)
             lobby.seats[seat] = uid
             m.seat = seat
+        return self.view(lobby, uid)
+
+    def pause(self, raw_code: str, uid: str, on: bool) -> dict:
+        """"Pause for everyone" from the in-game menu. Anyone playing can pause; the one who paused or the
+        host can resume. The host's app does the real pausing (its RetroArch pauses the game for everyone)."""
+        self.tick()
+        lobby, m = self._member(raw_code, uid)
+        if lobby.ended:
+            raise LobbyError(409, "This lobby has ended.")
+        if on:
+            if m.seat is None:
+                raise LobbyError(409, "Only players can pause the game.")
+            if lobby.paused_by is None:
+                lobby.paused_by, lobby.paused_at = uid, self.clock()
+                self._say("%s paused %s for everyone", m.user["name"], lobby.game["title"])
+        elif lobby.paused_by is not None:
+            if uid not in (lobby.paused_by, lobby.host_id):
+                raise LobbyError(403, "Only the one who paused, or the host, can resume.")
+            lobby.paused_by = None
+            self._say("%s resumed %s for everyone", m.user["name"], lobby.game["title"])
         return self.view(lobby, uid)
 
     def heartbeat(self, raw_code: str, uid: str, retroarch: str) -> dict:

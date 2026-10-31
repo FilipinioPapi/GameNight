@@ -153,6 +153,10 @@ struct Local {
     cmd_port: u16,
     /// The host's relay bridge stopped for good (friends already in carry on; nobody new can join).
     relay_lost: bool,
+    /// Host: this PC's RetroArch is paused for everyone (it follows the lobby's "paused" on the server).
+    paused: bool,
+    /// The look (shader) on this screen now (the in-game menu can change it).
+    look: String,
 }
 
 struct Game {
@@ -211,6 +215,8 @@ impl Couch {
         if v.get("you").is_some_and(Value::is_object) {
             v["you"]["game"] = json!(game);
         }
+        // Top level too: the lobby screen follows it (the in-game menu's "Back to lobby" / "Full screen").
+        v["fullscreen"] = json!(self.gamebox.fullscreen());
         v["local"] = json!({
             "retroarch": state,
             "netplay": if l.disconnected { "disconnected" } else { "ok" },
@@ -237,6 +243,7 @@ fn emit_update<R: Runtime>(app: &AppHandle<R>) {
     if let Some(v) = app.state::<Couch>().view() {
         let _ = app.emit("couch-update", v);
     }
+    crate::ingame::lobby_changed(app);
 }
 
 fn main_hwnd<R: Runtime>(app: &AppHandle<R>) -> isize {
@@ -318,6 +325,8 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         l.seat = seat;
         l.watching = seat.is_none();
         l.cmd_port = cmd_port;
+        l.paused = false;
+        l.look = game.settings.picture.clone();
         l.gen
     };
     log.line(&format!(
@@ -488,10 +497,88 @@ fn take_lobby<R: Runtime>(app: &AppHandle<R>, s: &mut Session, lobby: Value) -> 
     let changed = lock(&couch.latest).as_ref() != Some(&lobby);
     *lock(&couch.latest) = Some(lobby.clone());
     reconcile(app, s, &lobby);
+    follow_pause(app, s, &lobby);
     if changed {
         emit_update(app);
     }
     None
+}
+
+/// Host: "Pause for everyone" lives on the server (anyone playing can ask, from their in-game menu). The host's
+/// RetroArch pauses the game for everyone (RetroArch's PAUSE_TOGGLE, measured: a friend's own pause can't be
+/// resumed by the others, so friends never pause their RetroArch themselves).
+fn follow_pause<R: Runtime>(app: &AppHandle<R>, s: &Session, lobby: &Value) {
+    if !s.host || s.ra.is_none() {
+        return;
+    }
+    let want = lobby.get("paused").is_some_and(Value::is_object);
+    let couch = app.state::<Couch>();
+    let port = {
+        let mut l = lock(&couch.local);
+        if l.state != RaState::Running || l.disconnected || l.paused == want {
+            return;
+        }
+        l.paused = want;
+        l.cmd_port
+    };
+    let by = lobby["paused"]["by"]["name"].as_str().unwrap_or("someone");
+    s.log.line(&if want { format!("paused for everyone (asked by {by}): PAUSE_TOGGLE") } else { "resumed for everyone: PAUSE_TOGGLE".to_string() });
+    send_cmd(port, "PAUSE_TOGGLE");
+}
+
+/// "Pause for everyone" / "Resume for everyone" from the in-game menu (board IG2), through the server.
+pub async fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), String> {
+    lobby_call(app, reqwest::Method::POST, "/pause", Some(json!({ "on": on }))).await.map(|_| ())
+}
+
+/// What the in-game menu needs to know about this PC's Couch Play game.
+pub struct MenuContext {
+    pub running: bool,
+    pub cmd_port: u16,
+    pub host: bool,
+    pub watching: bool,
+    pub fullscreen: bool,
+    pub title: String,
+    pub console: String,
+    pub look: String,
+    pub player: PathBuf,
+    pub view: Value,
+}
+
+pub fn menu_context<R: Runtime>(app: &AppHandle<R>) -> Option<MenuContext> {
+    let couch = app.state::<Couch>();
+    let view = couch.view()?;
+    let (running, cmd_port, watching, look) = {
+        let l = lock(&couch.local);
+        (l.state == RaState::Running && !l.disconnected, l.cmd_port, l.watching, l.look.clone())
+    };
+    Some(MenuContext {
+        running,
+        cmd_port,
+        host: view["you"]["role"].as_str() == Some("host"),
+        watching,
+        fullscreen: couch.gamebox.fullscreen(),
+        title: view["game"]["title"].as_str().unwrap_or("").to_string(),
+        console: view["game"]["console"].as_str().unwrap_or("").to_string(),
+        look,
+        player: games::player_dir(app).unwrap_or_default(),
+        view,
+    })
+}
+
+/// The in-game menu changed the look: it stays for this lobby (also after the game restarts).
+pub fn set_menu_look<R: Runtime>(app: &AppHandle<R>, look: &str) {
+    let couch = app.state::<Couch>();
+    lock(&couch.local).look = look.to_string();
+    let app = app.clone();
+    let look = look.to_string();
+    tauri::async_runtime::spawn(async move {
+        let couch = app.state::<Couch>();
+        let mut g = couch.session.lock().await;
+        if let Some(s) = g.as_mut() {
+            s.game.settings.picture = look;
+        }
+    });
 }
 
 /// Ends this PC's part in the lobby: closes the game and the relay session.

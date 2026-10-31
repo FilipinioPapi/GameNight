@@ -15,6 +15,7 @@ mod display;
 mod gamebox;
 mod games;
 mod gamewindow;
+mod ingame;
 mod pads;
 mod relay;
 mod retroports;
@@ -274,6 +275,10 @@ pub fn run() {
             couch::couch_leave,
             couch::couch_box,
             couch::couch_fullscreen,
+            ingame::ingame_info,
+            ingame::ingame_close,
+            ingame::ingame_note,
+            ingame::ingame_do,
             couch::couch_full_cover,
             couch::couch_refresh,
             toggle_fullscreen,

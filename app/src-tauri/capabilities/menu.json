@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "menu",
+  "description": "What the in-game menu window (over the game) is allowed to do: hear Game Night's events. Nothing else.",
+  "windows": ["menu"],
+  "permissions": ["core:event:default"]
+}

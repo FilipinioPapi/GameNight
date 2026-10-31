@@ -1,4 +1,7 @@
 # 0.3.7
-Couch Play: in full screen, holding L3 + R3 now shows the gold lobby controls popup and its buttons above and below the game
-Press A to go back to the lobby. Y only takes you into full screen now
-New: Refresh game (RB in lobby controls). If your controller stops working in a game, it saves your spot, restarts the game and puts you right back where you were
+New: Game Night's own game menu. Press the Xbox or PS button in any game (or hold both sticks in, L3 + R3)
+On your own it pauses the game: resume, save, load, restart, change the look, or quit to the Library (it asks first)
+In Couch Play your friends keep playing while your menu is open: back to the lobby, full screen, refresh game, play or watch, leave
+Pause for everyone: anyone playing can pause the game for the whole lobby, and everyone sees who paused it
+Refresh game: if your controller stops working in a game, it saves your spot, restarts the game and puts you right back where you were
+RetroArch's own menus are gone for good: everything is in Game Night's menu

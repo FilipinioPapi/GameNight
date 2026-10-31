@@ -36,6 +36,46 @@ static OPEN: AtomicBool = AtomicBool::new(false);
 /// When the menu was last opened or closed by a button (see `toggle`).
 static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
 static LOG: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
+/// RetroArch's hidden menu is open on this command port (each RetroArch gets a new port, so a game that
+/// restarted never looks open).
+static RA_MENU: Mutex<Option<u16>> = Mutex::new(None);
+/// Couch Play host: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
+static PAUSE_HOLD: Mutex<Option<u16>> = Mutex::new(None);
+
+/// Opens or closes RetroArch's hidden menu (MENU_TOGGLE) only if it isn't that way already.
+fn ra_menu(port: u16, want: bool) {
+    let mut g = lock(&RA_MENU);
+    if (*g == Some(port)) != want {
+        send_cmd(port, "MENU_TOGGLE");
+        *g = want.then_some(port);
+    }
+}
+
+/// Couch Play host, pause for everyone. Measured (CI run 41249302754): the host's pause with its hidden menu
+/// open came back fine after 8 s, but a pause with the menu closed (a friend's pause) left the game stuck
+/// and out of sync after resuming (run 41247795649). So the host's RetroArch always pauses from inside its
+/// hidden menu, which also keeps the host's buttons out of the paused game.
+pub fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, port: u16, want: bool) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if want {
+            *lock(&PAUSE_HOLD) = Some(port);
+            ra_menu(port, true);
+            // Commands right after MENU_TOGGLE were sometimes lost (CI run 41238375842).
+            std::thread::sleep(Duration::from_millis(250));
+            send_cmd(port, "PAUSE_TOGGLE");
+            note(&app, "paused for everyone: hidden menu open, PAUSE_TOGGLE");
+        } else {
+            send_cmd(port, "PAUSE_TOGGLE");
+            std::thread::sleep(Duration::from_millis(250));
+            *lock(&PAUSE_HOLD) = None;
+            if !is_open() {
+                ra_menu(port, false);
+            }
+            note(&app, &format!("resumed for everyone: PAUSE_TOGGLE{}", if is_open() { " (menu still open)" } else { ", hidden menu closed" }));
+        }
+    });
+}
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -259,7 +299,7 @@ pub fn open<R: Runtime>(app: &AppHandle<R>, why: &str) {
         return;
     }
     // Your presses stop reaching the game (and on your own the game pauses).
-    send_cmd(cmd_port(&p), "MENU_TOGGLE");
+    ra_menu(cmd_port(&p), true);
     if let Some((x, y, cw, ch)) = place(app, &p) {
         let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
         let _ = w.set_size(tauri::PhysicalSize::new(cw.max(200), ch.max(200)));
@@ -279,7 +319,11 @@ pub fn close<R: Runtime>(app: &AppHandle<R>, why: &str) {
     }
     let p = playing(app);
     if let Some(p) = &p {
-        send_cmd(cmd_port(p), "MENU_TOGGLE");
+        // A pause for everyone keeps RetroArch's hidden menu open until it's resumed.
+        let port = cmd_port(p);
+        if *lock(&PAUSE_HOLD) != Some(port) {
+            ra_menu(port, false);
+        }
     }
     // Still paused for everyone: the window stays, showing "Paused by ..." (board IG3).
     let paused = matches!(&p, Some(Playing::Couch(c)) if c.view.get("paused").is_some_and(Value::is_object));
@@ -436,7 +480,7 @@ pub async fn ingame_do<R: Runtime>(app: AppHandle<R>, action: String, value: Opt
                 if lock(&SOLO).is_some() {
                     // Never leave the game stuck behind RetroArch's hidden menu.
                     note(&app2, "the game didn't quit: closing RetroArch's hidden menu so it can be played");
-                    send_cmd(port, "MENU_TOGGLE");
+                    ra_menu(port, false);
                 }
             });
         }

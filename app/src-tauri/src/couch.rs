@@ -562,7 +562,7 @@ fn follow_pause<R: Runtime>(app: &AppHandle<R>, s: &Session, lobby: &Value) {
     };
     let by = lobby["paused"]["by"]["name"].as_str().unwrap_or("someone");
     s.log.line(&if want { format!("paused for everyone (asked by {by}): PAUSE_TOGGLE") } else { "resumed for everyone: PAUSE_TOGGLE".to_string() });
-    send_cmd(port, "PAUSE_TOGGLE");
+    crate::ingame::pause_for_everyone(app, port, want);
 }
 
 /// "Pause for everyone" / "Resume for everyone" from the in-game menu (board IG2), through the server.

@@ -629,6 +629,7 @@ def main():
         say("pause for everyone (host's menu), then resume for everyone")
         menu(app, pad_a, "pause")
         paused = wait_until(lambda: friend_api.call("GET", f"/api/lobbies/{code}")[1].get("paused"), 6, 0.5)
+        time.sleep(0.5)  # the pause reaches the friend's game a few frames later (2 frames in run 41249302754)
         f1 = friend.ram(0, 3)
         time.sleep(2)
         f2 = friend.ram(0, 3)

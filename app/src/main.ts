@@ -19,9 +19,11 @@ import App from "./App.svelte";
 import { app } from "./lib/state.svelte";
 import { startGamepad } from "./lib/gamepad";
 
-// Escape goes back, like B on a controller.
+// Escape goes back, like B on a controller. In a text box it just leaves the box.
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") app.back();
+  if (e.key !== "Escape") return;
+  if (e.target instanceof HTMLInputElement) e.target.blur();
+  else app.back();
 });
 // No right-click menu: this is an app, not a web page.
 window.addEventListener("contextmenu", (e) => e.preventDefault());

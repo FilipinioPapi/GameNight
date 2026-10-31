@@ -401,7 +401,9 @@ def main():
         say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
         for name, full in (("look-2b-game-full-screen", True), ("look-2c-back-to-the-box", False)):
             # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
-            say(f"  Game Night in front: {window_watch.focus_app(app.pid)}")
+            if not window_watch.focus_app(app.pid):
+                fail(f"{name}: couldn't put Game Night in front for the pad presses")
+                continue
             set_pad(pad_a, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
             time.sleep(1.4)
             set_pad(pad_a, [])

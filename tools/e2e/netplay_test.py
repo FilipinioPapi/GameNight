@@ -69,6 +69,7 @@ NETPLAY_PORT = 55435
 RELAY_PORT = 55436
 MASH_SECONDS = int(os.environ.get("NETPLAY_MASH_SECONDS", "90"))
 SHORT_MASH_SECONDS = 30  # the far-away relays get a shorter sync check
+LONG_MASH_SECONDS = 300  # the long rounds through the nearest relay
 ONLY_ROUNDS = [r for r in os.environ.get("NETPLAY_ROUNDS", "").replace(",", " ").split() if r]
 LOBBY = "http://lobby.libretro.com/"  # what RetroArch 1.22.2 itself uses (file_path_special.h)
 PRESSES = 15  # presses per pad for the press-delay measurement
@@ -369,6 +370,12 @@ class TunnelBridge(threading.Thread):
                       "friend_to_host_bytes": 0, "host_to_friend_bytes": 0}
         self.loop = None
         self.writer = None
+        self.t0 = time.time()
+        self.events = []  # what happened on the relay connections, with seconds since the bridge started
+
+    def note(self, what):
+        self.events.append((round(time.time() - self.t0, 2), what))
+        say(f"  bridge @{self.events[-1][0]} s: {what}")
 
     def run(self):
         try:
@@ -398,7 +405,8 @@ class TunnelBridge(threading.Thread):
         while True:
             try:
                 magic = struct.unpack("!I", await reader.readexactly(4))[0]
-            except (asyncio.IncompleteReadError, ConnectionError):
+            except (asyncio.IncompleteReadError, ConnectionError) as e:
+                self.note(f"the relay closed the session connection ({type(e).__name__})")
                 return
             if magic == RATP:
                 writer.write(struct.pack("!I", RATP))
@@ -428,14 +436,20 @@ class TunnelBridge(threading.Thread):
             await up_writer.drain()
             host_reader, host_writer = await asyncio.open_connection("127.0.0.1", self.target_port)
             self.stats["links"] += 1
+            n = self.stats["links"]
+            self.note(f"link {n}: a friend arrived through the relay and is passed to the host")
         except Exception as e:  # noqa: BLE001
             self.stats["links_failed"] += 1
-            say(f"  bridge: a friend's link failed: {type(e).__name__}: {e}")
+            self.note(f"a friend's link failed: {type(e).__name__}: {e}")
             return
-        await asyncio.gather(self.pipe(up_reader, host_writer, "friend_to_host_bytes"),
-                             self.pipe(host_reader, up_writer, "host_to_friend_bytes"), return_exceptions=True)
+        await asyncio.gather(self.pipe(up_reader, host_writer, "friend_to_host_bytes", f"link {n}: relay side (friend)"),
+                             self.pipe(host_reader, up_writer, "host_to_friend_bytes", f"link {n}: host side"),
+                             return_exceptions=True)
 
-    async def pipe(self, reader, writer, counter):
+    async def pipe(self, reader, writer, counter, label):
+        """Copies one direction. Notes which side ended the link first and how, so a dropped connection
+        can be pinned on the relay, the host or this bridge."""
+        how = "closed it (end of data)"
         try:
             while True:
                 data = await reader.read(65536)
@@ -444,7 +458,10 @@ class TunnelBridge(threading.Thread):
                 self.stats[counter] += len(data)
                 writer.write(data)
                 await writer.drain()
+        except Exception as e:  # noqa: BLE001
+            how = f"broke: {type(e).__name__}: {e}"
         finally:
+            self.note(f"{label} {how}")
             writer.close()
 
 
@@ -733,7 +750,12 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, l
         say(f"  {len(samples)} looks, {len(checked)} frames compared out of about {span[1] - span[0]} played, "
             f"{len(bad_frames)} different; speed host {fps_h:.2f} / friend {fps_f:.2f} frames a second; "
             f"frame gap between the copies: biggest {result['biggest_frame_gap']}, average {result['average_frame_gap']}")
-        if mismatches:
+        drops = [l for c in (host, friend) for l in c.log_text().splitlines() if "disconnected" in l.lower()]
+        result["dropped_during_play"] = drops
+        if drops:
+            fail(f"{name}: the connection dropped during play ({'; '.join(drops)}); after a drop the two games "
+                 f"run on their own, so frames differ from then on")
+        elif mismatches:
             fail(f"{name}: the two games went out of sync (first different frame {mismatches[0]['frame']})")
         if len(samples) < mash_seconds * 2:
             fail(f"{name}: too few readings ({len(samples)}) to trust the sync check")
@@ -814,7 +836,7 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, l
         return result
     finally:
         if bridge:
-            result.setdefault("relay", {})["bridge"] = dict(bridge.stats, error=bridge.error)
+            result.setdefault("relay", {})["bridge"] = dict(bridge.stats, error=bridge.error, events=bridge.events)
             say(f"bridge: {bridge.stats} (error: {bridge.error})")
             bridge.stop()
         for c in (friend, host):
@@ -973,6 +995,10 @@ def main():
         ("relay-private-madrid", {"place": "madrid", "mash_seconds": SHORT_MASH_SECONDS}),
         ("relay-private-saopaulo", {"place": "saopaulo", "mash_seconds": SHORT_MASH_SECONDS}),
         ("relay-private-singapore", {"place": "singapore", "mash_seconds": SHORT_MASH_SECONDS}),
+        # Longer play through the nearest relay, both ways, to see whether connections drop (run 41169114880
+        # dropped one at ~60 s): if both drop, it's the relay or the internet; if only the private one, the bridge.
+        ("relay-listed-nyc-long", {"place": "nyc", "listed": True, "mash_seconds": LONG_MASH_SECONDS}),
+        ("relay-private-nyc-long", {"place": "nyc", "mash_seconds": LONG_MASH_SECONDS}),
     ]
     rounds = []
     for name, opts in plan:

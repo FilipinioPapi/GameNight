@@ -13,7 +13,7 @@ Labels: **Confirmed** = measured. **Strongly inferred** = follows from measureme
   fingerprint-checked). **Confirmed**: windows-latest is Windows Server 2025 with no Xbox 360 driver, so
   without the cab a pretend Xbox pad fails with `VIGEM_ERROR_TARGET_NOT_PLUGGED_IN`.
 - `tools/e2e/pad_test.py menus`: two pretend pads like Jayden's PC (an idle one in slot 1, the one we
-  press in slot 2). Opens the real app (e2e build, test player, no sign-in) and presses D-pad down, up,
+  press in slot 2). Opens the real app (e2e build, test player, no sign-in) and presses D-pad right, right, left, left,
   A, B. Reads `pads.txt` after each press.
 - `tools/e2e/pad_test.py game`: presses A in the menus, Game Night starts the test game, then holds each
   button and asks the game (RetroArch's local command port, on only in the e2e build) which NES buttons
@@ -40,7 +40,7 @@ Labels: **Confirmed** = measured. **Strongly inferred** = follows from measureme
 What we know: menus and games work in the cloud with the same setup as his PC except the two points above.
 Steps (his hands only; no pretend presses on his PC):
 1. Install the PR #9 build (`Game-Night-windows` from the latest green run).
-2. Main menu: D-pad down, up, A (Play opens), B (back).
+2. Main menu: D-pad right, right, left, left across the cards, A (Library opens), B (back, lands on LIBRARY).
 3. Library: pick a game with A; on its page press B to go back (don't press Remove).
 4. Play a game: does it react to A and the D-pad? Quit with Esc.
 Then send (or let Claude read, with his OK) `%LOCALAPPDATA%\xyz.jjsnas.gamenight\player\logs\pads.txt`

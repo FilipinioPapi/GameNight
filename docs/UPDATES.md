@@ -14,11 +14,19 @@ signing key.
    writes it to `/mnt/user/JJsNAS/RoofRage-Updates/gamenight/v<version>/GameNightSetup.exe`. It writes a signed
    `latest.json` last. Log: `/mnt/user/appdata/gamenight-sync/sync.log`.
 4. Every Game Night app checks `https://updates.jjsnas.xyz/gamenight/latest.json` when it opens and on the
-   main menu (at most every 30 minutes). The menu then shows **Update ready**, and one click downloads,
-   checks, installs quietly and reopens.
-5. The install runs from a small helper script after Game Night closes. It writes each step to
-   `%LOCALAPPDATA%\xyz.jjsnas.gamenight\update\update.log` (old version, installer result, new version), which
-   is the first thing to read if an update doesn't take.
+   main menu (at most every 30 minutes). The menu then shows **Update ready**.
+5. Pressing **Update now** walks through these steps in the update box:
+   - **Downloading… NN%**: the download, with the real percentage.
+   - **Downloaded** (100%, checked against Jayden's signature ✓), shown for a moment.
+   - **Installing…**: Game Night starts a small hidden helper, waits until it is running, then closes.
+   - The installer's own **"Game Night Setup / Installing"** window shows the install progress bar (passive
+     mode, no clicks needed) and opens Game Night again when it's done (`/P /UPDATE /R`). If the install
+     fails twice, the helper opens the old Game Night again.
+   - The new Game Night comes to the front (Windows would otherwise open it behind other windows) and shows
+     **Updated to vX.Y.Z** with an OK button.
+6. Every step goes into `%LOCALAPPDATA%\xyz.jjsnas.gamenight\update\update.log` (UTC times): what the app
+   sent, what the box showed, the helper and installer results, and the next start-up. It keeps earlier
+   attempts (it restarts once it passes 256 KB). It's the first thing to read if an update doesn't take.
 
 The install link for friends is always the newest version:
 `https://updates.jjsnas.xyz/gamenight/v<version>/GameNightSetup.exe`.

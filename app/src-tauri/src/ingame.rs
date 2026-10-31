@@ -305,6 +305,18 @@ pub fn close<R: Runtime>(app: &AppHandle<R>, why: &str) {
     }
 }
 
+/// Quit to Library: the menu window goes away, RetroArch's hidden menu stays open until the game closes.
+fn hide_for_quit<R: Runtime>(app: &AppHandle<R>) {
+    if !OPEN.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(w) = app.get_webview_window(LABEL) {
+        let _ = w.hide();
+    }
+    emit_state(app);
+    note(app, "menu closed (Quit to Library): QUIT sent");
+}
+
 /// Once a second from pads.rs: close the menu if the game stopped.
 pub fn check<R: Runtime>(app: &AppHandle<R>) {
     if is_open() && !active(app) {
@@ -405,9 +417,28 @@ pub async fn ingame_do<R: Runtime>(app: AppHandle<R>, action: String, value: Opt
             close(&app, "Restart game");
         }
         ("quit", Playing::Solo(_)) => {
-            close(&app, "Quit to Library");
-            std::thread::sleep(Duration::from_millis(150));
+            // QUIT while RetroArch's hidden menu is still open: closing that menu first and quitting straight
+            // after was sometimes lost (CI run 41238375842). RetroArch's quit works from its menu too.
             send_cmd(port, "QUIT");
+            hide_for_quit(&app);
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                for attempt in 1..=3 {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    if lock(&SOLO).is_none() {
+                        note(&app2, &format!("game closed after Quit ({attempt} s)"));
+                        return;
+                    }
+                    note(&app2, &format!("game still running {attempt} s after Quit: QUIT again"));
+                    send_cmd(port, "QUIT");
+                }
+                std::thread::sleep(Duration::from_millis(1000));
+                if lock(&SOLO).is_some() {
+                    // Never leave the game stuck behind RetroArch's hidden menu.
+                    note(&app2, "the game didn't quit: closing RetroArch's hidden menu so it can be played");
+                    send_cmd(port, "MENU_TOGGLE");
+                }
+            });
         }
         // ---- Couch Play
         ("lobby", Playing::Couch(_)) => {

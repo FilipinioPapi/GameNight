@@ -75,6 +75,13 @@ QUIET_MENU = {
     "menu_show_quit_retroarch": "false", "menu_show_restart_retroarch": "false", "menu_show_information": "false",
     "menu_show_configurations": "false", "menu_show_help": "false", "menu_show_overlays": "false",
     "menu_show_rewind": "false", "menu_show_latency": "false",
+    # Main menu and tabs empty too (display.rs hidden_menu_lines): B in the hidden menu goes back to the main menu.
+    **{f"menu_show_{k}": "false" for k in (
+        "load_disc", "dump_disc", "eject_disc", "online_updater", "core_updater", "legacy_thumbnail_updater",
+        "core_manager_steam", "reboot", "shutdown", "advanced_settings")},
+    **{f"content_show_{k}": "false" for k in (
+        "settings", "favorites", "images", "music", "video", "netplay", "history", "playlists", "explore")},
+    "content_show_add_entry": "0", "content_show_contentless_cores": "0", "quick_menu_show_game_ai": "false",
     **{f"quick_menu_show_{k}": "false" for k in (
         "resume_content", "restart_content", "close_content", "savestate_submenu", "save_load_state", "replay",
         "take_screenshot", "undo_save_load_state", "add_to_favorites", "add_to_playlist", "start_recording",
@@ -533,6 +540,37 @@ class Trio(cl.Couch):
             say(f"  P2's window with its RetroArch menu open: {pic} (menu invisible and game live: {res['menu']['invisible_while_open']})")
             if not res["menu"]["blocks_own_presses"]:
                 fail("couch: with P2's menu open, pad B still reached the game")
+
+            # ---- the HOST's menu open, each button pressed on its own (Couch Play app test: the host's RetroArch
+            # crashed, 0xc0000005, while its hidden menu was open and buttons were pressed; runs 41236464953,
+            # 41238376028). Which button, and does it happen without Game Night?
+            p1 = self.copies["P1"]
+            res["host_menu"] = {"buttons": []}
+            p1.send("MENU_TOGGLE")
+            time.sleep(2)
+            for label, btn in (("A", B.XUSB_GAMEPAD_A), ("B", B.XUSB_GAMEPAD_B), ("X", B.XUSB_GAMEPAD_X),
+                               ("Y", B.XUSB_GAMEPAD_Y), ("LB", B.XUSB_GAMEPAD_LEFT_SHOULDER),
+                               ("RB", B.XUSB_GAMEPAD_RIGHT_SHOULDER), ("Start", B.XUSB_GAMEPAD_START),
+                               ("Back", B.XUSB_GAMEPAD_BACK), ("Up", B.XUSB_GAMEPAD_DPAD_UP),
+                               ("Down", B.XUSB_GAMEPAD_DPAD_DOWN), ("Left", B.XUSB_GAMEPAD_DPAD_LEFT),
+                               ("Right", B.XUSB_GAMEPAD_DPAD_RIGHT), ("L3", B.XUSB_GAMEPAD_LEFT_THUMB),
+                               ("R3", B.XUSB_GAMEPAD_RIGHT_THUMB), ("A again", B.XUSB_GAMEPAD_A),
+                               ("X held 1.5 s", B.XUSB_GAMEPAD_X)):
+                set_pad(pads[1], [btn])
+                time.sleep(1.5 if "held" in label else 0.3)
+                set_pad(pads[1], [])
+                time.sleep(1.0)
+                alive = p1.alive()
+                res["host_menu"]["buttons"].append({"button": label, "host_alive": alive})
+                say(f"  host's hidden menu open, pad A pressed {label}: host's RetroArch still running: {alive}")
+                if not alive:
+                    res["host_menu"]["crashed_on"] = label
+                    res["host_menu"]["host_log_tail"] = p1.log_text().splitlines()[-15:]
+                    fail(f"couch: the host's RetroArch closed when {label} was pressed in its hidden menu")
+                    break
+            if p1.alive():
+                p1.send("MENU_TOGGLE")
+                time.sleep(2)
 
             # ---- the known way, for comparison: switch to watching and back
             res["watch_way"] = [self.timed("P2 switches to watching", lambda: p2.send("NETPLAY_GAME_WATCH"), 4)]

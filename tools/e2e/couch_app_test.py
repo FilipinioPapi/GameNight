@@ -240,6 +240,18 @@ class Friend(Ask):
             self.proc.wait(10)
 
 
+class HostAsk(Ask):
+    """The app's RetroArch: follows its command port when the app starts it again (a crash or Refresh), so one
+    problem shows as one failure instead of every later check reading nothing."""
+
+    def __init__(self, port):
+        self.first = port
+
+    @property
+    def cmd_port(self):
+        return ra_cmd_port() or self.first
+
+
 def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
 
@@ -466,7 +478,7 @@ def main():
         results["host_ready_seconds"] = round(time.time() - t0, 1)
         code = info["code"]
         say(f"  app hosted lobby {code} in {results['host_ready_seconds']} s (its RetroArch command port {info['cmd_port']})")
-        host = Ask(int(info["cmd_port"]))
+        host = HostAsk(int(info["cmd_port"]))
         screenshot("1-host-lobby")
         say("look: the lobby screen, full screen by default")
         look("look-1-full-screen", app, True)

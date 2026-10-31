@@ -161,3 +161,18 @@ quit with confirm), `couch_app_test.py` (menu over full screen game, host presse
 pause for everyone both ways, IG3 shown, bezel lit around the full screen game and not in the box).
 Unknown until measured: whether RetroArch's own pad config also reacts to the Xbox button (double toggle), whether
 the PS button reaches Game Night while a game is in front (needs Jayden's real DualSense).
+
+### Couch Play findings (2026-10-31 late, all measured in CI)
+- Confirmed: the host's RetroArch crashes (0xc0000005) were caused by the TEST asking RetroArch `GET_STATUS`
+  (cdb attached by `couch_app_test.py`, run 41246455248: null read at retroarch+0x1af761 inside the GET_STATUS
+  handler). Game Night never sends GET_STATUS. Never use it in tests either.
+- Confirmed: a command sent right after MENU_TOGGLE can be lost (Quit, Refresh's SAVE_STATE, bezel page flips).
+  `ingame::ra_menu` tracks RetroArch's hidden menu per command port; `ra_menu_settled()` is false for 0.5 s after a
+  toggle; Refresh waits and re-sends SAVE_STATE once; bezel flips wait and are re-checked every second.
+- Confirmed: the host pausing with its hidden menu CLOSED left netplay stuck and out of sync after resuming (run
+  41247795649); with the menu open it came back fine even after 8 s (run 41249302754). So the host always pauses for
+  everyone from inside its hidden menu (`ingame::pause_for_everyone`, `PAUSE_HOLD` keeps that menu open until resume).
+- Measured: with the host's menu open the game runs slower on GitHub's machine (software graphics): about 50 to 36
+  frames a second in full screen. Unknown on a real graphics card; check with Jayden's PC.
+- Debug aids kept in CI only: WER LocalDumps + cdb as crash debugger (couch-app.yml), cdb attached to each host
+  RetroArch (`watch_host_crashes`), summary in the "Where RetroArch crashed" step.

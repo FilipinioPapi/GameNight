@@ -666,6 +666,140 @@ class Trio(cl.Couch):
         return go
 
 
+PAUSE_HOLD_SECONDS = int(os.environ.get("INGAME_PAUSE_SECONDS", "20"))
+
+
+class PausePair(cl.Couch):
+    """Host P1 + friend P2 through the nyc relay, like the app. Measures how RetroArch 1.22.2 netplay survives
+    a LONG pause for everyone. Found in the Couch Play app test: a host pause with its hidden menu open dropped
+    the friend after about 10 s (run 41251728442, RetroArch's 10 s client stall limit), and a host pause with
+    the menu closed left the game stuck after resuming (run 41247795649, RetroArch's 5 s host stall limit)."""
+
+    def run_variant(self, label, pause, resume):
+        res = self.res
+        common = {"netplay_allow_pausing": "true", "menu_pause_libretro": "false", "pause_nonactive": "false",
+                  **DISPLAY, **QUIET_MENU}
+        host = self.person("P1", 0, self.slots[1], {**common, "netplay_request_device_p1": "true"})
+        self.person("P2", 1, self.slots[2], {**common, "netplay_request_device_p2": "true"})
+        try:
+            relay_host, relay_port = np.relay_address("nyc")
+            self.relay = (relay_host, relay_port)
+            host.start(self.rom, ["--host", "--port", str(cl.NETPLAY_PORT)])
+            if not host.locate(40):
+                fail(f"pause {label}: the host's game never started")
+                return res
+            self.live.append(host)
+            self.watch = cl.FrameWatch(host)
+            self.watch.start()
+            time.sleep(2)
+            self.bridge = cl.FreezableBridge(relay_host, relay_port, cl.NETPLAY_PORT)
+            self.bridge.start()
+            self.bridge.ready.wait(30)
+            if not self.bridge.session or not self.join("P2"):
+                fail(f"pause {label}: the friend couldn't join ({self.bridge.error})")
+                return res
+            p1, p2 = host, self.copies["P2"]
+            owners = {1: self.pads[1], 2: self.pads[2]}
+            time.sleep(3)
+            res["before"] = self.seat_check(owners, f"{label}: before the pause")
+            pause(p1, p2)
+            time.sleep(2)
+            a = (p1.frame(), p2.frame())
+            time.sleep(2)
+            b = (p1.frame(), p2.frame())
+            res["paused"] = a == b and None not in a
+            say(f"  {label}: frames 2 s apart while paused: {a} -> {b} (paused for both: {res['paused']})")
+            time.sleep(max(0, PAUSE_HOLD_SECONDS - 4))
+            res["log_while_paused"] = {k: c.new_netplay_lines()[-6:] for k, c in self.copies.items()}
+            resume(p1, p2)
+            time.sleep(4)
+            a = (p1.frame(), p2.frame())
+            time.sleep(2)
+            b = (p1.frame(), p2.frame())
+            res["running_after"] = None not in a and None not in b and b[0] - a[0] > 30 and b[1] - a[1] > 30
+            res["log_after"] = {k: c.new_netplay_lines()[-6:] for k, c in self.copies.items()}
+            res["link"] = dict(self.bridge.stats, error=self.bridge.error, events=self.bridge.events[-8:])
+            say(f"  {label}: after resuming {a} -> {b} (both running: {res['running_after']}); logs {res['log_after']}")
+            res["after"] = self.seat_check(owners, f"{label}: after resuming") if res["running_after"] else False
+            if res["after"]:
+                r = self.mash_and_compare(owners, 15, f"{label}: after resuming")
+                res["sync_after"] = {k: r.get(k) for k in ("frames_compared", "frames_different")}
+            res["ok"] = bool(res["paused"] and res["after"])
+            say(f"  RESULT pause {label}: {'SURVIVED' if res['ok'] else 'BROKE'} a {PAUSE_HOLD_SECONDS} s pause")
+            return res
+        finally:
+            if self.watch:
+                self.watch.stop.set()
+            if self.bridge:
+                self.bridge.stop()
+            for c in self.copies.values():
+                if c.proc:
+                    c.quit()
+            subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+            time.sleep(3)
+
+
+def part_pause(rom, pads, slots):
+    """Which way of pausing for everyone lasts? Recorded, never a failure on its own (an experiment)."""
+    say(f"\n################ part 3: pause for everyone held {PAUSE_HOLD_SECONDS} s (experiment) ################")
+
+    def host_menu_pause(p1, p2):
+        p1.send("MENU_TOGGLE")
+        time.sleep(0.6)
+        p1.send("PAUSE_TOGGLE")
+
+    def host_menu_resume(p1, p2):
+        p1.send("PAUSE_TOGGLE")
+        time.sleep(0.6)
+        p1.send("MENU_TOGGLE")
+
+    def both_pause(p1, p2):
+        p1.send("PAUSE_TOGGLE")
+        time.sleep(1)
+        p2.send("PAUSE_TOGGLE")
+
+    def host_then_friend(p1, p2):
+        p1.send("PAUSE_TOGGLE")
+        time.sleep(1)
+        p2.send("PAUSE_TOGGLE")
+
+    def friend_then_host(p1, p2):
+        p2.send("PAUSE_TOGGLE")
+        time.sleep(1)
+        p1.send("PAUSE_TOGGLE")
+
+    def both_menu_pause(p1, p2):
+        for c in (p1, p2):
+            c.send("MENU_TOGGLE")
+        time.sleep(0.6)
+        for c in (p1, p2):
+            c.send("PAUSE_TOGGLE")
+
+    def both_menu_resume(p1, p2):
+        for c in (p1, p2):
+            c.send("PAUSE_TOGGLE")
+        time.sleep(0.6)
+        for c in (p1, p2):
+            c.send("MENU_TOGGLE")
+
+    variants = [
+        ("host, menu closed", lambda p1, p2: p1.send("PAUSE_TOGGLE"), lambda p1, p2: p1.send("PAUSE_TOGGLE")),
+        ("host, hidden menu open", host_menu_pause, host_menu_resume),
+        ("host and friend, host resumes first", both_pause, host_then_friend),
+        ("host and friend, friend resumes first", both_pause, friend_then_host),
+        ("host and friend, both hidden menus open", both_menu_pause, both_menu_resume),
+    ]
+    out = {"part": "pause", "hold_seconds": PAUSE_HOLD_SECONDS, "variants": {}}
+    for i, (label, pause, resume) in enumerate(variants):
+        before = len(cl.failures)
+        out["variants"][label] = PausePair(f"pause{i}", rom, pads, slots).run_variant(label, pause, resume)
+        # An experiment: what broke is recorded as a finding, not a test failure.
+        out["variants"][label]["findings"] = cl.failures[before:]
+        del cl.failures[before:]
+    say("\npause experiment summary: " + json.dumps({k: v.get("ok") for k, v in out["variants"].items()}))
+    return out
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
@@ -696,6 +830,7 @@ def main():
 
     run_part("looks", lambda: part_looks(rom, pads[1], slots[1]))
     run_part("couch", lambda: Trio("couch", rom, pads, slots).run())
+    run_part("pause", lambda: part_pause(rom, pads, slots))
     # Last, because Windows may show a firewall question on screen that would spoil screenshots.
     run_part("port", lambda: {"part": "port", "command_port_on_network": command_port_check(cl.SnesCopy("port", 55600, slots[1]), rom)})
     results["ok"] = not cl.failures

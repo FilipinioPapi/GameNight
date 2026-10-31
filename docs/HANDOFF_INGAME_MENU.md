@@ -135,3 +135,4 @@ Built so far:
 - Not built yet: the in-game menu window (transparent owned window over the game), the pad watcher (Xbox
   button / L3+R3 hold, must work with Steam open), command port for solo games (wait for the security fix),
   the server route for friends' pause, the app-level Windows test.
+- Jayden 18:17: "Back to lobby" is an in-game menu item (Couch Play only), replacing the lobby popup's Y shortcut.

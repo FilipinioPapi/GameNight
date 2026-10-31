@@ -355,9 +355,34 @@ class Couch {
   box(r: { x: number; y: number; width: number; height: number }, force = false) {
     const b = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
     const key = `${b.x},${b.y},${b.w},${b.h}`;
+    // Screen preview only: note the last box so the browser checks can see it.
+    if (!inTauri) (globalThis as { __gnCouchBox?: string }).__gnCouchBox = key;
     if ((key === this.lastBox && !force) || !inTauri) return;
     this.lastBox = key;
     invoke("couch_box", b).catch((e) => console.warn("couch_box", e));
+  }
+
+  /** True while a panel needs the game window out of the way (see hideGame). */
+  gameHidden = $state(false);
+  /** A panel or note has to show where the game window is: a zero-size box hides the game window
+   *  on the Windows side (the game keeps running). */
+  hideGame() {
+    this.gameHidden = true;
+    this.box({ x: 0, y: 0, width: 0, height: 0 });
+  }
+  /** The panel closed: put the game window back over the box (or full screen again). */
+  showGame(r: { x: number; y: number; width: number; height: number } | null) {
+    this.gameHidden = false;
+    if (this.fullscreen) {
+      this.lastBox = "";
+      if (inTauri) invoke("couch_fullscreen", { on: true }).catch((e) => console.warn("couch_fullscreen", e));
+    } else if (r) this.box(r, true);
+  }
+
+  /** Your game is running: the lobby has started and hasn't ended. (The Windows side starts your
+   *  game when you host or join; the lobby copy doesn't say more than that.) */
+  get gameRunning(): boolean {
+    return !!this.lobby && this.lobby.started && !this.ended;
   }
 
   async setFullscreen(on: boolean) {

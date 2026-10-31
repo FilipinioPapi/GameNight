@@ -3,14 +3,14 @@
   // (the Windows side keeps the game's own window over the empty box here), and 8 seats: 4 to play,
   // 4 to watch. Drop-outs never pause the game: the seat is held, the host decides what happens to it,
   // and a player whose own link dropped can get back in with the same code.
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import Avatar from "../components/Avatar.svelte";
   import ButtonGuide, { type GuideItem } from "../components/ButtonGuide.svelte";
   import { app } from "../lib/state.svelte";
   import { couch, clockOf, playersFor, type CouchUser, type Lobby, type Seat } from "../lib/couch.svelte";
   import { consoleById } from "../lib/consoles";
   import { listGames, type Game } from "../lib/library";
-  import { moveFocus, useScreenButtons, type Dir } from "../lib/gamepad";
+  import { moveFocus, setPadLock, useScreenButtons, type Dir } from "../lib/gamepad";
   import { PAD_NAME } from "../lib/pads";
   import { inTauri } from "../lib/settings";
 
@@ -118,20 +118,24 @@
     const r = rows[i];
     if (!L || !r) return;
     if (r.held && r.seat && isHost && r.seat.n !== 1) return openMenu(r.seat.n);
+    done();
     if (!r.user && r.kind === "p" && L.you.role === "watch") return void switchAndFollow("play");
     if (!r.user && r.kind === "w" && L.you.role === "play") return void switchAndFollow("watch");
     tell(hintFor(r));
   }
   function switchRole() {
     if (!L) return;
+    done();
     if (isHost) return tell("THE HOST ALWAYS PLAYS AS P1");
     if (L.you.role === "watch" && !freeSeat) return tell("ALL 4 SEATS ARE TAKEN. YOU CAN KEEP WATCHING");
     void switchAndFollow(L.you.role === "watch" ? "play" : "watch");
   }
   function toggleOpen() {
+    done();
     if (L && isHost) void couch.setOpen(!L.open);
   }
   async function toggleFull() {
+    done();
     await couch.setFullscreen(!couch.fullscreen);
     if (!couch.fullscreen) refocus(); // the seats are back: highlight the one you were on
   }
@@ -146,14 +150,17 @@
   }
 
   // Leaving takes two presses of B, so nobody closes a lobby for everyone by accident.
-  let leaveArmed = false;
+  let leaveArmed = $state(false);
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
   function leaveAsk() {
     if (leaveArmed) return void leaveNow();
     leaveArmed = true;
     tell(isHost ? "PRESS B AGAIN TO CLOSE THE LOBBY FOR EVERYONE" : "PRESS B AGAIN TO LEAVE THE LOBBY");
     clearTimeout(leaveTimer);
-    leaveTimer = setTimeout(() => (leaveArmed = false), 3000);
+    leaveTimer = setTimeout(() => {
+      leaveArmed = false;
+      done();
+    }, 3000);
   }
   async function leaveNow() {
     await couch.leave();
@@ -170,6 +177,7 @@
   }
   function closeMenu() {
     menuSeat = null;
+    done();
     refocus();
   }
   const menuRow = $derived(menuSeat ? rows.find((r) => r.seat?.n === menuSeat) : undefined);
@@ -243,18 +251,74 @@
   });
   const modal = $derived(!!menuSeat || lost || !!closedBy);
 
+  // ---- The pad while your own game runs ----
+  // Holding a play seat (host too) with the game running, every press belongs to the game: the lobby
+  // ignores the pad. Holding View + Menu together for 1 second opens "lobby controls"; they close
+  // after an action, after B, or after 8 seconds without a press. Keyboard and mouse always work.
+  const playingNow = $derived(!!L && (L.you.role === "host" || L.you.role === "play") && couch.gameRunning && !lost && !closedBy);
+  let controls = $state(false);
+  let controlsTimer: ReturnType<typeof setTimeout> | undefined;
+  function controlsIdle() {
+    clearTimeout(controlsTimer);
+    controlsTimer = setTimeout(closeControls, 8000);
+  }
+  function openControls() {
+    controls = true;
+    controlsIdle();
+    refocus();
+  }
+  function closeControls() {
+    clearTimeout(controlsTimer);
+    controls = false;
+    leaveArmed = false;
+  }
+  /** An action was done: lobby controls close (unless seat options are still open). */
+  function done() {
+    if (controls && !menuSeat && !leaveArmed) closeControls();
+  }
+  $effect(() => {
+    if (!playingNow && controls) closeControls();
+  });
+  const padLocked = $derived(playingNow && !controls);
+  $effect(() => {
+    if (!padLocked) return;
+    let since = 0;
+    setPadLock((b) => {
+      if (b[8] && b[9]) {
+        const t = performance.now();
+        if (!since) since = t;
+        else if (t - since >= 1000) {
+          since = 0;
+          openControls();
+        }
+      } else since = 0;
+    });
+    return () => setPadLock(null);
+  });
+  const ps = $derived(app.pad.type === "dualsense");
+  const comboWords = $derived(ps ? "CREATE + OPTIONS" : "VIEW + MENU");
+
+  // ---- Panels over the game: the game window steps aside (it keeps running) ----
+  const coverGame = $derived(!!menuSeat || lost || !!closedBy || !!(toast && toastRow) || controls || leaveArmed);
+  $effect(() => {
+    const hide = coverGame;
+    untrack(() => (hide ? couch.hideGame() : couch.showGame(boxEl?.getBoundingClientRect() ?? null)));
+  });
+
   // ---- The live game box: tell the Windows side where it is ----
   let boxEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
     const el = boxEl;
     if (!el || couch.fullscreen) return;
-    const send = () => couch.box(el.getBoundingClientRect());
+    const send = () => {
+      if (!couch.gameHidden) couch.box(el.getBoundingClientRect());
+    };
     send();
     const ro = new ResizeObserver(send);
     ro.observe(el);
     window.addEventListener("resize", send);
     // Once more after the screen's fade-in has settled.
-    const t = setTimeout(() => couch.box(el.getBoundingClientRect(), true), 260);
+    const t = setTimeout(() => !couch.gameHidden && couch.box(el.getBoundingClientRect(), true), 260);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", send);
@@ -265,6 +329,7 @@
   // ---- Controller ----
   $effect(() => {
     useScreenButtons((input) => {
+      if (controls) controlsIdle();
       if (closedBy) {
         if (input === "b") void leaveNow();
         return input !== "a";
@@ -273,6 +338,11 @@
       if (menuSeat) {
         if (input === "b" || input === "menu") closeMenu();
         return input !== "a";
+      }
+      // Lobby controls on: B closes them (a second B within 3 s still leaves, as before).
+      if (controls && input === "b" && !leaveArmed) {
+        closeControls();
+        return true;
       }
       if (input === "x") return switchRole(), true;
       if (input === "y") return toggleFull(), true;
@@ -309,14 +379,15 @@
     else if (k === "o") toggleOpen();
   }
 
-  const guide = $derived<GuideItem[]>([
+  const lockedGuide = $derived<GuideItem[]>([{ buttons: ["back", "start"], label: `Hold 1 s: lobby controls` }]);
+  const guide = $derived<GuideItem[]>(padLocked ? lockedGuide : [
     { buttons: ["a"], label: "Pick seat" },
     { buttons: ["x"], label: "Switch play / watch" },
     { buttons: ["y"], label: "Full screen" },
     ...(isHost ? ([{ buttons: ["start"], label: "Game menu" }, { buttons: ["lb"], label: "Open / closed" }] satisfies GuideItem[]) : []),
-    { buttons: ["b"], label: isHost ? "Close lobby" : "Leave" },
+    { buttons: ["b"], label: controls ? "Close lobby controls" : isHost ? "Close lobby" : "Leave" },
   ]);
-  const fsGuide = $derived<GuideItem[]>([
+  const fsGuide = $derived<GuideItem[]>(padLocked ? lockedGuide : [
     { buttons: ["y"], label: "Back to lobby view" },
     ...(isHost ? ([{ buttons: ["start"], label: "Game menu" }] satisfies GuideItem[]) : []),
   ]);
@@ -335,7 +406,7 @@
 
 {#if L}
   {@const c = consoleById(L.game.console)}
-  <div class="page" class:full={couch.fullscreen}>
+  <div class="page" class:full={couch.fullscreen} onfocusin={() => controls && controlsIdle()}>
     {#if !couch.fullscreen}
       <header>
         <img class="tvlogo" src="/brand/crt-logo.gif" alt="Game Night logo" />
@@ -369,8 +440,6 @@
       <!-- The game's own window sits exactly over this empty box. -->
       <div class="gamebox" bind:this={boxEl}></div>
       {#if !couch.fullscreen}
-        {#if L.started}<span class="ov live"><i></i>LIVE · {playing} PLAYING · {L.watchers.length} WATCHING</span>{/if}
-        <span class="ov fs"><img src={app.pad.type === "dualsense" ? "/prompts/ps/ps_y.png" : "/prompts/xbox/xbox_y.png"} alt={app.pad.type === "dualsense" ? "Triangle" : "Y"} />FULL SCREEN</span>
         {#if !L.started}
           <div class="waitscr"><b>NOT STARTED YET</b><span>{isHost ? "The game is starting up. Friends can join now" : `Waiting for ${first(L.host)}'s game to start`}</span></div>
         {/if}
@@ -378,10 +447,22 @@
     </section>
 
     {#if !couch.fullscreen}
+      <!-- Just under the box, so the game window never covers them. -->
+      <div class="ovrow">
+        {#if L.started}<span class="ov live"><i></i>LIVE · {playing} PLAYING · {L.watchers.length} WATCHING</span>{/if}
+        <span class="ov fs"><img src={ps ? "/prompts/ps/ps_y.png" : "/prompts/xbox/xbox_y.png"} alt={ps ? "Triangle" : "Y"} />FULL SCREEN</span>
+      </div>
       <div class="info">
         <span class="gname">{L.game.title}</span><span class="chip">{c.short.toUpperCase()}</span><span class="chip">{max === 1 ? "1 PLAYER" : `UP TO ${max} PLAYERS`}</span>
         {#if couch.error}<span class="ping bad">{couch.error}</span>{/if}
       </div>
+      {#if padLocked}
+        <div class="combo">
+          Hold <img src={ps ? "/prompts/ps/ps_back.png" : "/prompts/xbox/xbox_back.png"} alt="" />
+          <img src={ps ? "/prompts/ps/ps_start.png" : "/prompts/xbox/xbox_start.png"} alt="" />
+          {comboWords} to open lobby controls
+        </div>
+      {/if}
 
       <aside class="side" aria-label="Seats">
         <span class="sh2">&gt; 8 SEATS <small>4 playing, 4 watching · switch any time</small></span>
@@ -402,6 +483,10 @@
         </div>
         <span class="vt hint">&gt; {hint}<span class="cursor">_</span></span>
       </aside>
+    {/if}
+
+    {#if controls}
+      <div class="banner" role="status">Lobby controls on. Your presses also reach the game.</div>
     {/if}
 
     {#if toast && toastRow && !menuSeat}
@@ -505,14 +590,23 @@
   .hero.ghost { opacity: 0.35; filter: grayscale(1); animation: none; }
   @keyframes hop { 50% { transform: translateY(-40px); } }
   .ov { position: absolute; display: flex; align-items: center; gap: 8px; font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.08em; background: rgba(10, 6, 6, 0.82); border-radius: 6px; padding: 2px 10px; color: #ffe0e0; }
-  .ov.live { left: 12px; top: 12px; }
+  .ovrow { position: absolute; left: 48px; top: 606px; width: 608px; display: flex; align-items: center; gap: 10px; }
+  .ovrow .ov { position: static; }
+  .ov.live { margin-right: auto; }
   .ov.live i { width: 9px; height: 9px; border-radius: 50%; background: #ff2a32; box-shadow: 0 0 6px #ff2a32; animation: blink 1.4s steps(1) infinite; }
-  .ov.fs { right: 12px; bottom: 12px; }
+  .ov.fs { margin-left: auto; }
   .ov.fs img { image-rendering: pixelated; width: 22px; height: 22px; }
   .waitscr { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: rgba(10, 6, 6, 0.78); text-align: center; }
   .waitscr b { font-family: "Press Start 2P", monospace; font-weight: 400; font-size: 16px; color: #fff6d8; text-shadow: 0 0 4px #ffd36b, 0 0 14px #ffb21e, 3px 3px 0 #000; }
   .waitscr span { font-family: VT323, monospace; font-size: 22px; letter-spacing: 0.05em; color: #ffd6d6; }
-  .info { position: absolute; left: 48px; top: 612px; width: 608px; display: flex; align-items: center; gap: 10px; }
+  .info { position: absolute; left: 48px; top: 644px; width: 608px; display: flex; align-items: center; gap: 10px; }
+  .combo { position: absolute; left: 48px; top: 676px; width: 608px; display: flex; align-items: center; gap: 8px; font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.05em; color: var(--muted); }
+  .combo img { image-rendering: pixelated; height: 18px; width: auto; }
+  .banner {
+    position: absolute; z-index: 30; left: 50%; top: 14px; transform: translateX(-50%); white-space: nowrap; padding: 8px 18px; border-radius: 10px;
+    border: 2px solid #ffd36b; background: rgba(20, 12, 13, 0.96); font-family: VT323, monospace; font-size: 22px; letter-spacing: 0.05em; color: #fff6d8;
+    text-shadow: 0 0 6px rgba(242, 180, 90, 0.6); animation: neonGold 2.6s ease-in-out infinite;
+  }
   .chip { font-family: VT323, monospace; font-size: 16px; letter-spacing: 0.08em; color: var(--text-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 9px; white-space: nowrap; }
   .gname { font-family: "Press Start 2P", monospace; font-size: 13px; color: #fff6d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ping { margin-left: auto; font-family: VT323, monospace; font-size: 19px; letter-spacing: 0.05em; color: #9fdcb0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -575,11 +669,13 @@
   @media (max-height: 799px) {
     header { top: 22px; }
     .screen:not(.full .screen) { top: 116px; width: 560px; height: 420px; }
-    .info { top: 548px; width: 560px; }
+    .ovrow { top: 544px; width: 560px; }
+    .info { top: 576px; width: 560px; }
+    .combo { top: 604px; width: 560px; }
     .side { top: 116px; left: 640px; }
     .seat { height: 46px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .cloud, .hero, .ov.live i, .cursor, .dots i { animation: none; }
+    .cloud, .hero, .ov.live i, .cursor, .dots i, .banner { animation: none; }
   }
 </style>

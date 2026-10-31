@@ -77,3 +77,10 @@ Strongly inferred, Unknown.
   (`couch-app.yml`) is on PR #24.
 - Waiting on Jayden: the go-online steps (project files `gamenight/couch-play/GO-ONLINE-STEPS.md`), the
   lobby-controls decision card, and a real test with a friend.
+
+## In-game display and menu (thread "Design the in-game menu and display")
+- Design only, nothing built. Mockups IG1-IG3 on the main-menu canvas; findings and recommendations in
+  `docs/HANDOFF_INGAME_MENU.md`.
+- Strongly inferred: per-player shaders/bezels don't break online sync; heavy shaders on a slow PC slow everyone.
+  Unknown: stopping your own presses reaching the game while your menu is open (CI test planned), PS button in the background.
+- Waiting on Jayden: OK on the mockups and on "menu opens locally, with Pause for everyone" vs "always pause".

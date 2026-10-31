@@ -136,3 +136,28 @@ Built so far:
   button / L3+R3 hold, must work with Steam open), command port for solo games (wait for the security fix),
   the server route for friends' pause, the app-level Windows test.
 - Jayden 18:17: "Back to lobby" is an in-game menu item (Couch Play only), replacing the lobby popup's Y shortcut.
+
+## Menu build (branch claude/project-thread-rhmybd, 2026-10-31 evening)
+Built:
+- `app/src-tauri/src/ingame.rs` + `app/menu.html` / `src/menu/InGameMenu.svelte`: a see-through window over the game
+  (own capability `capabilities/menu.json`, events only). IG2 layout with HOME and MY SCREEN tabs (GAME and CONTROLLER
+  tabs not built yet). IG3 "Paused by" uses the same window.
+- Opening it: Xbox button (XInputGetStateEx guide bit), PS button (gilrs Mode), or holding L3 + R3 for 1 s, from
+  `pads.rs`, whatever window is in front. Never Start + Select. No controller combo quits a game any more.
+- Blocking your presses: RetroArch's own menu opens hidden behind it (MENU_TOGGLE on the local command port; solo now
+  gets a random free port too). Solo: the game pauses. Couch: the game keeps going for everyone.
+- Solo items: resume, save state, load state, restart, quit to Library (asks first, KEEP PLAYING picked). Couch:
+  resume, pause/resume for everyone, back to lobby / full screen, watch/play, refresh game, end game / leave lobby.
+  MY SCREEN: look (left/right), applied live with SET_SHADER.
+- The lobby's L3 + R3 lobby controls and the Y "back to lobby" shortcut are gone (Jayden 18:16: in the menu instead).
+- Pause for everyone: `POST /api/lobbies/{code}/pause` on the server (ends by itself after 10 min or when the pauser
+  leaves). The host's app does the actual PAUSE_TOGGLE. Needs the server update on Unraid.
+- Couch Play bezels: the bezel file has 2 pages, page 0 fitted to the full screen game, page 1 empty for the small
+  box; Game Night flips with OVERLAY_NEXT. Bezel C falls back to B (TV frame) in Couch Play. Whole-pixel scaling now
+  in Couch Play too.
+
+CI checks (to be proven): `pad_test.py ingame` (solo: menu opens with Guide and L3+R3, game pauses, look change,
+quit with confirm), `couch_app_test.py` (menu over full screen game, host presses blocked while the friend's work,
+pause for everyone both ways, IG3 shown, bezel lit around the full screen game and not in the box).
+Unknown until measured: whether RetroArch's own pad config also reacts to the Xbox button (double toggle), whether
+the PS button reaches Game Night while a game is in front (needs Jayden's real DualSense).

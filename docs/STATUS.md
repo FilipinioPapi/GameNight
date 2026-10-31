@@ -85,8 +85,11 @@ Strongly inferred, Unknown.
 - Built (branch claude/project-thread-x0w0gw): 12 looks (shaders, each PC its own; 0 desync measured), bezels
   B (default) / A / C and whole-pixel scaling for solo games, look and bezel choice in Settings, and an installer
   firewall rule that keeps other PCs off Game Night's RetroArch (Jayden's choice; proven in firewall.yml).
-- Not built yet: the in-game menu window and pad watcher, "Back to lobby" in the menu, friends' "Pause for
-  everyone" through the server (Jayden's choice), bezels in Couch Play. Details: `docs/HANDOFF_INGAME_MENU.md`.
+- Built (branch claude/project-thread-rhmybd): the in-game menu (Xbox / PS button or hold L3 + R3), RetroArch's own
+  quick menu hidden, "Back to lobby" in the menu, friends' "Pause for everyone" through the server, bezels in Couch
+  Play. Being proven on GitHub's Windows machine. Ships in the same release as the lobby and bezel work (Jayden is
+  holding the release). Waiting on Jayden after merge: update the Game Night container in Unraid.
+  Details: `docs/HANDOFF_INGAME_MENU.md`.
 
 ## Hide non-game files from game lists (thread "Hide non-game files from game lists")
 - Built: the Game Night server leaves anything that isn't a game file for its console out of the game

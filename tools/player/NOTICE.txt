@@ -6,6 +6,15 @@ RetroArch: GNU General Public License v3. Source: https://github.com/libretro/Re
 FCEUmm (NES): GNU General Public License v2. Source: https://github.com/libretro/libretro-fceumm
 Snes9x (SNES): Snes9x license, free for non-commercial use. Source: https://github.com/libretro/snes9x
 zfast_crt shader: GNU General Public License v2 or later. Source: https://github.com/libretro/slang-shaders
+CRT looks in shaders/slang/ (from the same RetroArch build, unchanged): CRT Royale by TroggleMonkey and CRT Geom by
+cgwg, Themaister and DOLLS (GNU General Public License v2 or later); CRT Lottes by Timothy Lottes (public domain);
+their shared helper files under the licences in their own headers. Source: https://github.com/libretro/slang-shaders
+Animated NES and Super Famicom bezels in overlays/animated-border/ (from the same RetroArch build, unchanged):
+libretro common-overlays, Creative Commons Attribution 4.0; Super Famicom border by Fercho.
+Source: https://github.com/libretro/common-overlays
+Bezel pictures in overlays/bezels/ ("TV" by NyNy77, "photo" by Nosh01): libretro overlay-borders, MIT licence
+(overlays/bezels/LICENSE-overlay-borders.txt). Nintendo names and logos in them belong to Nintendo.
+Source: https://github.com/libretro/overlay-borders
 The DLLs next to retroarch.exe come with RetroArch's build (Qt, SDL2, FFmpeg and their libraries)
 under their own open source licenses.
 

@@ -1,0 +1,38 @@
+# Proves the installer's firewall rule (app/src-tauri/windows/hooks.nsh): other PCs on the network can't reach
+# Game Night's RetroArch even if someone clicked "Allow", while Game Night on the same PC still can.
+# A Windows container plays the other PC. tools/e2e/firewall_test.ps1 does the measuring.
+name: Firewall rule test
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["app/src-tauri/windows/**", "tools/e2e/firewall_test.ps1", ".github/workflows/firewall.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firewall-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firewall:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
+        shell: pwsh
+        run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
+      - name: Other PC vs this PC, with and without Game Night's block rule
+        shell: pwsh
+        run: tools/e2e/firewall_test.ps1 -Player "$env:RUNNER_TEMP/player" -Work "$env:RUNNER_TEMP/fw" -Out "$env:RUNNER_TEMP/fw-results"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firewall-results
+          path: ${{ runner.temp }}/fw-results
+          if-no-files-found: ignore
+          retention-days: 30

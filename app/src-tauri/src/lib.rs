@@ -11,6 +11,7 @@ mod account;
 mod controllers;
 mod couch;
 mod covers;
+mod display;
 mod gamebox;
 mod games;
 mod gamewindow;

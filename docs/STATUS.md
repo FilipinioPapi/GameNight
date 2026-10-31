@@ -81,6 +81,13 @@ Strongly inferred, Unknown.
 - Waiting on Jayden: the go-online steps (project files `gamenight/couch-play/GO-ONLINE-STEPS.md`), the
   lobby-controls decision card, and a real test with a friend.
 
+## In-game display and menu (thread "Build the in-game menu and bezels")
+- Built (branch claude/project-thread-x0w0gw): 12 looks (shaders, each PC its own; 0 desync measured), bezels
+  B (default) / A / C and whole-pixel scaling for solo games, look and bezel choice in Settings, and an installer
+  firewall rule that keeps other PCs off Game Night's RetroArch (Jayden's choice; proven in firewall.yml).
+- Not built yet: the in-game menu window and pad watcher, "Back to lobby" in the menu, friends' "Pause for
+  everyone" through the server (Jayden's choice), bezels in Couch Play. Details: `docs/HANDOFF_INGAME_MENU.md`.
+
 ## Hide non-game files from game lists (thread "Hide non-game files from game lists")
 - Built: the Game Night server leaves anything that isn't a game file for its console out of the game
   lists (Windows' desktop.ini, Thumbs.db, readmes, pictures, save files). Game file types per console

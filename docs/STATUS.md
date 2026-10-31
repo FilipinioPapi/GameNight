@@ -97,3 +97,10 @@ Strongly inferred, Unknown.
   Strongly inferred: the "desktop" entry in every folder is Windows' desktop.ini (RomM names entries
   after the file name without its ending). Jayden can confirm by opening it in RomM.
 - Waiting on Jayden after merge: update the Game Night container in Unraid so the new server runs.
+
+## Clean game start, no RetroArch pop-ups (thread "Boot games cleanly without popups")
+- Jayden asked 2026-10-31: no pop-ups when a game starts. All of RetroArch's own on-screen messages are off
+  (`app/src-tauri/src/quiet_retroarch.cfg`, added by `games.rs`). Show FPS in Settings still works (it keeps the
+  FPS counter, with every message type RetroArch lets us hide still hidden). Game Night's own messages are untouched.
+- Proof: `tools/e2e/popup_test.py` (workflow "Pop-up test") photographs the game at boot, on pad plug-in and when a
+  friend joins, before and after. Branch `claude/project-thread-nruv59`.

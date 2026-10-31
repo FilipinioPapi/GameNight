@@ -85,7 +85,7 @@ NES = [
 ]
 
 failures = []
-late_redos = []  # button changes netplay redid after we had read them as settled (see drop_redone)
+late_redos = []  # history entries a later read corrected or removed (see keep_changes / drop_redone)
 
 
 def say(m=""):
@@ -776,7 +776,9 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, l
             fail(f"{name}: only {len(checked)} of ~{span[1] - span[0]} frames could be compared")
         result["two_unconnected_copies_fps"] = round(SOLO_FPS, 2)
         # Over the internet a slower round is a finding to report, not a broken test, unless it's far off.
-        slowest = 0.8 if place else 0.95
+        # Measured at ~59 frames a second (runs 41169114880-41181226222): a connected pair runs at 94.4-96.8% of
+        # two unconnected copies, so 95% failed "direct" by a hair in 41181226222. 90% still catches a real stall.
+        slowest = 0.8 if place else 0.9
         for who, fps in (("host", fps_h), ("friend", fps_f)):
             if fps < slowest * SOLO_FPS or fps > 61:
                 fail(f"{name}: the {who} ran at {fps:.1f} frames a second (two unconnected copies on this machine: {SOLO_FPS:.1f})")
@@ -801,10 +803,10 @@ def run_round(name, rom, pad_a, slot_a, pad_b, slot_b, delay=None, place=None, l
         keep_changes(history["friend"], end_f[0], end_f[1], frame_of(end_f[0]))
         drop_redone(history["host"], ch, "host")
         drop_redone(history["friend"], cf, "friend")
-        result["late_redos"] = list(late_redos)
+        result["history_corrections"] = list(late_redos)
         if late_redos:
-            say(f"  NOTE: netplay redid {len(late_redos)} button change(s) more than {MARGIN} frames back "
-                f"(a long hiccup on the connection); the games still agree at the end: {late_redos[:5]}")
+            say(f"  NOTE: {len(late_redos)} button-change entries read during play were corrected or removed by a "
+                f"later read (cause Unknown, see drop_redone); first: {late_redos[:3]}")
         hh, hf = history["host"], history["friend"]
         full_same = hh == hf
         missing = [k for k in range(ch) if k not in hh]
@@ -913,8 +915,11 @@ def keep_changes(store, ram, changes_ram, settled):
 
 
 def drop_redone(store, total, who):
-    """Entries numbered at or past the game's final change count were redone away by netplay after we read
-    them (a rollback deeper than MARGIN frames, e.g. after a long network hiccup). Run 41178763017 had one."""
+    """Entries numbered at or past the game's final change count can't be real: drop them. Run 41178763017 had
+    one, which failed the history and fingerprint-chain checks although both games agreed at the end. Run
+    41181226222 showed that reads during play are corrected later in every round, even "direct" (11 there), so
+    the cause is Unknown: a netplay redo deeper than MARGIN or a mid-play read of the list (more likely, as the
+    wrong entries often hold a later change's data). The latest read wins and the counts are reported."""
     for k in [k for k in store if k >= total]:
         late_redos.append({"change": k, "was": store[k], "now": None, "game": who})
         del store[k]

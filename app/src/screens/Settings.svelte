@@ -21,6 +21,7 @@
     { tab: "controllers", name: "Controllers", icon: '<rect x="2" y="8" width="20" height="10" rx="5"/><path d="M7 11v4M5 13h4"/><circle cx="16" cy="12" r="1"/><circle cx="18.5" cy="14" r="1"/>' },
     { tab: "devices", name: "My controllers", icon: '<rect x="3" y="6" width="18" height="12" rx="6"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r="1"/><circle cx="18" cy="13" r="1"/><path d="M2 2l20 20"/>' },
     { tab: "consoles", name: "Consoles", icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
+    { tab: "layout", name: "Layout", icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>' },
     { tab: "storage", name: "Storage", icon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
     { tab: "account", name: "Account", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>' },
   ];
@@ -65,6 +66,16 @@
     confirmClear = false;
   }
   const signOut = () => app.signOut();
+
+  // Settings › Layout: how the Library looks.
+  const LAYOUT_CHOICES = [
+    { id: "controller", name: "Controller layout", desc: "Consoles across the top (LB / RB), big tiles, and a button guide along the bottom. Best from the couch." },
+    { id: "mouse", name: "Mouse and keyboard layout", desc: "Consoles in a list on the left, more games on screen, hover for Play and the favourite star, and keyboard shortcuts." },
+  ] as const;
+  function setLayout(id: "controller" | "mouse") {
+    app.settings.layout = id;
+    app.save();
+  }
 
   // My controllers: pick Player 1 and turn off anything that isn't really a controller.
   let pads = $state<PadRow[]>([]);
@@ -220,6 +231,39 @@
               <div class="row"><div class="t"><span>Steam is open on this PC. To keep the Xbox / PS button for Game Night: in Steam, open <b>Settings</b>, then <b>Controller</b>, and turn off <b>"Guide Button Focuses Steam"</b>.</span></div></div>
             </div>
           {/if}
+        {:else if tab === "layout"}
+          <div class="panel">
+            <div class="phead col"><b class="h">How Game Night looks</b><span class="sub">Both layouts work with a controller, a mouse and a keyboard. Pick the one that suits how you sit.</span></div>
+            <div class="layouts">
+              {#each LAYOUT_CHOICES as l (l.id)}
+                {@const on = app.settings.layout === l.id}
+                <button class="lay" class:on onclick={() => setLayout(l.id)} aria-pressed={on}>
+                  {#if l.id === "controller"}
+                    <span class="mini">
+                      <span class="mrow g8">{#each Array(8) as _, i (i)}<span class="b26" class:red={i === 0}></span>{/each}</span>
+                      <span class="mrow g3">{#each Array(3) as _, i (i)}<span class="b30"></span>{/each}</span>
+                      <span class="mrow g7 fill">{#each Array(7) as _, i (i)}<span class="bt"></span>{/each}</span>
+                      <span class="mguide"></span>
+                    </span>
+                  {:else}
+                    <span class="mini side-by">
+                      <span class="mlist">{#each Array(8) as _, i (i)}<span class="b12" class:red={i === 0}></span>{/each}</span>
+                      <span class="mright">
+                        <span class="mrow g3">{#each Array(3) as _, i (i)}<span class="b26 mid"></span>{/each}</span>
+                        <span class="mrow g8 fill two">{#each Array(16) as _, i (i)}<span class="bt"></span>{/each}</span>
+                      </span>
+                    </span>
+                  {/if}
+                  <span class="lname"><span class="radio" class:on></span><b>{l.name}</b>{#if l.id === "controller"}<span class="badge coop">Default</span>{/if}</span>
+                  <span class="ldesc">{l.desc}</span>
+                </button>
+              {/each}
+            </div>
+            <div class="row last">
+              <div class="t"><b>Switch layout automatically</b><span>Use the controller layout when a controller is in use, and the mouse layout when you use the mouse.</span></div>
+              <Toggle label="Switch layout automatically" on={app.settings.autoLayout} onchange={(v) => { app.settings.autoLayout = v; app.save(); }} />
+            </div>
+          </div>
         {:else if tab === "storage"}
           <div class="panel">
             <div class="phead"><b class="h">Where games are kept</b></div>
@@ -300,5 +344,34 @@
   .row.off .pname { color: var(--muted-2); text-decoration: line-through; }
   .live { color: var(--green) !important; }
   .warn { color: var(--amber) !important; }
+  .phead.col { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .sub { font-size: 13px; color: var(--muted); }
+  .layouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding: 18px 16px; }
+  .lay { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg-side); color: var(--text); text-align: left; }
+  .lay.on { border: 2px solid var(--red); background: #2a1718; padding: 13px; box-shadow: 0 0 10px rgba(255, 30, 40, 0.25); }
+  .mini { display: flex; flex-direction: column; gap: 6px; height: 190px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); padding: 10px; }
+  .mini.side-by { flex-direction: row; gap: 8px; }
+  .mrow { display: grid; gap: 4px; }
+  .g8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  .g7 { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .fill { flex: 1; }
+  .two { grid-template-rows: 1fr 1fr; }
+  .b26 { height: 26px; border-radius: 5px; background: var(--btn); }
+  .b26.mid, .b30 { background: var(--line); }
+  .b30 { height: 30px; border-radius: 5px; }
+  .b12 { height: 12px; border-radius: 3px; background: var(--btn); }
+  .red { background: var(--red-2) !important; }
+  .bt { border-radius: 4px; background: var(--line-2); }
+  .mguide { height: 14px; border-radius: 4px; background: #0e0909; border: 1px solid var(--line-soft); }
+  .mlist { width: 64px; display: flex; flex-direction: column; gap: 4px; }
+  .mright { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .lname { display: flex; align-items: center; gap: 10px; }
+  .lname b { font-size: 16px; }
+  .radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--muted-2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .radio.on { border-color: var(--red); }
+  .radio.on::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--red); }
+  .ldesc { font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .row.last { border-bottom: 0; border-top: 1px solid var(--line-soft); }
   .onoff { font-size: 12px; color: var(--muted); width: 24px; text-align: right; }
 </style>

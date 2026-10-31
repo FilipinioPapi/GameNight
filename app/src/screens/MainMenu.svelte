@@ -56,9 +56,9 @@
   <div class="left">
     <Brand size="lg" />
     <nav aria-label="Main menu">
-      <button class="mi play" data-autofocus bind:this={playBtn} onclick={() => app.go({ name: "library", console: "all" })}>
+      <button class="mi play" data-autofocus bind:this={playBtn} onclick={() => app.go({ name: "library", console: "fav" })}>
         <span class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg></span>
-        <span class="words"><span class="lucky big">PLAY</span><span class="sub">{games.length} games in the library · {onPC} on this PC</span></span>
+        <span class="words"><span class="lucky big">LIBRARY</span><span class="sub">{games.length} games in the library · {onPC} on this PC</span></span>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
       </button>
       <button class="mi" disabled title="Coming in step 2">

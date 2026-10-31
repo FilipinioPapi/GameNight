@@ -210,8 +210,9 @@ pub fn run() {
             #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
             let _ = app.deep_link().register_all();
             pads::start(app.handle().clone());
-            #[cfg(feature = "e2e")]
-            updater::e2e_autoupdate(app.handle().clone());
+            updater::log_start(app.handle());
+            let back = updater::after_update(app.handle());
+            *app.state::<updater::Updates>().came_back.lock().unwrap_or_else(|e| e.into_inner()) = back;
             #[cfg(feature = "e2e")]
             games::e2e_play(app.handle().clone());
             let handle = app.handle().clone();
@@ -245,7 +246,11 @@ pub fn run() {
             account::sign_out,
             account::fetch_games,
             updater::check_update,
-            updater::install_update
+            updater::download_update,
+            updater::start_install,
+            updater::just_updated,
+            updater::update_seen,
+            updater::update_test_mode
         ])
         .run(tauri::generate_context!())
         .expect("Game Night couldn't start");

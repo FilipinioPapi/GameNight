@@ -1,0 +1,6 @@
+# Values the secret scan (tools/security/scan_secrets.py) knows are safe on purpose.
+# One value per line, then "#" and the reason. Adding a line here needs a reason a reviewer can check.
+# Never put a real password, token or key here: those are never safe in the repo.
+
+172.16.0.0      # config.py: the start of a standard home-network range, used to tell "home network" addresses apart
+192.168.1.33    # the NAS's home-network address (default server). Private: nobody outside the house can reach it. Jayden may choose to replace it with a placeholder, see docs/HANDOFF_SECURITY.md

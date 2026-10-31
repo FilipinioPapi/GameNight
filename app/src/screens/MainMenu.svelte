@@ -84,7 +84,7 @@
   </div>
 
   <div class="top-right">
-    {#if updates.info && updates.phase !== "none"}<button class="chip-pill update" onclick={() => updates.open()}><span class="dot"></span>Update ready: v{updates.info.version}</button>{/if}
+    {#if updates.offered && updates.info}<button class="chip-pill update" onclick={() => updates.open()}><span class="dot"></span>Update ready: v{updates.info.version}</button>{/if}
     {#if lib?.source === "sample"}<span class="chip-pill"><span class="dot"></span>Preview: sample games</span>
     {:else if lib?.error}<span class="chip-pill"><span class="dot"></span>{lib.error}</span>
     {:else if lib?.source === "offline"}<span class="chip-pill"><span class="dot"></span>Offline: showing the last list</span>{/if}

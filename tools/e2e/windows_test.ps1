@@ -1,8 +1,8 @@
 # CI only (GitHub's Windows machine): tests Game Night the way Jayden uses it, before any release.
 #  1. Installs an old test build (the "e2e" build, version 0.0.1).
 #  2. Plays a test game with the bundled player: it must start, run at real speed, and the log must be written.
-#  3. Updates the old build to the new installer through the app's own updater (signed list, download,
-#     install, restart) and checks the new version is installed and running.
+#  3. Updates the old build to the new installer through the app's own update box (signed list, download,
+#     install, restart) and checks every step was shown and the new version came back in front.
 # Any failure stops the build, so nothing untested reaches the NAS.
 param([string]$OldSetup, [string]$NewSetup, [string]$NewVersion, [string]$Tools)
 $ErrorActionPreference = 'Stop'
@@ -82,25 +82,101 @@ Step "Play the test game with the pretend Xbox controller"
 python (Join-Path $Tools 'pad_test.py') game $exe $root $shots
 if ($LASTEXITCODE -ne 0) { Fail "the game didn't get the pretend controller on Player 1 (screenshots are in the 'screens' download)" }
 
-Step "Update to $NewVersion through the app's own updater"
+Step "Update to $NewVersion through the app's own update box"
+# The update is served at about home-internet speed (3 MB/s), and the old build presses Update in its own
+# update box (GAMENIGHT_E2E=update-ui), so this goes through the same screen and steps Jayden sees.
+# Screenshots are taken every second and kept with the build ("screens" download, "update" folder).
 $site = Join-Path $env:RUNNER_TEMP 'updates'
 $key = (python (Join-Path $Tools 'make_update.py') $NewSetup $NewVersion $site).Trim()
-$server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $site -PassThru -WindowStyle Hidden
+$server = Start-Process python -ArgumentList (Join-Path $Tools 'slow_server.py'), $site, '8765', '3000000' -PassThru -WindowStyle Hidden
 Start-Sleep 2
-$env:GAMENIGHT_E2E = 'update'
+$updShots = Join-Path $env:RUNNER_TEMP 'screens\update'
+New-Item -ItemType Directory $updShots -Force | Out-Null
+$camera = Start-Job -ArgumentList $updShots -ScriptBlock {
+  param($dir)
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  for ($n = 0; $n -lt 150; $n++) {
+    try {
+      $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+      $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+      $g = [System.Drawing.Graphics]::FromImage($bmp)
+      $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+      $bmp.Save((Join-Path $dir ('{0:000}-{1:HHmmss}.png' -f $n, (Get-Date).ToUniversalTime())), [System.Drawing.Imaging.ImageFormat]::Png)
+      $g.Dispose(); $bmp.Dispose()
+    } catch {}
+    Start-Sleep -Milliseconds 1000
+  }
+}
+Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices; using System.Collections.Generic;
+public static class Win {
+  delegate bool EnumProc(IntPtr h, IntPtr p);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  public static List<string> Of(uint want) {
+    var r = new List<string>(); var fg = GetForegroundWindow();
+    EnumWindows((h, p) => {
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      if (pid == want && GetWindow(h, 4) == IntPtr.Zero) {
+        var t = new StringBuilder(256); GetWindowText(h, t, 256);
+        r.Add(String.Format("'{0}' visible={1} minimised={2} in-front={3}", t, IsWindowVisible(h), IsIconic(h), h == fg));
+      }
+      return true;
+    }, IntPtr.Zero);
+    return r;
+  }
+}
+"@
+$env:GAMENIGHT_E2E = 'update-ui'
 $env:GAMENIGHT_UPDATE_URL = 'http://127.0.0.1:8765/'
 $env:GAMENIGHT_UPDATE_KEY = $key
-$old = Start-Process -FilePath $exe -PassThru
-$ok = $false
-for ($i = 0; $i -lt 180; $i++) {
-  Start-Sleep 1
-  $ver = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
-  $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe -and $_.Id -ne $old.Id }
-  if ($ver -like "$NewVersion*" -and $running) { $ok = $true; break }
-}
 $updLog = Join-Path $cache 'update\update.log'
+Remove-Item $updLog -ErrorAction SilentlyContinue
+$t = [Diagnostics.Stopwatch]::StartNew()
+$old = Start-Process -FilePath $exe -PassThru
+$closedAt = $null; $new = $null
+for ($i = 0; $i -lt 360; $i++) {
+  Start-Sleep -Milliseconds 500
+  if (-not $closedAt -and $old.HasExited) { $closedAt = $t.Elapsed.TotalSeconds; Write-Host "old Game Night closed after $([math]::Round($closedAt,1)) s" }
+  $new = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe -and $_.Id -ne $old.Id } | Select-Object -First 1
+  if ($new) { Write-Host "new Game Night started after $([math]::Round($t.Elapsed.TotalSeconds,1)) s (pid $($new.Id))"; break }
+}
+$ver = (Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+$windows = @(); $alive = $false
+if ($new) {
+  # Give it time to show its window, then look at what a person would see.
+  Start-Sleep 10
+  $alive = -not $new.HasExited
+  $windows = [Win]::Of([uint32]$new.Id)
+  Write-Host "10 s later: still running: $alive. Its windows:"
+  $windows | ForEach-Object { Write-Host "  | $_" }
+}
+Start-Sleep 2
+# Read the log now, while the new Game Night is still open, so the checks below only count steps that
+# happened before anyone closed it.
+$log = if (Test-Path $updLog) { Get-Content $updLog } else { @() }
+Stop-Job $camera -ErrorAction SilentlyContinue; Remove-Job $camera -Force -ErrorAction SilentlyContinue
+Write-Host "update log:"
 if (Test-Path $updLog) { Get-Content $updLog | ForEach-Object { Write-Host "  | $_" } } else { Write-Host "  (no update.log)" }
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-if (-not $ok) { Fail "after 3 minutes Game Night was on version '$ver' and running: $([bool]$running) (wanted $NewVersion, running)" }
-Write-Host "updated from 0.0.1 to $NewVersion and reopened by itself"
+
+# What has to be true, measured:
+function At($text) { $l = $log | Select-String -SimpleMatch $text | Select-Object -First 1; if ($l) { [datetime]::ParseExact($l.Line.Substring(0, 23), 'yyyy-MM-dd HH:mm:ss.fff', $null) } }
+$closing = At 'Game Night closes now'; $back = At "Game Night $NewVersion opened"
+if ($closing -and $back) { Write-Host "time between the old window closing and the new one opening: $([math]::Round(($back - $closing).TotalSeconds, 1)) s" }
+$problems = @()
+foreach ($want in 'screen shows downloading 100%', 'screen shows checking 100%', 'screen shows installing', 'helper: installer finished with code 0', 'helper: the installer opens Game Night again', 'back after the update', 'screen shows updated') {
+  if (-not ($log | Select-String -SimpleMatch $want)) { $problems += "the update log never says '$want'" }
+}
+if (-not ($ver -like "$NewVersion*")) { $problems += "installed version is '$ver', wanted $NewVersion" }
+if (-not $new) { $problems += "Game Night didn't start again" }
+elseif (-not $alive) { $problems += "the reopened Game Night quit within 10 s" }
+elseif (-not ($windows | Where-Object { $_ -match "^'Game Night' visible=True minimised=False in-front=True" })) { $problems += "the reopened Game Night isn't the window in front" }
+if ($problems) { Fail ("update test: " + ($problems -join '; ')) }
+Write-Host "updated from 0.0.1 to ${NewVersion}: the box showed 100%, checked and installing; the installer ran; Game Night came back in front and said it updated"

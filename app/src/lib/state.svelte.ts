@@ -51,6 +51,7 @@ class AppState {
       console.error("Couldn't check sign-in", e);
     }
     this.ready = true;
+    await updates.cameBack(); // "Updated to v..." right after an update
     void updates.check(); // also on the sign-in screen, so an old version can always update
   }
 

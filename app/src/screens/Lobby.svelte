@@ -253,7 +253,7 @@
 
   // ---- The pad while your own game runs ----
   // Holding a play seat (host too) with the game running, every press belongs to the game: the lobby
-  // ignores the pad. Holding View + Menu together for 1 second opens "lobby controls"; they close
+  // ignores the pad. Holding both sticks in (L3 + R3) for 1 second opens "lobby controls"; they close
   // after an action, after B, or after 8 seconds without a press. Keyboard and mouse always work.
   const playingNow = $derived(!!L && (L.you.role === "host" || L.you.role === "play") && couch.gameRunning && !lost && !closedBy);
   let controls = $state(false);
@@ -381,7 +381,7 @@
     else if (k === "o") toggleOpen();
   }
 
-  const lockedGuide = $derived<GuideItem[]>([{ buttons: ["back", "start"], label: `Hold 1 s: lobby controls` }]);
+  const lockedGuide = $derived<GuideItem[]>([{ buttons: [], label: "Hold L3 + R3 1 s: lobby controls" }]);
   const guide = $derived<GuideItem[]>(padLocked ? lockedGuide : [
     { buttons: ["a"], label: "Pick seat" },
     { buttons: ["x"], label: "Switch play / watch" },

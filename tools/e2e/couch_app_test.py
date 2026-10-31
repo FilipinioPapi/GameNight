@@ -75,7 +75,7 @@ def screenshot(name):
     subprocess.run(["pwsh", "-NoProfile", "-File", str(TOOLS / "screenshot.ps1"), str(OUT / f"{name}.png")], check=False)
 
 
-def look(name, app, full_screen):
+def look(name, app, full_screen, game_full=False):
     """Watches the game window for 6 s, takes 3 quick screenshots, and checks it sits still in the box."""
     time.sleep(3)  # the lobby screen fades in, then the box is sent
     summary, samples = window_watch.watch(app.pid, 6)
@@ -98,6 +98,9 @@ def look(name, app, full_screen):
         fail(f"{name}: the game window moved or resized {summary['place_changes']} times in 6 s (flicker)")
     if not summary["game_inside_app"]:
         fail(f"{name}: the game isn't inside Game Night's window: {summary['last_game']} vs {summary['last_app_inside']}")
+    elif game_full:
+        if tuple(summary["last_game"]) != tuple(summary["last_app_inside"]):
+            fail(f"{name}: the game doesn't fill Game Night's window in full screen: {summary['last_game']} vs {summary['last_app_inside']}")
     elif summary["last_game"][2] > 0.6 * summary["last_app_inside"][2]:
         fail(f"{name}: the game is wider than the lobby's game box (over the seat list): {summary['last_game']}")
     if summary["app_full_screen"] != full_screen:
@@ -196,9 +199,9 @@ class Friend(Ask):
             "netplay_check_frames": "0", "netplay_nickname": "Friend",
             f"netplay_request_device_p{seat}": "true",
             "video_driver": "d3d11", "video_fullscreen": "false", "video_scale": "2",
-            "video_window_save_positions": "true", "video_windowed_position_x": "1300",
-            "video_windowed_position_y": "40", "video_windowed_position_width": "512",
-            "video_windowed_position_height": "480", "pause_nonactive": "false",
+            "video_window_save_positions": "true", "video_windowed_position_x": "1600",
+            "video_windowed_position_y": "760", "video_windowed_position_width": "300",
+            "video_windowed_position_height": "240", "ui_menubar_enable": "false", "pause_nonactive": "false",
             "audio_enable": "false", "video_vsync": "false", "vrr_runloop_enable": "true",
             "input_joypad_driver": "xinput", "input_autodetect_enable": "true",
             "joypad_autoconfig_dir": p(PLAYER / "autoconfig"), "input_max_users": "1",
@@ -395,6 +398,16 @@ def main():
         screenshot("2-friend-connected")
         say("look: after the friend connected")
         look("look-2-friend-connected", app, True)
+        say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
+        for name, full in (("look-2b-game-full-screen", True), ("look-2c-back-to-the-box", False)):
+            set_pad(pad_a, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
+            time.sleep(1.4)
+            set_pad(pad_a, [])
+            time.sleep(0.6)
+            set_pad(pad_a, [B.XUSB_GAMEPAD_Y])
+            time.sleep(0.2)
+            set_pad(pad_a, [])
+            look(name, app, True, game_full=full)
 
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)

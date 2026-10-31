@@ -583,6 +583,12 @@ fn new_session<R: Runtime>(app: &AppHandle<R>, s: Session, lobby: Value) -> Sess
 
 #[tauri::command]
 pub async fn couch_list<R: Runtime>(app: AppHandle<R>) -> Result<Value, String> {
+    // CI's controller tests only (the "e2e" build, never shipped): their test player has no sign-in pass,
+    // so the main menu's open-lobby list is simply empty instead of signing them out.
+    #[cfg(feature = "e2e")]
+    if matches!(std::env::var("GAMENIGHT_E2E").as_deref(), Ok("menus" | "padgame" | "play")) {
+        return Ok(json!([]));
+    }
     let v = call(&app, reqwest::Method::GET, "/api/lobbies", None).await?;
     Ok(v.get("lobbies").cloned().filter(Value::is_array).unwrap_or_else(|| json!([])))
 }

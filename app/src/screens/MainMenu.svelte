@@ -152,8 +152,7 @@
         onmouseenter={() => pick(i)}
         onclick={it.go}
       >
-        <span class="full"><span class="bgp"></span><span class="halo" style="--h: {it.halo}"></span></span>
-        <span class="fade"></span>
+        <span class="full"><span class="halo" style="--h: {it.halo}"></span></span>
         <span class="tx">
           <span class="lbl">{it.label}</span>
           {#if it.soon}<span class="soon">COMING NEXT</span>{/if}
@@ -262,11 +261,10 @@
   }
   /* With a controller, the gliding gold frame is the highlight, so the card's own glow steps aside. */
   :global(body.glide.pad-mode) .card.on:focus { animation: none; border-color: #000; }
-  .full { position: absolute; inset: 0; }
-  .bgp { position: absolute; inset: 0; background: linear-gradient(180deg, #0a0606 0 18%, #1e0d0f 18% 44%, #2d1012 44% 72%, #1e0d0f 72%); }
+  /* One smooth colour (Jayden, 2026-10-31: no colour bands, no dark box on top). */
+  .full { position: absolute; inset: 0; background: #1e0d0f; }
   .halo { position: absolute; left: 50%; top: 40%; width: 240px; height: 240px; margin: -120px 0 0 -120px; border-radius: 50%; background: radial-gradient(circle, var(--h) 0%, transparent 65%); transition: opacity 0.3s ease; }
   .card:not(.on) .halo { opacity: 0.45; }
-  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 58%; background: linear-gradient(180deg, rgba(10, 6, 6, 0) 0%, rgba(10, 6, 6, 0.78) 55%, rgba(10, 6, 6, 0.95) 100%); }
   .tx { position: absolute; left: 24px; right: 16px; top: 226px; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
   .lbl {
     font-family: "Press Start 2P", monospace; white-space: nowrap; letter-spacing: 0.02em; line-height: 1.15; color: #fff;

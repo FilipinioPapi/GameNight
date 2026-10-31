@@ -9,7 +9,8 @@ Spec: project files `gamenight/main-menu/A21-approved.dc.html` and `A21-approved
   Right side: update / preview / offline chips (only when they apply), a clock, the signed-in user.
 - Four cards: LIBRARY, COUCH PLAY (with "COMING NEXT"; A does nothing yet), SETTINGS, QUIT.
   The picked card grows (460 px vs 217 px in the 1280-wide window, shared the same way if wider),
-  lifts, glows gold and shows its extra line. Titles are left-aligned at the same spot on every card.
+  lifts, glows gold and shows its extra line. Card background: one smooth colour with a soft coloured
+  glow in the middle (Jayden 2026-10-31 asked to drop the mockup's colour bands and dark top box). Titles are left-aligned at the same spot on every card.
 - A line under the cards says what the picked card does, with a blinking cursor.
 - "Jump back in": the last three games played (from `settings.recent`), each opens its game page.
   Hidden when nothing has been played yet.

@@ -128,3 +128,21 @@ press after ~45-60 ms in every round, relay or not: netplay never delays your ow
   session id to the friend through Game Night's own server (needs the server online, `docs/HANDOFF_ONLINE.md`).
 - The join screen needs a mockup and Jayden's OK first.
 - SNES (snes9x) version of this test.
+
+## Update: the "private way" drops were a test bug (2026-10-31, PR #21)
+- **Confirmed**: the two private-way drops (runs 41169114880 and 41178763017) came from the test's own bridge, not
+  from libretro's relay. Python's asyncio holds tasks only weakly, and `TunnelBridge` didn't keep the link
+  task, so the garbage collector could throw a live link away mid-game. Both runs print "Task was destroyed but
+  it is pending! ... TunnelBridge.open_link()" at the moment of the drop. Locally, forcing `gc.collect()` killed
+  a link with the old code; with the fix (link tasks kept in `self.tasks`) it survives. Found together with the
+  Couch Play lobby thread, which hit the same thing.
+- **Confirmed**: with the fix, hand-started run 41181226222 had every relay round clean: listed and private
+  New York (90 s and 5 minutes, ~17,300 frames each), Madrid, Sao Paulo and Singapore, plus 5 of 5 rejoins.
+  0 different frames and no drops.
+- **For the app's Rust port**: keep a handle to every link task, and never let one be dropped while it runs.
+- Workflow change: pushes and merges run only the local rounds (`direct`, `delayed`). The relay rounds run when
+  started by hand (Actions > Online co-op test > Run workflow) and are reported as warnings.
+- Test fixes: a history entry past the game's final change count is dropped. Run 41178763017's "fingerprint chain"
+  failure came from one such entry, while both games agreed at the end. History entries corrected by a later
+  read are reported (`history_corrections`, cause Unknown). The speed floor for local rounds is 90%: measured
+  94-97% of two unconnected copies at ~59 frames a second.

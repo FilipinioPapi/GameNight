@@ -157,6 +157,9 @@ struct Local {
     paused: bool,
     /// The look (shader) on this screen now (the in-game menu can change it).
     look: String,
+    /// The bezel is on, and which of its pages shows: 0 = the bezel (full screen), 1 = empty (the small box).
+    bezel: bool,
+    overlay_page: u8,
 }
 
 struct Game {
@@ -327,6 +330,8 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         l.cmd_port = cmd_port;
         l.paused = false;
         l.look = game.settings.picture.clone();
+        l.bezel = launch.bezel;
+        l.overlay_page = 0;
         l.gen
     };
     log.line(&format!(
@@ -411,9 +416,26 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
             }
         }
         if changed {
+            sync_bezel(&app);
             emit_update(&app);
         }
     }
+}
+
+/// The bezel only fits the full screen game: in the lobby's small box its empty page shows instead.
+/// RetroArch's OVERLAY_NEXT flips between the two pages (display.rs prepare_bezel).
+fn sync_bezel<R: Runtime>(app: &AppHandle<R>) {
+    let couch = app.state::<Couch>();
+    let want = if couch.gamebox.fullscreen() { 0 } else { 1 };
+    let port = {
+        let mut l = lock(&couch.local);
+        if !l.bezel || l.state != RaState::Running || l.overlay_page == want {
+            return;
+        }
+        l.overlay_page = want;
+        l.cmd_port
+    };
+    send_cmd(port, "OVERLAY_NEXT");
 }
 
 fn stop_ra<R: Runtime>(app: &AppHandle<R>, ra: Ra, log: &FileLog) {
@@ -1066,6 +1088,7 @@ pub fn couch_fullscreen<R: Runtime>(app: AppHandle<R>, on: bool) {
         }
     }
     app.state::<Couch>().gamebox.set_fullscreen(on);
+    sync_bezel(&app);
     emit_update(&app);
 }
 

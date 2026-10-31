@@ -306,6 +306,36 @@ def ra_cmd_port():
     return None
 
 
+def bezel_pixels(name, rect):
+    """In screenshot `name`-3: share of lit pixels (not black) in a strip down the left of `rect` and in its
+    four corners. The bezel (TV frame) fills both in full screen; the game itself never reaches them."""
+    from PIL import Image
+    img = Image.open(OUT / f"{name}-3.png").convert("RGB")
+    x, y, w, h = rect
+    def lit(box):
+        part = img.crop(box).resize((32, 32))
+        px = list(part.getdata())
+        return round(sum(1 for p in px if max(p) > 24) / len(px), 3)
+    c = max(4, int(min(w, h) * 0.03))
+    strip = lit((x, y + h // 5, x + max(4, int(w * 0.1)), y + h * 4 // 5))
+    corners = [lit((x, y, x + c, y + c)), lit((x + w - c, y, x + w, y + c)),
+               lit((x, y + h - c, x + c, y + h)), lit((x + w - c, y + h - c, x + w, y + h))]
+    return {"strip": strip, "corners": round(sum(corners) / 4, 3)}
+
+
+def app_bezel():
+    """The bezel file the app's RetroArch settings point at, and how many pages it has."""
+    cfg = Path(os.environ.get("APPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "retroarch.cfg"
+    lines = cfg.read_text(errors="replace").splitlines() if cfg.exists() else []
+    get = lambda k: next((l.split('"')[1] for l in lines if l.startswith(k + " ") and '"' in l), None)
+    overlay = get("input_overlay")
+    pages = None
+    if overlay and Path(overlay).is_file():
+        first = Path(overlay).read_text(errors="replace").splitlines()[:1]
+        pages = first[0].split("=")[1].strip() if first else None
+    return {"enabled": get("input_overlay_enable"), "file": Path(overlay).name if overlay else None, "pages": pages}
+
+
 def set_pad(pad, buttons):
     pad.reset()
     for b in buttons:
@@ -478,6 +508,17 @@ def main():
         if menu_shown(app):
             fail("the in-game menu stayed open after FULL SCREEN")
         look("look-2b-game-full-screen", app, True, game_full=True)
+        say("look: the bezel (TV frame) around the full screen game, none in the lobby's small box")
+        results["bezel"] = {"settings": app_bezel()}
+        say(f"  RetroArch's bezel setting: {results['bezel']['settings']}")
+        b = results["bezel"]["settings"]
+        if b["enabled"] != "true" or not (b["file"] or "").endswith("-couch.cfg") or b["pages"] != "2":
+            fail(f"Couch Play's RetroArch isn't set up with the two-page bezel: {b}")
+        full_rect = results["look"]["look-2b-game-full-screen"]["last_game"]
+        results["bezel"]["full_screen"] = bezel_pixels("look-2b-game-full-screen", full_rect)
+        say(f"  full screen, lit share (strip left of the game, corners): {results['bezel']['full_screen']}")
+        if results["bezel"]["full_screen"]["strip"] < 0.3 or results["bezel"]["full_screen"]["corners"] < 0.3:
+            fail(f"no bezel around the full screen game: {results['bezel']['full_screen']}")
         say("look: in full screen, the in-game menu over the game (the game stays full screen behind it)")
         menu(app, pad_a)
         w = menu_window(app.pid)
@@ -509,6 +550,11 @@ def main():
         say("look: the in-game menu's BACK TO LOBBY")
         menu(app, pad_a, "lobby")
         look("look-2d-back-to-the-box", app, True)
+        box_rect = results["look"]["look-2d-back-to-the-box"]["last_game"]
+        results["bezel"]["box"] = bezel_pixels("look-2d-back-to-the-box", box_rect)
+        say(f"  in the box, lit share (strip, corners): {results['bezel']['box']} (the bezel is fitted to full screen, so none here)")
+        if results["bezel"]["box"]["corners"] > 0.3:
+            fail(f"the full screen bezel still shows in the lobby's small box: {results['bezel']['box']}")
         say("full screen and back 6 more times through the menu, quickly (Jayden lost control after doing this)")
         for _ in range(6):
             menu(app, pad_a, "full")

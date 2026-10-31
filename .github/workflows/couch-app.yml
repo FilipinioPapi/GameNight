@@ -50,7 +50,7 @@ jobs:
         shell: pwsh
         run: tools/e2e/add_pretend_pads.ps1
       - name: Server code's own packages
-        run: pip install -r server/requirements.txt
+        run: pip install -r server/requirements.txt pillow==11.0.0
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         shell: pwsh
         run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"

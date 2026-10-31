@@ -462,11 +462,9 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
             }
         }
     };
-    // On your own: whole-pixel scaling and the bezel (display.rs). Not yet in Couch Play: its window changes size
-    // (box <-> full screen) and the bezel is fitted to one size (measured: couch-app run 41227307054).
-    if net.is_none() {
-        set(crate::display::config_lines(p.overlay.as_deref(), s.screen != "pixel", s.screen == "stretch"));
-    }
+    // Whole-pixel scaling and the bezel (display.rs). In Couch Play the bezel is fitted to the full screen game
+    // and has an empty second page for the lobby's small box (couch.rs flips between them).
+    set(crate::display::config_lines(p.overlay.as_deref(), s.screen != "pixel", s.screen == "stretch"));
     // The hidden menu, when the in-game menu is on.
     if let Some(theme) = &p.menu_theme {
         set(crate::display::hidden_menu_lines(theme, net.is_some()));
@@ -589,6 +587,8 @@ pub(crate) struct Launch {
     sound: usize,
     /// RetroArch's command port (in-game menu).
     pub cmd_port: u16,
+    /// A bezel is on (Couch Play: with an empty page for the small box).
+    pub bezel: bool,
     pub console: String,
     pub look: String,
     pub player: PathBuf,
@@ -677,11 +677,12 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
     };
     let mut paths = paths;
     let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
-    // The bezel, fitted to this screen (or to Couch Play's window). A missing or broken bezel never
-    // stops the game: it just plays without one, and the log says why.
-    if net.is_none() && settings.screen != "stretch" && settings.bezel != "none" {
+    // The bezel, fitted to this screen (in Couch Play: to the full screen game, which always fills the screen:
+    // couch_fullscreen makes Game Night full screen too). A missing or broken bezel never stops the game: it
+    // just plays without one, and the log says why.
+    if settings.screen != "stretch" && settings.bezel != "none" {
         if let Some(size) = screen_size(app) {
-            match crate::display::prepare_bezel(&player, &paths.cache, &settings.bezel, &entry.console, size, settings.screen != "pixel") {
+            match crate::display::prepare_bezel(&player, &paths.cache, &settings.bezel, &entry.console, size, settings.screen != "pixel", net.is_some()) {
                 Ok(o) => {
                     bezel_note += &format!("screen {size:?}: {o:?}\n");
                     paths.overlay = o;
@@ -732,7 +733,8 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         _ => {}
     }
     args.push(rom.into_os_string());
-    Ok(Launch { exe, cwd: player.clone(), args, log_file, sound_file, sound, cmd_port, console: entry.console.clone(), look: settings.picture.clone(), player: player.clone() })
+    let bezel = paths.overlay.is_some();
+    Ok(Launch { bezel, exe, cwd: player.clone(), args, log_file, sound_file, sound, cmd_port, console: entry.console.clone(), look: settings.picture.clone(), player: player.clone() })
 }
 
 /// Marks a game as running (only one at a time, alone or online). False = one already is.
@@ -1013,8 +1015,9 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         // Each setting once: Couch Play's values replace the normal ones instead of adding a second line.
-        // The bezel, whole-pixel TV shape, and the hidden menu that never pauses the game for the others.
-        assert!(!cfg.contains("input_overlay_enable = \"true\"") && cfg.contains("video_scale_integer = \"false\""));
+        // Same bezel and whole-pixel TV shape as on your own, and the hidden menu that never pauses the game
+        // for the others.
+        assert!(cfg.contains("input_overlay_enable = \"true\"") && cfg.contains("video_scale_integer = \"true\""));
         assert!(cfg.contains("menu_pause_libretro = \"false\""));
         for key in ["video_fullscreen", "network_cmd_enable", "auto_remaps_enable", "rewind_enable", "netplay_nat_traversal", "video_scale_integer", "aspect_ratio_index"] {
             assert_eq!(line(&cfg, key).len(), 1, "{key}");

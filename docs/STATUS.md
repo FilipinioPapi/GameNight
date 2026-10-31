@@ -25,3 +25,10 @@ Strongly inferred, Unknown.
 - Merged: PR #12. Anyone in Jayden's Discord server can sign in, and the role is optional.
 - Next: step 1, two players in sync on GitHub's Windows runner.
 - play.jjsnas.xyz = Roof Rage's ntfy board; Game Night plan: its own /gamenight/ custom location, checked before and after (HANDOFF_ONLINE.md).
+
+## Keeping secrets out / going public (thread "Check if Game Night code is safe to make public")
+- Confirmed 2026-10-31: no passwords, tokens or private keys anywhere in the repo or its history.
+  Not yet clean enough to go public: Jayden's email on merge commits, server-setup notes in the docs,
+  and picture rights. Details and verdict: `docs/HANDOFF_SECURITY.md`. Rules: `docs/SECURITY_RULES.md`.
+- New: secret check on every push and PR, plus a pre-commit check (`git config core.hooksPath .githooks`).
+- Waiting on Jayden: whether to go public, his GitHub email setting, the pictures, and any history rewrite.

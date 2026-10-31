@@ -6,7 +6,7 @@ Jayden 2026-10-31) work with Game Night's RetroArch? Measured before anything is
            - where whole-pixel (integer) scaling puts the game, for square pixels, the console's own shape and 4:3;
            - a bezel picture with a hole cut exactly there: bezel all around, live game in the hole;
            - every "look" (scanlines, CRT Lottes, CRT Geom, CRT Royale) switched LIVE with RetroArch's SET_SHADER
-             command (also from a folder with a space in its name) and SHADER_TOGGLE (look off and on): the look
+             command (also from a folder with a space in its name) and back to the plain look (look off): the look
              shows, stays inside the game (bezel untouched), and how fast the game still runs with it;
            - the same SET_SHADER sent on RetroArch's standard input (stdin) instead of its local command port;
            - bezel C (libretro's animated Super Famicom border): loads, lights up with the pad, and a mouse click on
@@ -47,6 +47,7 @@ ONLY = [p for p in os.environ.get("INGAME_PARTS", "").replace(",", " ").split() 
 MASH_SECONDS = int(os.environ.get("INGAME_MASH_SECONDS", "60"))
 SHADERS = PLAYER / "shaders"
 LOOKS = {
+    "plain": SHADERS / "slang" / "nearest.slangp",
     "scanlines": SHADERS / "scanlines.slangp",
     "lottes": SHADERS / "slang" / "crt" / "crt-lottes.slangp",
     "geom": SHADERS / "slang" / "crt" / "crt-geom.slangp",
@@ -253,15 +254,16 @@ def part_looks(rom, pad, slot):
         if not o["alive"]:
             fail(f"looks: RetroArch closed when switching to {name}")
             return res
-        if (o["structure"] or 0) < (base["structure"] or 0) + 3:
+        if name != "plain" and (o["structure"] or 0) < (base["structure"] or 0) + 3:
             fail(f"looks: {name} didn't show (pattern {o['structure']})")
         if o["bezel_share_outside_game"] < 0.97:
             fail(f"looks: {name} drew over the bezel ({o['bezel_share_outside_game']})")
     shows = lambda o: (o["structure"] or 0) >= (base["structure"] or 0) + 3  # noqa: E731
-    res["shader_toggle_off_works"] = not shows(look("look off (SHADER_TOGGLE)", "SHADER_TOGGLE"))
-    res["shader_toggle_on_works"] = shows(look("look back on (SHADER_TOGGLE)", "SHADER_TOGGLE"))
-    look("look off again (SHADER_TOGGLE)", "SHADER_TOGGLE")
-    res["set_shader_after_toggle_off_shows"] = shows(look("SET_SHADER while the look is off", f"SET_SHADER {LOOKS['lottes']}"))
+    # turning a look off live = switching to the plain look (SHADER_TOGGLE measured unreliable in run 41220810666:
+    # after CRT Royale it re-applied Royale, then a saved "retroarch.slangp")
+    res["plain_turns_look_off"] = not shows(look("plain (look off)", f"SET_SHADER {LOOKS['plain']}"))
+    if not res["plain_turns_look_off"]:
+        fail("looks: switching to the plain look didn't turn the CRT look off")
     stop_copy(copy)
     # a folder with a space in its name (Windows user names often have one), from a fresh start with no look
     spaced = WORK / "a folder with spaces"
@@ -393,25 +395,30 @@ class Trio(cl.Couch):
             owners = {1: pads[1], 2: pads[2]}
 
             # ---- a different look each
-            for who, look in (("P1", "scanlines"), ("P2", "lottes"), ("W1", "geom")):
+            # GitHub's machine has no graphics card (software drawing): CRT Lottes ran at 3 fps, Geom 10, Royale 4,
+            # scanlines 60 (run 41220810666). So the players get the light looks; the slow one goes on the watcher
+            # (does a slow WATCHER hold the players back?), and Royale on P2 is a measured slow-down for everyone.
+            for who, look in (("P1", "scanlines"), ("P2", "plain"), ("W1", "geom")):
                 self.set_look(who, look)
             time.sleep(4)
             grab().save(OUT / "couch-1-looks.png")
             res["looks_log"] = {who: log_lines(self.copies[who], 0, ("hader", "slang", "[ERROR]")) for who in ("P1", "P2", "W1")}
             self.seat_check(owners, "a different look each")
-            self.mash_and_compare(owners, MASH_SECONDS, "P1 scanlines + bezel, P2 CRT Lottes, W1 CRT Geom")
+            r = self.mash_and_compare(owners, MASH_SECONDS, "P1 scanlines + bezel, P2 plain, W1 CRT Geom")
+            res["fps_players_light_watcher_geom"] = r.get("fps")
 
             # ---- looks changing mid-game (P2 tries the heaviest, CRT Royale)
             def switch_looks():
-                for who, look in (("P2", "royale"), ("P1", "geom"), ("W1", "lottes")):
+                for who, look in (("P2", "royale"), ("W1", "plain"), ("P1", "plain")):
                     time.sleep(5)
                     self.set_look(who, look)
             self.mash_and_compare(owners, 30, "looks changed mid-game (P2 CRT Royale)", switch_looks)
             res["fps_with_p2_on_royale"] = {k: w.fps(time.perf_counter() - 10, time.perf_counter()) for k, w in watches.items()}
             say(f"  frames a second for everyone, P2 on CRT Royale: {res['fps_with_p2_on_royale']}")
             grab().save(OUT / "couch-2-royale.png")
-            self.set_look("P2", "lottes")
-            time.sleep(3)
+            for who, look in (("P1", "scanlines"), ("P2", "plain"), ("W1", "plain")):
+                self.set_look(who, look)
+            time.sleep(8)
 
             # ---- pause for everyone
             p2, w1 = self.copies["P2"], self.copies["W1"]

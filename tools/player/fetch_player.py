@@ -44,7 +44,8 @@ SHADER = "shaders/shaders_slang/crt/shaders/zfast_crt"
 # RetroArch download. Only the files each preset really uses are copied (worked out by following the presets'
 # passes, pictures and #include lines), into player/shaders/slang/ with the same folder layout.
 SLANG = "shaders/shaders_slang"
-LOOKS = ["crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp"]
+# "nearest" is the plain look (sharp pixels, no effect): switching to it is how a look is turned off live.
+LOOKS = ["nearest.slangp", "crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/crt-royale.slangp"]
 # Bezel C (approved 2026-10-31): libretro common-overlays' animated NES and Super Famicom borders (CC BY 4.0).
 BORDERS = "overlays/borders/animated-border"
 BORDER_FILES = ["nes-border.cfg", "img-nes/*", "super_famicom_animated_border.cfg", "img-sfc/*"]

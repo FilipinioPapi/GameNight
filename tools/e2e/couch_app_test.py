@@ -175,11 +175,8 @@ class Ask:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.sendto(command.encode(), ("127.0.0.1", self.cmd_port))
 
-    def status(self):
-        """RetroArch's own word on the game: PLAYING / PAUSED / CONTENTLESS (None = no answer)."""
-        a = self.ask("GET_STATUS") or ""
-        parts = a.split()
-        return parts[1] if len(parts) > 1 else (a or None)
+    # No GET_STATUS here: on RetroArch 1.22.2 it crashes a Couch Play host (reads a missing name; cdb stack in
+    # run 41246455248: retroarch+0x1af761 called from the GET_STATUS handler). Frames from READ_CORE_MEMORY instead.
 
     def ram(self, start=0, length=1024):
         parts = (self.ask(f"READ_CORE_MEMORY {start:x} {length}") or "").split()
@@ -579,7 +576,7 @@ def main():
         h1 = host.ram(0, 3)
         time.sleep(1)
         h2 = host.ram(0, 3)
-        results["menu_open_host"] = {"status": host.status(), "frames": [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]}
+        results["menu_open_host"] = {"frames": [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]}
         say(f"  host's RetroArch with the menu open: {results['menu_open_host']}")
         say("menu open: the host's presses stop reaching the game, the friend's still do")
         set_pad(pad_a, [B.XUSB_GAMEPAD_X])  # X does nothing in the menu
@@ -628,10 +625,8 @@ def main():
         say(f"  {results['pause_host']}")
         if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
             fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
-        results["pause_host"]["status_paused_menu_open"] = host.status()
         tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
         time.sleep(3)
-        results["pause_host"]["status_resumed_menu_open"] = host.status()
         f1 = friend.ram(0, 3)
         time.sleep(1)
         f2 = friend.ram(0, 3)
@@ -640,9 +635,8 @@ def main():
         h1 = host.ram(0, 3)
         time.sleep(1)
         h2 = host.ram(0, 3)
-        results["pause_host"]["status_resumed_menu_closed"] = host.status()
         results["pause_host"]["host_frames_menu_closed"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
-        say(f"  RetroArch's status: {results['pause_host']}")
+        say(f"  after resuming: {results['pause_host']}")
         if not f1 or not f2 or frame_of(f2) - frame_of(f1) < 30:
             fail(f"RESUME FOR EVERYONE didn't start the game again for the friend: {f1} {f2}")
 
@@ -662,11 +656,8 @@ def main():
             fail(f"the friend's pause didn't pause the game: {results['pause_friend']}")
         if not (w and w[0]):
             fail("the host's screen didn't show \"Paused by\" while the friend had paused")
-        results["pause_friend"]["status_paused"] = host.status()
         friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": False})
         time.sleep(5)
-        results["pause_friend"]["status_after"] = host.status()
-        say(f"  host's RetroArch status: paused {results['pause_friend']['status_paused']}, after {results['pause_friend']['status_after']}")
         h1 = host.ram(0, 3)
         time.sleep(1)
         h2 = host.ram(0, 3)

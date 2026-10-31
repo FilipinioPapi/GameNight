@@ -254,6 +254,18 @@ def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
 
 
+def friend_follows(friend, on, delay):
+    """The friend here is a plain RetroArch, so the test does what the friend's Game Night does when the server
+    says paused / resumed (couch.rs follow_pause, on its 3 s heartbeat): pause or resume inside the hidden menu."""
+    def go():
+        time.sleep(delay)
+        first, second = ("MENU_TOGGLE", "PAUSE_TOGGLE") if on else ("PAUSE_TOGGLE", "MENU_TOGGLE")
+        friend.send(first)
+        time.sleep(0.6)
+        friend.send(second)
+    threading.Thread(target=go, daemon=True).start()
+
+
 def speed(game, seconds=2.0):
     """Frames a second in `game` (the test cart counts frames), or None."""
     a = game.ram(0, 3)
@@ -630,6 +642,7 @@ def main():
         say("pause for everyone (host's menu), then resume for everyone")
         menu(app, pad_a, "pause")
         paused = wait_until(lambda: friend_api.call("GET", f"/api/lobbies/{code}")[1].get("paused"), 6, 0.5)
+        friend_follows(friend, True, 1.5)
         time.sleep(0.5)  # the pause reaches the friend's game a few frames later (2 frames in run 41249302754)
         f1 = friend.ram(0, 3)
         time.sleep(2)
@@ -639,11 +652,12 @@ def main():
         say(f"  {results['pause_host']}")
         if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
             fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
-        # Experiment: hold the pause 8 s (the friend's pause, 6 s with the host's menu closed, never came back in
-        # run 41247795649; RetroArch drops a stalled friend after 5 s). Does a long pause break the host's too?
-        time.sleep(6)
+        # A long pause: RetroArch's netplay dropped the friend after about 10 s before everyone paused inside
+        # their own hidden menu (run 41251728442).
+        time.sleep(20)
         tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
-        time.sleep(3)
+        friend_follows(friend, False, 1.5)
+        time.sleep(4)
         f1 = friend.ram(0, 3)
         time.sleep(1)
         f2 = friend.ram(0, 3)
@@ -661,6 +675,7 @@ def main():
         status, view = friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": True})
         if status != 200 or not (view or {}).get("paused"):
             fail(f"the friend couldn't pause through the server: {status} {view}")
+        friend_follows(friend, True, 0.5)
         time.sleep(5)  # the host's app hears it with its next heartbeat (every 3 s)
         h1 = host.ram(0, 3)
         time.sleep(2)
@@ -673,7 +688,9 @@ def main():
             fail(f"the friend's pause didn't pause the game: {results['pause_friend']}")
         if not (w and w[0]):
             fail("the host's screen didn't show \"Paused by\" while the friend had paused")
+        time.sleep(15)  # a long pause
         friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": False})
+        friend_follows(friend, False, 0.5)
         time.sleep(5)
         h1 = host.ram(0, 3)
         time.sleep(1)

@@ -546,11 +546,13 @@ fn take_lobby<R: Runtime>(app: &AppHandle<R>, s: &mut Session, lobby: Value) -> 
     None
 }
 
-/// Host: "Pause for everyone" lives on the server (anyone playing can ask, from their in-game menu). The host's
-/// RetroArch pauses the game for everyone (RetroArch's PAUSE_TOGGLE, measured: a friend's own pause can't be
-/// resumed by the others, so friends never pause their RetroArch themselves).
+/// "Pause for everyone" lives on the server (anyone playing can ask, from their in-game menu). Every PC in the
+/// lobby (host, players and watchers) pauses its own RetroArch from inside its hidden menu, so RetroArch's
+/// netplay never sees a pause: measured (in-game menu test, run 41253096478, 20 s pauses), that was the only
+/// way the game came back for everyone; the host pausing alone, or RetroArch's own netplay pause, dropped the
+/// friend or left the game stuck.
 fn follow_pause<R: Runtime>(app: &AppHandle<R>, s: &Session, lobby: &Value) {
-    if !s.host || s.ra.is_none() {
+    if s.ra.is_none() {
         return;
     }
     let want = lobby.get("paused").is_some_and(Value::is_object);

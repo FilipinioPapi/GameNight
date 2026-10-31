@@ -675,7 +675,7 @@ class PausePair(cl.Couch):
     the friend after about 10 s (run 41251728442, RetroArch's 10 s client stall limit), and a host pause with
     the menu closed left the game stuck after resuming (run 41247795649, RetroArch's 5 s host stall limit)."""
 
-    def run_variant(self, label, pause, resume):
+    def run_variant(self, label, pause, resume, hold=PAUSE_HOLD_SECONDS):
         res = self.res
         common = {"netplay_allow_pausing": "true", "menu_pause_libretro": "false", "pause_nonactive": "false",
                   **DISPLAY, **QUIET_MENU}
@@ -709,7 +709,7 @@ class PausePair(cl.Couch):
             b = (p1.frame(), p2.frame())
             res["paused"] = a == b and None not in a
             say(f"  {label}: frames 2 s apart while paused: {a} -> {b} (paused for both: {res['paused']})")
-            time.sleep(max(0, PAUSE_HOLD_SECONDS - 4))
+            time.sleep(max(0, hold - 4))
             res["log_while_paused"] = {k: c.new_netplay_lines()[-6:] for k, c in self.copies.items()}
             resume(p1, p2)
             time.sleep(4)
@@ -725,7 +725,7 @@ class PausePair(cl.Couch):
                 r = self.mash_and_compare(owners, 15, f"{label}: after resuming")
                 res["sync_after"] = {k: r.get(k) for k in ("frames_compared", "frames_different")}
             res["ok"] = bool(res["paused"] and res["after"])
-            say(f"  RESULT pause {label}: {'SURVIVED' if res['ok'] else 'BROKE'} a {PAUSE_HOLD_SECONDS} s pause")
+            say(f"  RESULT pause {label}: {'SURVIVED' if res['ok'] else 'BROKE'} a {hold} s pause")
             return res
         finally:
             if self.watch:
@@ -743,56 +743,50 @@ def part_pause(rom, pads, slots):
     """Which way of pausing for everyone lasts? Recorded, never a failure on its own (an experiment)."""
     say(f"\n################ part 3: pause for everyone held {PAUSE_HOLD_SECONDS} s (experiment) ################")
 
-    def host_menu_pause(p1, p2):
-        p1.send("MENU_TOGGLE")
+    # Run 41253096478 (20 s pauses): only "everyone's RetroArch pauses inside its own hidden menu" survived; the
+    # host alone (menu open or closed) and RetroArch's own netplay pause (both, either order) all broke. In the
+    # app each PC follows the server's pause on its own heartbeat (every 3 s), so the friend can be seconds
+    # behind or ahead of the host: measure that.
+    def menu_pause(c):
+        c.send("MENU_TOGGLE")
         time.sleep(0.6)
-        p1.send("PAUSE_TOGGLE")
+        c.send("PAUSE_TOGGLE")
 
-    def host_menu_resume(p1, p2):
-        p1.send("PAUSE_TOGGLE")
+    def menu_resume(c):
+        c.send("PAUSE_TOGGLE")
         time.sleep(0.6)
-        p1.send("MENU_TOGGLE")
+        c.send("MENU_TOGGLE")
 
-    def both_pause(p1, p2):
-        p1.send("PAUSE_TOGGLE")
-        time.sleep(1)
-        p2.send("PAUSE_TOGGLE")
+    def together(f):
+        def go(p1, p2):
+            threading.Thread(target=f, args=(p2,)).start()
+            f(p1)
+        return go
 
-    def host_then_friend(p1, p2):
-        p1.send("PAUSE_TOGGLE")
-        time.sleep(1)
-        p2.send("PAUSE_TOGGLE")
+    def friend_later(f, gap=2.5):
+        def go(p1, p2):
+            f(p1)
+            time.sleep(gap)
+            f(p2)
+        return go
 
-    def friend_then_host(p1, p2):
-        p2.send("PAUSE_TOGGLE")
-        time.sleep(1)
-        p1.send("PAUSE_TOGGLE")
-
-    def both_menu_pause(p1, p2):
-        for c in (p1, p2):
-            c.send("MENU_TOGGLE")
-        time.sleep(0.6)
-        for c in (p1, p2):
-            c.send("PAUSE_TOGGLE")
-
-    def both_menu_resume(p1, p2):
-        for c in (p1, p2):
-            c.send("PAUSE_TOGGLE")
-        time.sleep(0.6)
-        for c in (p1, p2):
-            c.send("MENU_TOGGLE")
+    def friend_first(f, gap=2.5):
+        def go(p1, p2):
+            f(p2)
+            time.sleep(gap)
+            f(p1)
+        return go
 
     variants = [
-        ("host, menu closed", lambda p1, p2: p1.send("PAUSE_TOGGLE"), lambda p1, p2: p1.send("PAUSE_TOGGLE")),
-        ("host, hidden menu open", host_menu_pause, host_menu_resume),
-        ("host and friend, host resumes first", both_pause, host_then_friend),
-        ("host and friend, friend resumes first", both_pause, friend_then_host),
-        ("host and friend, both hidden menus open", both_menu_pause, both_menu_resume),
+        ("both hidden menus, together", together(menu_pause), together(menu_resume), PAUSE_HOLD_SECONDS),
+        ("both hidden menus, friend 2.5 s after the host both times", friend_later(menu_pause), friend_later(menu_resume), PAUSE_HOLD_SECONDS),
+        ("both hidden menus, friend resumes 2.5 s before the host", friend_later(menu_pause), friend_first(menu_resume), PAUSE_HOLD_SECONDS),
+        ("both hidden menus, friend 2.5 s after the host, 90 s pause", friend_later(menu_pause), friend_later(menu_resume), 90),
     ]
     out = {"part": "pause", "hold_seconds": PAUSE_HOLD_SECONDS, "variants": {}}
-    for i, (label, pause, resume) in enumerate(variants):
+    for i, (label, pause, resume, hold) in enumerate(variants):
         before = len(cl.failures)
-        out["variants"][label] = PausePair(f"pause{i}", rom, pads, slots).run_variant(label, pause, resume)
+        out["variants"][label] = PausePair(f"pause{i}", rom, pads, slots).run_variant(label, pause, resume, hold)
         # An experiment: what broke is recorded as a finding, not a test failure.
         out["variants"][label]["findings"] = cl.failures[before:]
         del cl.failures[before:]

@@ -39,7 +39,7 @@ static LOG: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
 /// RetroArch's hidden menu is open on this command port (each RetroArch gets a new port, so a game that
 /// restarted never looks open).
 static RA_MENU: Mutex<Option<u16>> = Mutex::new(None);
-/// Couch Play host: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
+/// Couch Play: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
 static PAUSE_HOLD: Mutex<Option<u16>> = Mutex::new(None);
 /// When Game Night last sent MENU_TOGGLE.
 static RA_MENU_AT: Mutex<Option<Instant>> = Mutex::new(None);
@@ -60,10 +60,8 @@ pub fn ra_menu_settled() -> bool {
     lock(&RA_MENU_AT).is_none_or(|t| t.elapsed() >= Duration::from_millis(500))
 }
 
-/// Couch Play host, pause for everyone. Measured (CI run 41249302754): the host's pause with its hidden menu
-/// open came back fine after 8 s, but a pause with the menu closed (a friend's pause) left the game stuck
-/// and out of sync after resuming (run 41247795649). So the host's RetroArch always pauses from inside its
-/// hidden menu, which also keeps the host's buttons out of the paused game.
+/// Couch Play, pause for everyone (see couch.rs follow_pause): this PC's RetroArch pauses from inside its
+/// hidden menu, which also keeps your buttons out of the paused game.
 pub fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, port: u16, want: bool) {
     let app = app.clone();
     std::thread::spawn(move || {

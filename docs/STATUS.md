@@ -58,3 +58,13 @@ Strongly inferred, Unknown.
   RetroArch in front, Game Night minimized, and Game Night back in front after the game closed.
 - Unknown: Jayden's PC. If it misbehaves there, `window.txt` shows which step went wrong.
 - Waiting on Jayden: whether Game Night should come back by itself after a game (built as "yes", the recommended choice).
+
+## Couch Play online (thread "Build Couch Play online in the app")
+- Merged: PR #22, the server side (lobbies, 6-letter codes, 4 play + 4 watch seats, held seats, relay hand-off,
+  optional `BASE_PATH`). The container publishes from main.
+- In review: PR #24 (0.3.5), the app side: private relay bridge, live game box, Couch Play / Host / Lobby / Join
+  screens. Contract: `docs/COUCH_PLAY_SPEC.md`. Details: `docs/HANDOFF_COUCH_PLAY.md`.
+- Confirmed: unit tests (Rust 48, server 31), 52 browser pretend-controller checks. The Windows whole-chain test
+  (`couch-app.yml`) is on PR #24.
+- Waiting on Jayden: the go-online steps (project files `gamenight/couch-play/GO-ONLINE-STEPS.md`), the
+  lobby-controls decision card, and a real test with a friend.

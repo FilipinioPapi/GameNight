@@ -24,7 +24,7 @@ Strongly inferred, Unknown.
 - Plan agreed: build in proven layers, stability before speed. Details: `docs/HANDOFF_ONLINE.md`.
 - Merged: PR #12. Anyone in Jayden's Discord server can sign in, and the role is optional.
 - Next: step 1, two players in sync on GitHub's Windows runner.
-- play.jjsnas.xyz = Roof Rage's ntfy board; Game Night plan: its own /gamenight/ custom location, checked before and after (HANDOFF_ONLINE.md).
+- Going-online server notes live in the project's private notes, not the repo (see HANDOFF_ONLINE.md).
 
 ## Keeping secrets out / going public (thread "Check if Game Night code is safe to make public")
 - Confirmed 2026-10-31: no passwords, tokens or private keys anywhere in the repo or its history.

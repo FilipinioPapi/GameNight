@@ -11,7 +11,7 @@ check. Findings and the verdict are in `docs/HANDOFF_SECURITY.md`.
   Roof Rage's server setup. The one known LAN address is listed in `tools/security/allowlist.txt` until
   Jayden decides on it.
 - Notes about weak spots that aren't fixed yet (for example "is this NAS service locked down? Unknown").
-  Those go in the project's private notes (the project files folder), not in the repo.
+  Those go in the project's private notes (project files: `gamenight/private-notes/`), not in the repo.
 - Game ROMs, BIOS files, or art that isn't ours to share.
 
 ## Where secrets live instead
@@ -19,7 +19,7 @@ check. Findings and the verdict are in `docs/HANDOFF_SECURITY.md`.
 |---|---|
 | Discord client secret, RomM token or password | The Game Night container's settings on Unraid (masked fields in `server/unraid/gamenight.xml`) |
 | GitHub token for the update sync | Pasted into the Unraid User Script by Jayden. The repo copy only has `PASTE-YOUR-GITHUB-TOKEN-HERE` |
-| Update signing key | `/mnt/user/appdata/roofrage-sync/` on the NAS, read-only to the publish container. Only the public half is in the app |
+| Update signing key | A private folder on the NAS, read-only to the publish container. Only the public half is in the app |
 | A friend's sign-in pass | Windows Credential Manager on their PC. The server keeps only a fingerprint |
 | Anything CI ever needs | GitHub's encrypted Actions secrets (`${{ secrets.NAME }}`), never typed into a workflow file |
 

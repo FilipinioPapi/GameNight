@@ -33,11 +33,11 @@ Nothing secret is in the code or the history, so going public **won't leak a pas
 It isn't risk-free as it stands, because of #3 (email), #5 (server setup notes) and #11 (pictures).
 
 Before going public:
-1. Jayden turns on "Keep my email addresses private" on GitHub (stops new merges showing it).
-2. Move the server-setup notes (#5) out of the repo into the project's private notes, and leave plain
-   pointers in the docs. The real fix is to make sure ntfy on play.jjsnas.xyz really is deny-all,
-   since that address is public anyway. That's NAS work, so Jayden does it.
-3. Jayden confirms the pictures (#11) are OK to share.
+1. Done 2026-10-31 (Jayden): "Keep my email addresses private" is on, so new merges don't show it.
+2. Done 2026-10-31: the server-setup notes (#5) moved to the project's private notes
+   (`gamenight/private-notes/server-setup.md`), with pointers in the docs. ntfy: signed-out reads are refused
+   with 403 (Confirmed), so deny-all is Strongly inferred. Jayden confirms the setting.
+3. Done 2026-10-31: Jayden says all the pictures (#11) can be public.
 4. After going public: turn on secret scanning and push protection, require approval for outside PRs,
    and add branch protection on `main` (free for public repos: Strongly inferred, from GitHub's plan rules).
 

@@ -10,6 +10,16 @@
   let { id }: { id: string } = $props();
   let game = $state<Game | null>(null);
   let notice = $state("");
+  // Removing asks first, so one stray click or controller press can't delete a game.
+  let confirmRemove = $state(false);
+  let cancelBtn = $state<HTMLButtonElement | null>(null);
+  $effect(() => {
+    if (confirmRemove) cancelBtn?.focus();
+  });
+  async function remove() {
+    confirmRemove = false;
+    await play.remove(game!.id);
+  }
   $effect(() => {
     listGames().then((all) => (game = all.find((g) => g.id === id) ?? null));
   });
@@ -83,9 +93,15 @@
               <button class="btn big" disabled title="Coming in step 2">Start couch co-op</button>
             {/if}
             {#if local.onPC && !running}
-              <button class="btn big icon" title="Remove from this PC" aria-label="Remove from this PC" onclick={() => play.remove(game!.id)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-              </button>
+              {#if confirmRemove}
+                <span class="ask">Remove from this PC?</span>
+                <button class="btn big" bind:this={cancelBtn} onclick={() => (confirmRemove = false)}>Keep it</button>
+                <button class="btn big danger" onclick={remove}>Yes, remove</button>
+              {:else}
+                <button class="btn big icon" title="Remove from this PC" aria-label="Remove from this PC" onclick={() => (confirmRemove = true)}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+                </button>
+              {/if}
             {/if}
           {/if}
         </div>
@@ -105,6 +121,8 @@
 </div>
 
 <style>
+  .ask { align-self: center; font-weight: 600; color: var(--text); }
+  .danger { border-color: var(--red-2); color: var(--link); }
   .page { height: 100%; display: flex; flex-direction: column; background: radial-gradient(ellipse at 0% 0%, #4a1c1e 0%, var(--bg) 45%); }
   main { flex: 1; display: flex; gap: 40px; padding: 28px 48px; min-height: 0; overflow-y: auto; }
   .col-art { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px; }

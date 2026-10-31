@@ -20,11 +20,32 @@ export interface Settings {
   mappings: Partial<Record<ConsoleId, Partial<Record<PadType, Record<string, PadInput>>>>>;
   presets: Partial<Record<ConsoleId, Partial<Record<PadType, string>>>>;
   consoles: Partial<Record<ConsoleId, ConsoleSettings>>;
+  /** The "stop Steam opening on the Xbox button" tip has been shown and closed. */
+  steamTipSeen?: boolean;
+  /** Games you starred (Y on a controller, F on the keyboard). Game ids, newest first. */
+  favourites: string[];
+  /** Games you played lately, newest first (a short list). */
+  recent: RecentPlay[];
+  /** Library look: big tiles with consoles across the top, or a mouse-friendly list on the left. */
+  layout: "controller" | "mouse";
+  /** Follow whatever you last used: the controller layout with a controller, the mouse layout with the mouse. */
+  autoLayout: boolean;
+}
+
+export interface RecentPlay {
+  id: string;
+  /** When you last started it (milliseconds since 1970). */
+  at: number;
+  /** How long that last time lasted, once the game was closed. */
+  minutes?: number;
 }
 
 export const DEFAULT_CONSOLE: ConsoleSettings = { screen: "4:3", picture: "scanlines", rewind: true, fastForward: true, showFps: false };
 
-export const DEFAULTS: Settings = { firstRunDone: false, romsFolder: "", mappings: {}, presets: {}, consoles: {} };
+export const DEFAULTS: Settings = {
+  firstRunDone: false, romsFolder: "", mappings: {}, presets: {}, consoles: {},
+  favourites: [], recent: [], layout: "controller", autoLayout: false,
+};
 
 const KEY = "settings";
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

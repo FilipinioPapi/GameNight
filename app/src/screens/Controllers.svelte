@@ -108,7 +108,7 @@
   <div class="tiles">
     {#each CONSOLES as c (c.id)}
       <button class="tile" class:sel={c.id === cid} onclick={() => pickConsole(c.id)}>
-        <span class="ph"><img src="/ctl/{c.thumb}.webp" alt="" /></span>
+        <span class="ph"><img src="/ctl/clean/{c.thumb}.webp" alt="" /></span>
         <span class={c.font} style="font-size:{Math.min(c.navSize, 13)}px;line-height:1.1">{c.short}</span>
       </button>
     {/each}

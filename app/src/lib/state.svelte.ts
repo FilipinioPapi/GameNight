@@ -12,9 +12,12 @@ export type Route =
   | { name: "login" }
   | { name: "firstrun"; step: 2 | 3 }
   | { name: "menu" }
-  | { name: "library"; console: ConsoleId | "all" }
+  | { name: "library"; console: LibraryTab }
   | { name: "game"; id: string }
-  | { name: "settings"; tab: "controllers" | "screen" | "consoles" | "storage" | "account"; console: ConsoleId };
+  | { name: "settings"; tab: "controllers" | "devices" | "screen" | "consoles" | "layout" | "storage" | "account"; console: ConsoleId };
+
+/** The Library's tabs: Favourites, All games, or one console. */
+export type LibraryTab = ConsoleId | "all" | "fav";
 
 export type { User } from "./account";
 type User = account.User;
@@ -25,7 +28,7 @@ class AppState {
   user = $state<User | null>(null);
   settings = $state<Settings>({ ...DEFAULTS });
   ready = $state(false);
-  pad = $state<{ connected: boolean; type: PadType; name: string }>({ connected: false, type: "xbox", name: "" });
+  pad = $state<{ connected: boolean; type: PadType; name: string; usb: string }>({ connected: false, type: "xbox", name: "", usb: "" });
   /** The pad type the controller screen is showing (follows the plugged-in pad unless changed). */
   viewPad = $state<PadType>("xbox");
 
@@ -131,6 +134,31 @@ class AppState {
   choosePreset(id: ConsoleId, pad: PadType, presetId: string) {
     (this.settings.presets[id] ??= {})[pad] = presetId;
     if (this.settings.mappings[id]) delete this.settings.mappings[id]![pad];
+    this.save();
+  }
+
+  isFavourite(id: string): boolean {
+    return this.settings.favourites.includes(id);
+  }
+  /** Stars or un-stars a game. Returns true when it is now a favourite. */
+  toggleFavourite(id: string): boolean {
+    const on = !this.isFavourite(id);
+    this.settings.favourites = on ? [id, ...this.settings.favourites] : this.settings.favourites.filter((f) => f !== id);
+    this.save();
+    return on;
+  }
+
+  /** A game just started: it goes to the front of "Recently played". */
+  startedPlaying(id: string) {
+    const rest = this.settings.recent.filter((r) => r.id !== id);
+    this.settings.recent = [{ id, at: Date.now() }, ...rest].slice(0, 12);
+    this.save();
+  }
+  /** The game closed: remember how long that session was. */
+  stoppedPlaying(id: string) {
+    const r = this.settings.recent.find((x) => x.id === id);
+    if (!r) return;
+    r.minutes = Math.max(1, Math.round((Date.now() - r.at) / 60000));
     this.save();
   }
 

@@ -300,9 +300,22 @@ pub fn sound_failed(log: &str) -> bool {
     log.contains("Failed to initialize audio driver")
 }
 
+/// CI's Windows tests only (the "e2e" build, never shipped): which test is running. Always None otherwise.
+fn e2e_mode() -> Option<&'static str> {
+    #[cfg(feature = "e2e")]
+    {
+        match std::env::var("GAMENIGHT_E2E").as_deref() {
+            Ok("play") => return Some("play"),
+            Ok("padgame") => return Some("padgame"),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// RetroArch's settings for one game. Menus, online features and anything that could take a player
 /// out of the game are switched off. Quitting: Esc, or L1 + R1 + Start + Select on a controller.
-pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize) -> String {
+pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &crate::controllers::Plan) -> String {
     let path = |p: &Path| p.to_string_lossy().replace('"', "");
     let yes = |b: bool| if b { "true" } else { "false" };
     let (aspect, integer) = match s.screen.as_str() {
@@ -322,7 +335,8 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize) -> Stri
         ("desktop_menu_enable", "false".into()),
         ("menu_show_online_updater", "false".into()),
         ("menu_show_core_updater", "false".into()),
-        ("network_cmd_enable", "false".into()),
+        // Off, except in CI's controller-in-a-game test (the "e2e" build), which asks the game what it sees.
+        ("network_cmd_enable", yes(e2e_mode() == Some("padgame")).into()),
         ("stdin_cmd_enable", "false".into()),
         ("netplay_nat_traversal", "false".into()),
         ("cheevos_enable", "false".into()),
@@ -370,9 +384,12 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize) -> Stri
         ("input_hold_fast_forward", if s.fast_forward { "space" } else { "nul" }.into()),
         ("input_toggle_fast_forward", "nul".into()),
         // Controllers
-        ("input_joypad_driver", "xinput".into()),
+        // "xinput" normally; "dinput" when an extra hidden Xbox-style slot would make "xinput" read
+        // the wrong one (see retroports.rs).
+        ("input_joypad_driver", if pads.joypad_driver == "dinput" { "dinput" } else { "xinput" }.into()),
         ("input_autodetect_enable", "true".into()),
         ("joypad_autoconfig_dir", path(&p.player.join("autoconfig"))),
+        ("input_max_users", crate::controllers::PLAYERS.to_string()),
         // Folders: RetroArch's own bits, and saves in the Game Night folder.
         ("libretro_directory", path(&p.player.join("cores"))),
         ("savefile_directory", path(&p.saves)),
@@ -386,7 +403,34 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize) -> Stri
     for (k, v) in lines {
         out.push_str(&format!("{k} = \"{v}\"\n"));
     }
+    // Player 1 is the chosen controller, or the one last pressed in Game Night. Controllers turned off
+    // in Settings are parked on players 5, 6, ... which no game uses, so they can't take a player's place.
+    let mut pad = |n: usize, kind: &str, id: &str| {
+        out.push_str(&format!("input_player{n}_device_reservation_type = \"{kind}\"\ninput_player{n}_reserved_device = \"{id}\"\n"));
+    };
+    match &pads.player1 {
+        Some(id) => pad(1, "1", id),
+        None => pad(1, "0", ""),
+    }
+    for (i, id) in pads.parked.iter().enumerate() {
+        pad(crate::controllers::PLAYERS + 1 + i, "2", id);
+    }
     out
+}
+
+/// A short note of the controllers seen and who got what, kept next to RetroArch's log.
+fn describe(plugged: &[crate::retroports::Device], pads: &crate::controllers::Plan) -> String {
+    let mut t = String::new();
+    for d in plugged {
+        t.push_str(&format!("{} ({} / usb {})\n", d.name, crate::controllers::id(d.ra), crate::controllers::id(d.usb)));
+    }
+    t.push_str(&format!(
+        "player 1: {}\nturned off: {}\nreader: {}\n",
+        pads.player1.as_deref().unwrap_or("not set (RetroArch's own order)"),
+        pads.parked.join(", "),
+        pads.joypad_driver
+    ));
+    t
 }
 
 /// Starts a downloaded game fullscreen. "game-closed" fires when the player quits.
@@ -414,6 +458,25 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
     let cfg_dir = app.path().app_config_dir().map_err(|_| "No settings folder.")?.join("player");
     let cache = app.path().app_cache_dir().map_err(|_| "No cache folder.")?.join("player");
     let sound_file = cfg_dir.join("sound.txt");
+    // Player 1: the controller chosen in Settings, else the one last pressed in the menus, else the
+    // one remembered from last time. Turned-off controllers are parked.
+    let pad_file = cfg_dir.join("controller.txt");
+    let last_used = *crate::pads::LAST_USED.lock().unwrap_or_else(|e| e.into_inner());
+    let scan = crate::retroports::scan();
+    let plugged = &scan.devices;
+    let mut pads = crate::controllers::plan(
+        &crate::controllers::prefs(&app),
+        plugged,
+        last_used,
+        fs::read_to_string(&pad_file).ok().as_deref(),
+    );
+    pads.joypad_driver = crate::retroports::joypad_driver(&scan);
+    // CI's controller test only (the "e2e" build): try RetroArch's "dinput" reader, the one Jayden's PC
+    // gets (CI's pretend pads never trigger the switch by themselves).
+    #[cfg(feature = "e2e")]
+    if std::env::var("GAMENIGHT_E2E_READER").as_deref() == Ok("dinput") {
+        pads.joypad_driver = "dinput";
+    }
     let sound: usize = fs::read_to_string(&sound_file).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0).min(SOUND_WAYS.len());
     let paths = ConfigPaths {
         player: player.clone(),
@@ -430,16 +493,26 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         }
         let cfg = cfg_dir.join("retroarch.cfg");
         let _ = fs::remove_file(&log_file);
-        fs::write(&cfg, retroarch_config(&paths, &settings, sound)).map_err(|_| "Couldn't write the player settings.")?;
+        if let Some(id) = &pads.player1 {
+            let _ = fs::write(&pad_file, id);
+        }
+        let _ = fs::write(paths.logs.join("controllers.txt"), describe(plugged, &pads));
+        fs::write(&cfg, retroarch_config(&paths, &settings, sound, &pads)).map_err(|_| "Couldn't write the player settings.")?;
         let mut cmd = std::process::Command::new(&exe);
         cmd.current_dir(&player).arg("--config").arg(&cfg).arg("-L").arg(&core_path).arg("--fullscreen");
         if settings.picture == "scanlines" {
             cmd.arg("--set-shader").arg(player.join("shaders").join("scanlines.slangp"));
         }
-        // CI's Windows game test only (the "e2e" build): play 600 frames (10 seconds at real speed), then quit.
-        #[cfg(feature = "e2e")]
-        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
-            cmd.arg("--max-frames=600");
+        // CI's Windows tests only (the "e2e" build): the game test plays 600 frames (10 seconds at real
+        // speed), the controller-in-a-game test up to a minute (it closes the game once it has its answers).
+        match e2e_mode() {
+            Some("play") => {
+                cmd.arg("--max-frames=600");
+            }
+            Some("padgame") => {
+                cmd.arg("--max-frames=3600");
+            }
+            _ => {}
         }
         cmd.arg(&rom);
         cmd.spawn().map_err(|_| "Couldn't start the game.".to_string())
@@ -466,7 +539,7 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
         }
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
         #[cfg(feature = "e2e")]
-        if std::env::var("GAMENIGHT_E2E").as_deref() == Ok("play") {
+        if e2e_mode().is_some() {
             let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file });
             let _ = fs::write(root.join("e2e-result.json"), result.to_string());
             handle.exit(0);
@@ -482,10 +555,28 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
 /// CI's Windows game test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=play the app starts
 /// game "1" from the Game Night folder in GAMENIGHT_E2E_ROOT exactly as the Play button would.
 #[cfg(feature = "e2e")]
+/// With GAMENIGHT_E2E=padgame it first waits (up to 90 s) for a button press in the menus, the way a
+/// player would pick their controller, then starts the game.
 pub fn e2e_play<R: Runtime>(app: AppHandle<R>) {
-    if std::env::var("GAMENIGHT_E2E").as_deref() != Ok("play") {
-        return;
+    match e2e_mode() {
+        Some("play") => e2e_start(app),
+        Some("padgame") => {
+            std::thread::spawn(move || {
+                for _ in 0..900 {
+                    if crate::pads::LAST_USED.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                e2e_start(app);
+            });
+        }
+        _ => {}
     }
+}
+
+#[cfg(feature = "e2e")]
+fn e2e_start<R: Runtime>(app: AppHandle<R>) {
     let root = std::env::var("GAMENIGHT_E2E_ROOT").unwrap_or_default();
     let settings: PlaySettings = serde_json::from_value(serde_json::json!({
         "screen": "4:3", "picture": "scanlines", "rewind": false, "fastForward": false, "showFps": true
@@ -548,9 +639,16 @@ mod tests {
             cache: PathBuf::from("/c"),
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false };
-        let cfg = retroarch_config(&p, &s, 0);
+        let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
+        let cfg = retroarch_config(&p, &s, 0, &pads);
         for want in [
             "audio_driver = \"xaudio\"",
+            "input_max_users = \"4\"",
+            "input_player1_device_reservation_type = \"1\"",
+            "input_player1_reserved_device = \"045e:02ff\"",
+            "input_player5_device_reservation_type = \"2\"",
+            "input_player5_reserved_device = \"1532:02a7\"",
+            "input_joypad_driver = \"dinput\"",
             "audio_sync = \"true\"",
             "audio_mute_enable = \"false\"",
             "vrr_runloop_enable = \"false\"",
@@ -568,9 +666,11 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         let pixel = PlaySettings { screen: "pixel".into(), picture: "sharp".into(), ..s };
-        let cfg = retroarch_config(&p, &pixel, 1);
+        let cfg = retroarch_config(&p, &pixel, 1, &Default::default());
+        assert!(cfg.contains("input_player1_device_reservation_type = \"0\""));
+        assert!(cfg.contains("input_joypad_driver = \"xinput\""));
         assert!(cfg.contains("audio_driver = \"wasapi\"") && cfg.contains("audio_wasapi_exclusive_mode = \"false\""));
-        let last = retroarch_config(&p, &pixel, 9);
+        let last = retroarch_config(&p, &pixel, 9, &Default::default());
         assert!(last.contains("audio_driver = \"dsound\"") && last.contains("vrr_runloop_enable = \"true\""));
         assert!(sound_failed("[ERROR] Failed to initialize audio driver. Will continue without audio.\n"));
         assert!(!sound_failed("[INFO] [Audio]: Started synchronous audio driver.\n"));

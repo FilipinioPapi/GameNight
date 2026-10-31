@@ -47,6 +47,10 @@ while ($runs -lt 4) {
   if (Test-Path $log) {
     Get-Content $log | Select-String -Pattern 'audio|Audio|Content|Core|Video|error|ERROR' | Select-Object -First 40 | ForEach-Object { Write-Host "  | $_" }
   } else { Fail "RetroArch wrote no log" }
+  $pads = Join-Path $cache 'player\logs\controllers.txt'
+  if (Test-Path $pads) { Write-Host "controllers:"; Get-Content $pads | ForEach-Object { Write-Host "  | $_" } } else { Fail "no controllers note was written" }
+  $cfgFile = Join-Path $config 'player\retroarch.cfg'
+  if (-not (Select-String -Path $cfgFile -Pattern 'input_max_users = "4"' -Quiet)) { Fail "the player settings are missing the controller lines" }
   if (-not $result.silent) { break }
 }
 if (-not $result.ok) { Fail "RetroArch exited with an error" }
@@ -54,6 +58,19 @@ if (-not $result.ok) { Fail "RetroArch exited with an error" }
 if ($seconds -lt 8) { Fail "600 frames took only $seconds s: the game runs too fast" }
 Write-Host "the game ran at real speed ($seconds s for 600 frames)"
 Remove-Item Env:GAMENIGHT_E2E, Env:GAMENIGHT_E2E_ROOT
+
+Step "Drive the menus with a pretend Xbox controller"
+# Settings as if the first-time setup was done, so the app opens on the main menu.
+New-Item -ItemType Directory $config -Force | Out-Null
+@{ settings = @{ firstRunDone = $true; romsFolder = $root; mappings = @{}; presets = @{}; consoles = @{}; steamTipSeen = $true } } |
+  ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $config 'settings.json')
+$shots = Join-Path $env:RUNNER_TEMP 'screens'
+python (Join-Path $Tools 'pad_test.py') menus $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the pretend controller couldn't drive the menus (screenshots are in the 'screens' download)" }
+
+Step "Play the test game with the pretend Xbox controller"
+python (Join-Path $Tools 'pad_test.py') game $exe $root $shots
+if ($LASTEXITCODE -ne 0) { Fail "the game didn't get the pretend controller on Player 1 (screenshots are in the 'screens' download)" }
 
 Step "Update to $NewVersion through the app's own updater"
 $site = Join-Path $env:RUNNER_TEMP 'updates'

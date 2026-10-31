@@ -6,7 +6,7 @@
   import { app } from "../lib/state.svelte";
   import { consoleById } from "../lib/consoles";
   import { loadLibrary, localInfo, type Game, type Library } from "../lib/library";
-  import { quitApp } from "../lib/native";
+  import { quitApp, steamRunning } from "../lib/native";
   import { VERSION } from "../lib/version";
   import { updates } from "../lib/update.svelte";
 
@@ -25,6 +25,17 @@
   $effect(() => {
     void updates.check();
   });
+
+  // One-time tip: Steam grabs the Xbox / PS button unless that's turned off in Steam.
+  let steamTip = $state(false);
+  $effect(() => {
+    if (!app.settings.steamTipSeen) steamRunning().then((on) => (steamTip = on));
+  });
+  function closeSteamTip() {
+    steamTip = false;
+    app.settings.steamTipSeen = true;
+    app.save();
+  }
 
   let playBtn: HTMLButtonElement;
   $effect(() => playBtn?.focus());
@@ -45,9 +56,9 @@
   <div class="left">
     <Brand size="lg" />
     <nav aria-label="Main menu">
-      <button class="mi play" data-autofocus bind:this={playBtn} onclick={() => app.go({ name: "library", console: "all" })}>
+      <button class="mi play" data-autofocus bind:this={playBtn} onclick={() => app.go({ name: "library", console: "fav" })}>
         <span class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg></span>
-        <span class="words"><span class="lucky big">PLAY</span><span class="sub">{games.length} games in the library · {onPC} on this PC</span></span>
+        <span class="words"><span class="lucky big">LIBRARY</span><span class="sub">{games.length} games in the library · {onPC} on this PC</span></span>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
       </button>
       <button class="mi" disabled title="Coming in step 2">
@@ -63,6 +74,13 @@
         <span class="lucky mid">QUIT</span>
       </button>
     </nav>
+    {#if steamTip}
+      <div class="tip" role="note">
+        <b>Tip: stop the Xbox button opening Steam</b>
+        <span>Steam is open. In Steam, go to <b>Settings</b>, then <b>Controller</b>, and turn off <b>"Guide Button Focuses Steam"</b>. Then the Xbox / PS button only opens Game Night.</span>
+        <button class="btn small" onclick={closeSteamTip}>Got it</button>
+      </div>
+    {/if}
   </div>
 
   <div class="top-right">
@@ -107,6 +125,8 @@
   .play .sub { color: #fff; font-weight: 500; }
   .soon { color: var(--amber); }
 
+  .tip { margin-top: 20px; border-radius: 14px; border: 1px solid var(--amber); background: rgba(30, 20, 21, 0.95); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-2); align-items: flex-start; }
+  .tip > b { color: #fff; font-size: 14px; }
   .top-right { position: absolute; right: 44px; top: 36px; display: flex; align-items: center; gap: 12px; }
   .chip-pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); padding: 8px 14px; border-radius: 999px; background: rgba(30, 20, 21, 0.92); border: 1px solid var(--line); }
   .chip-pill.user { padding: 5px 14px 5px 5px; font-size: 14px; gap: 10px; }

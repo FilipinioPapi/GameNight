@@ -1,4 +1,13 @@
-# 0.3.2
-Controller now works in the menus (read straight from Windows)
-Games have sound and run at normal speed
-The version on screen is now correct
+# 0.3.3
+A new Library: consoles across the top, your favourites first, and the last 3 games you played
+Press Y on any game to make it a favourite
+A button guide along the bottom shows what each controller button does
+Settings, Layout: switch to a mouse and keyboard layout
+Player 1 is the controller you actually use, even with other devices plugged in
+New Settings page "My controllers": pick Player 1, or turn off anything that isn't really a controller
+A tip for stopping the Xbox button opening Steam
+Cleaner controller pictures in the menus
+Smooth, console-style movement: the highlight glides and lists scroll gently
+The main menu's PLAY is now LIBRARY
+A retro glow look for the Library
+Anyone in the Discord server can sign in

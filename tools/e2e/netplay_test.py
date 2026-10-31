@@ -373,6 +373,7 @@ class TunnelBridge(threading.Thread):
         self.writer = None
         self.t0 = time.time()
         self.events = []  # what happened on the relay connections, with seconds since the bridge started
+        self.tasks = set()  # running link tasks (strong references, see main())
 
     def note(self, what):
         self.events.append((round(time.time() - self.t0, 2), what))
@@ -418,7 +419,12 @@ class TunnelBridge(threading.Thread):
                 link = await reader.readexactly(12)
                 fut = self.loop.create_future()
                 waiting[link] = fut
-                asyncio.ensure_future(self.open_link(link, fut, writer))
+                # Keep a reference: asyncio only keeps weak ones, and a link task with none can be thrown away by
+                # Python's garbage collector mid-game ("Task was destroyed but it is pending!", seen in the Couch
+                # Play test run 41178993059, where it closed friends' links within a second).
+                task = asyncio.ensure_future(self.open_link(link, fut, writer))
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
             elif magic == RATA:
                 link = await reader.readexactly(12)
                 addr = await reader.readexactly(16)

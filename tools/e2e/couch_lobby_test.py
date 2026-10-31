@@ -836,6 +836,15 @@ class Couch:
 
     def join(self, who, label="join"):
         c = self.copies[who]
+        for attempt in range(1, 4):
+            ok = self.join_once(who, label, attempt)
+            if ok or c.alive() or attempt == 3:
+                return ok
+            say(f"  {who}'s RetroArch closed by itself (exit code {c.proc.returncode:#x}); trying again")
+        return False
+
+    def join_once(self, who, label, attempt):
+        c = self.copies[who]
         links_before = self.bridge.stats["links"] if self.bridge else 0
         t0, p0 = time.time(), time.perf_counter()
         c.start(self.rom, self.connect_args(c))
@@ -848,14 +857,17 @@ class Couch:
             if c.base is None:
                 c.locate(5)
             fh, fc = host.frame(), c.frame()
-            return fh and fc and fc > 120 and abs(fh - fc) < (90 if self.place else 40)
+            # the host's game arrived: this copy is far past where it could have got on its own, and level with the host
+            own_best = 62 * (time.time() - c.started) + 300
+            return fh and fc and fc > own_best and abs(fh - fc) < (90 if self.place else 40)
         ok = ok and bool(wait_for(caught_up, 45, 0.2))
         took = round(time.time() - t0, 1)
         time.sleep(1.5)
         # the netplay copy of the RAM may have moved after the host's game arrived; find it again
         c.locate(10)
         p1 = time.perf_counter()
-        entry = {"who": who, "what": label, "joined": ok, "seconds": took,
+        entry = {"who": who, "what": label, "attempt": attempt, "joined": ok, "seconds": took,
+                 "exit_code": None if c.alive() else hex(c.proc.returncode & 0xFFFFFFFF),
                  "host_longest_stop_ms": self.watch.longest_stop_ms(p0, p1) if self.watch else None,
                  "marked_copies_in_process": getattr(c, "candidates", None)}
         if self.bridge:
@@ -865,13 +877,14 @@ class Couch:
         self.res["joins"].append(entry)
         if ok and c not in self.live:
             self.live.append(c)
-        if not ok:
-            fail(f"{self.name}: {who} couldn't {label} (host frame {host.frame()}, theirs {c.frame()})")
+        if not ok and (c.alive() or attempt == 3):
+            fail(f"{self.name}: {who} couldn't {label} (host frame {host.frame()}, theirs {c.frame()}, "
+                 f"RetroArch {'running' if c.alive() else 'closed, exit code ' + entry['exit_code']})")
         return ok
 
     # --- checks
     def seats(self, c):
-        m = c.ram(0x10, 10)
+        m = c.ram(0, 0x20)
         return pad_values(m) if m else None
 
     def seat_check(self, owners, label):
@@ -1059,9 +1072,16 @@ class Couch:
                 say(f"{self.place} relay is {relay_host}:{relay_port}; plain connect {plain} ms")
             else:
                 self.proxy = CutProxy()
-            host.start(self.rom, ["--host", "--port", str(NETPLAY_PORT)])
-            if not host.locate(40):
-                fail(f"{self.name}: couldn't find the host's game RAM")
+            for attempt in range(1, 4):
+                host.start(self.rom, ["--host", "--port", str(NETPLAY_PORT)])
+                if host.locate(40):
+                    break
+                code = None if host.alive() else hex(host.proc.returncode & 0xFFFFFFFF)
+                res.setdefault("host_start_problems", []).append({"attempt": attempt, "exit_code": code})
+                say(f"  the host's RetroArch {'never showed the game' if code is None else 'closed by itself, exit code ' + code}")
+                host.kill()
+            else:
+                fail(f"{self.name}: the host's game never started (3 tries: {res['host_start_problems']})")
                 return res
             self.live.append(host)
             self.watch = FrameWatch(host)

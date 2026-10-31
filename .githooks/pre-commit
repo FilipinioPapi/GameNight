@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stops a commit that contains a key, token, password, personal email or home-network address.
+# Turn it on once per copy of the repo:  git config core.hooksPath .githooks
+exec python3 tools/security/scan_secrets.py --staged

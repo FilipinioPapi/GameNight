@@ -62,6 +62,8 @@ pub struct PadState {
     pub id: String,
     pub buttons: Vec<bool>,
     pub axes: Vec<f32>,
+    /// Counts up with every change, so the menus can tell a late, older reading from a newer one.
+    pub seq: u64,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -174,6 +176,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         };
         note(format!("Game Night {} reading controllers", env!("CARGO_PKG_VERSION")));
         let mut last = PadState::default();
+        let mut seq: u64 = 0;
         // The menus follow whichever controller was pressed last.
         let mut active: Option<Source> = None;
         // Controllers turned off in Settings are ignored completely. Re-read about once a second.
@@ -320,6 +323,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                                     tidy_axis(if n % 2 == 1 { -v } else { v })
                                 })
                                 .collect(),
+                            seq: 0,
                         }
                     }
                     None => PadState::default(),
@@ -338,14 +342,17 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                                 tidy_axis(if n % 2 == 1 { -v } else { v })
                             })
                             .collect(),
+                        seq: 0,
                     },
                     None => PadState::default(),
                 },
                 None => PadState::default(),
             };
             if now != last {
-                *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
-                let _ = app.emit("pad", &now);
+                seq += 1;
+                let numbered = PadState { seq, ..now.clone() };
+                *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(numbered.clone());
+                let _ = app.emit("pad", &numbered);
                 last = now;
             }
             std::thread::sleep(Duration::from_millis(8));

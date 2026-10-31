@@ -12,6 +12,7 @@
 </script>
 
 {#if app.ready}
+  {#key r.name}<div class="screen-fade">
   {#if r.name === "login"}<Login />
   {:else if r.name === "firstrun"}<FirstRun step={r.step} />
   {:else if r.name === "menu"}<MainMenu />
@@ -19,5 +20,6 @@
   {:else if r.name === "game"}<GamePage id={r.id} />
   {:else if r.name === "settings"}<Settings tab={r.tab} console={r.console} />
   {/if}
+  </div>{/key}
   <UpdateBox />
 {/if}

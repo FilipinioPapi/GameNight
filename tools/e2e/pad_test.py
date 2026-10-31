@@ -136,13 +136,13 @@ def menus():
         dump_log("pads.txt so far:")
         screenshot("0-main-menu")
         step(pad, "1-dpad-down", B.XUSB_GAMEPAD_DPAD_DOWN, 13, "menu", "settings")
-        step(pad, "2-dpad-up", B.XUSB_GAMEPAD_DPAD_UP, 12, "menu", "play")
-        step(pad, "3-a-opens-play", B.XUSB_GAMEPAD_A, 0, "library")
+        step(pad, "2-dpad-up", B.XUSB_GAMEPAD_DPAD_UP, 12, "menu", "focused: button \"LIBRARY")
+        step(pad, "3-a-opens-library", B.XUSB_GAMEPAD_A, 0, "library")
         step(pad, "4-b-goes-back", B.XUSB_GAMEPAD_B, 1, "menu")
     finally:
         app.kill()
         dump_log("\nwhole pads.txt:")
-    return "the pretend controller drove the main menu: down, up, A opens Play, B goes back"
+    return "the pretend controller drove the main menu: down, up, A opens the Library, B goes back"
 
 
 def ask_game(command):

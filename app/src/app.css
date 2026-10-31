@@ -41,6 +41,35 @@ button:disabled { cursor: default; opacity: 0.5; }
 .pad-mode :focus { outline: 3px solid var(--amber); outline-offset: 3px; }
 .pad-mode { cursor: none; }
 
+/* Controller highlight: one glowing frame glides between things (lib/focusring.ts). While it shows
+   ("glide"), each thing's own static outline and glow step aside so there's only one highlight. */
+.focus-ring {
+  position: fixed; left: 0; top: 0; z-index: 900; pointer-events: none; box-sizing: border-box;
+  border: 2px solid #ffc84a; border-radius: 12px; opacity: 0; transition: opacity 0.15s;
+  box-shadow: 0 0 0 1px #fff3c4, 0 0 8px 2px #ffb21e, 0 0 20px 3px rgba(255, 150, 0, 0.5);
+  will-change: transform, width, height;
+}
+.focus-ring.show { opacity: 1; animation: ringGlow 2.6s ease-in-out infinite; }
+@keyframes ringGlow {
+  50% { box-shadow: 0 0 0 1px #fff3c4, 0 0 12px 3px #ffb21e, 0 0 28px 6px rgba(255, 150, 0, 0.55); }
+}
+body.glide.pad-mode :focus { outline: none !important; }
+body.glide.pad-mode .card:focus .art,
+body.glide.pad-mode .rcard:focus { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45) !important; border-color: transparent !important; animation: none !important; }
+/* The highlighted thing lifts a little. */
+body.glide .card .art, body.glide .rcard, body.glide .tab, body.glide .mi { transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.18s, border-color 0.18s; }
+body.glide.pad-mode .card:focus .art { transform: scale(1.05); }
+body.glide.pad-mode .rcard:focus { transform: scale(1.02); }
+body.glide.pad-mode .tab:focus { transform: translateY(-2px); }
+body.glide.pad-mode .mi:focus { transform: translateX(6px); }
+/* Screens fade in rather than cutting. */
+.screen-fade { height: 100%; animation: screenIn 0.2s ease-out; }
+@keyframes screenIn { from { opacity: 0; transform: scale(0.99); } }
+@media (prefers-reduced-motion: reduce) {
+  .focus-ring.show, .screen-fade { animation: none; }
+  body.glide .card .art, body.glide .rcard, body.glide .tab, body.glide .mi { transition: none; }
+}
+
 /* Console title fonts (stand-ins for each console's look) */
 .f-nes { font-family: "Press Start 2P", monospace; }
 .f-snes { font-family: "Pixelify Sans", sans-serif; font-weight: 700; }

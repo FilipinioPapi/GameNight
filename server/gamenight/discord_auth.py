@@ -5,7 +5,7 @@ How it works:
    only the app knows).
 2. We send the browser to Discord's own page. Passwords are only ever typed there.
 3. Discord sends the browser back with a one-time code. We ask Discord "who is this, and
-   are they in Jayden's server with the Game Night role?" (scopes: identify +
+   are they in Jayden's server?" (plus the Game Night role, if one is set) (scopes: identify +
    guilds.members.read), then hand Discord's token straight back (revoke). We never keep it.
 4. The browser passes a short-lived code to the app (gamenight://signed-in). The app trades
    it, together with its secret, for its own sign-in pass. Another program that grabbed the
@@ -116,8 +116,15 @@ class LoginBook:
         return t
 
 
+def has_access(member: dict, role_id: str) -> bool:
+    """Being in Jayden's Discord server is enough when no role is set. If a role is set, you need it."""
+    if not str(role_id or "").strip():
+        return True
+    return str(role_id).strip() in [str(r) for r in member.get("roles", [])]
+
+
 async def check_member(http: aiohttp.ClientSession, cfg, code: str) -> tuple[str, str, str]:
-    """Swap Discord's code for who you are, and check the Game Night role.
+    """Swap Discord's code for who you are, and check you're in Jayden's server (and have the role, if one is set).
     Returns (discord id, display name, avatar url). Discord's token is revoked right after."""
     form = {"grant_type": "authorization_code", "code": code, "redirect_uri": cfg.redirect_uri}
     auth = aiohttp.BasicAuth(cfg.discord_client_id, cfg.discord_client_secret)
@@ -140,7 +147,7 @@ async def check_member(http: aiohttp.ClientSession, cfg, code: str) -> tuple[str
                 pass
         except aiohttp.ClientError:
             pass
-    if str(cfg.role_id) not in [str(r) for r in member.get("roles", [])]:
+    if not has_access(member, cfg.role_id):
         raise NotAllowed()
     user = member.get("user") or {}
     uid = str(user.get("id", ""))

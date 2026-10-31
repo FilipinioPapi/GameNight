@@ -54,6 +54,16 @@ while ($runs -lt 4) {
   if (-not $result.silent) { break }
 }
 if (-not $result.ok) { Fail "RetroArch exited with an error" }
+# Game Night steps aside when the game starts, and comes back when it closes (window.txt has each step).
+$winLog = Join-Path $cache 'player\logs\window.txt'
+if (Test-Path $winLog) { Write-Host "window.txt:"; Get-Content $winLog | ForEach-Object { Write-Host "  | $_" } } else { Fail "no window note was written" }
+$w = $result.window
+if (-not $w) { Fail "the game test didn't report what was in front" }
+if (-not $w.game_window) { Fail "Game Night never saw the game's window" }
+if (-not $w.minimized) { Fail "Game Night didn't minimize when the game started" }
+if (-not $w.game_in_front) { Fail "the game's window wasn't in front once Game Night minimized" }
+if (-not $w.back_in_front) { Fail "Game Night didn't come back to the front when the game closed" }
+Write-Host "Game Night minimized, the game was in front, and Game Night came back after"
 # 600 frames is 10 seconds at real speed. Much faster means the game is racing (Jayden's "sped up" bug).
 if ($seconds -lt 8) { Fail "600 frames took only $seconds s: the game runs too fast" }
 Write-Host "the game ran at real speed ($seconds s for 600 frames)"

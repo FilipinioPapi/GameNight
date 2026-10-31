@@ -42,3 +42,13 @@ Strongly inferred, Unknown.
   and picture rights. Details and verdict: `docs/HANDOFF_SECURITY.md`. Rules: `docs/SECURITY_RULES.md`.
 - New: secret check on every push and PR, plus a pre-commit check (`git config core.hooksPath .githooks`).
 - Waiting on Jayden: whether to go public, his GitHub email setting, the pictures, and any history rewrite.
+
+## Game window in front (thread "Minimize Game Night when a game starts")
+- Built on branch `claude/project-thread-sh0idr` (PR #18, into #17's branch; ships in 0.3.4): when a game starts, Game Night
+  waits for RetroArch's window, makes sure it's in front, then minimizes. When the game closes, Game Night comes
+  back to the front (it already tried to; now measured). Each step is logged to `player/logs/window.txt` in the
+  cache folder.
+- Confirmed (CI runs 96 and 97, commit 518dc85): game test and all three pretend-controller game tests saw
+  RetroArch in front, Game Night minimized, and Game Night back in front after the game closed.
+- Unknown: Jayden's PC. If it misbehaves there, `window.txt` shows which step went wrong.
+- Waiting on Jayden: whether Game Night should come back by itself after a game (built as "yes", the recommended choice).

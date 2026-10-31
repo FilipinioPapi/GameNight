@@ -524,6 +524,19 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
             return Err(e);
         }
     };
+    // Game Night steps aside (minimizes) once the game's window is up, and comes back when it closes.
+    crate::gamewindow::reset();
+    let window_log = std::sync::Arc::new(crate::gamewindow::Log::new(&paths.logs));
+    {
+        let app = app.clone();
+        let log = window_log.clone();
+        let (pid, id) = (child.id(), id.clone());
+        std::thread::spawn(move || {
+            crate::gamewindow::game_started(&app, &log, pid, || {
+                app.state::<Games>().playing.lock().unwrap_or_else(|e| e.into_inner()).as_deref() == Some(id.as_str())
+            });
+        });
+    }
     let handle = app.clone();
     std::thread::spawn(move || {
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
@@ -538,15 +551,13 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, settin
             let _ = fs::write(&sound_file, (SOUND_WAYS.len() - 1).to_string());
         }
         let _ = handle.emit("game-closed", serde_json::json!({ "id": id, "ok": ok, "silent": silent }));
+        crate::gamewindow::game_closed(&handle, &window_log);
         #[cfg(feature = "e2e")]
         if e2e_mode().is_some() {
-            let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file });
+            let window = crate::gamewindow::LAST.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let result = serde_json::json!({ "ok": ok, "silent": silent, "sound_way": SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)], "log": log_file, "window": window });
             let _ = fs::write(root.join("e2e-result.json"), result.to_string());
             handle.exit(0);
-        }
-        if let Some(w) = handle.get_webview_window("main") {
-            let _ = w.unminimize();
-            let _ = w.set_focus();
         }
     });
     Ok(())

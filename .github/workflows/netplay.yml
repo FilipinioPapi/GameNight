@@ -1,7 +1,10 @@
-# Online co-op, step 1: two copies of Game Night's pinned RetroArch play together on GitHub's Windows
-# machine, each with its own pretend Xbox pad, and tools/e2e/netplay_test.py measures whether they connect,
-# stay in sync, and put each pad on the right player. Nothing here touches Game Night's app or releases,
-# and nothing goes to the internet (the two copies talk over the machine's own loopback address).
+# Online co-op test: two copies of Game Night's pinned RetroArch play together on GitHub's Windows machine,
+# each with its own pretend Xbox pad, and tools/e2e/netplay_test.py measures whether they connect, stay in sync,
+# and put each pad on the right player. Nothing here touches Game Night's app or releases.
+# Rounds: straight on this machine, with pretend internet delay, and (step 2) through libretro's public relay
+# servers over the real internet (New York, Madrid, Sao Paulo, Singapore). The relay rounds are the only part
+# that goes to the internet: libretro's lobby (to find the relay, and one round that lists a password-protected
+# test game publicly the way stock RetroArch does) and the relays themselves.
 name: Online co-op test
 
 on:
@@ -14,6 +17,9 @@ on:
       seconds:
         description: "How long each round presses random buttons (seconds)"
         default: "90"
+      rounds:
+        description: "Only these rounds (space separated, e.g. relay-private-nyc); empty = all"
+        default: ""
 
 permissions:
   contents: read
@@ -25,7 +31,7 @@ concurrency:
 jobs:
   netplay:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Check the test cartridge's code on a 6502 simulator first
@@ -39,10 +45,11 @@ jobs:
       - name: Fetch the game player (RetroArch, checked against fixed fingerprints)
         shell: pwsh
         run: python tools/player/fetch_player.py "$env:RUNNER_TEMP/player"
-      - name: Two players, one machine
+      - name: Two players (same machine, pretend delay, libretro's public relays)
         shell: pwsh
         env:
           NETPLAY_MASH_SECONDS: ${{ github.event.inputs.seconds || '90' }}
+          NETPLAY_ROUNDS: ${{ github.event.inputs.rounds || '' }}
         run: python tools/e2e/netplay_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/netplay" "$env:RUNNER_TEMP/netplay-results"
       - name: Keep the results (logs, numbers, screenshots)
         if: always()

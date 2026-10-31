@@ -98,6 +98,10 @@ def look(name, app, full_screen, game_full=False):
         fail(f"{name}: the game window moved or resized {summary['place_changes']} times in 6 s (flicker)")
     if not summary["game_inside_app"]:
         fail(f"{name}: the game isn't inside Game Night's window: {summary['last_game']} vs {summary['last_app_inside']}")
+    elif game_full == "strips":
+        ax, ay, aw, ah = summary["last_app_inside"]
+        if tuple(summary["last_game"]) != (ax, ay + 72, aw, ah - 72 - 56):
+            fail(f"{name}: in full screen with lobby controls open, the game doesn't leave the top and bottom strips: {summary['last_game']}")
     elif game_full:
         if tuple(summary["last_game"]) != tuple(summary["last_app_inside"]):
             fail(f"{name}: the game doesn't fill Game Night's window in full screen: {summary['last_game']} vs {summary['last_app_inside']}")
@@ -232,6 +236,29 @@ class Friend(Ask):
 
 def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
+
+
+def controls(pad):
+    """Holds L3 + R3 for 1.4 s: the lobby controls open."""
+    set_pad(pad, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
+    time.sleep(1.4)
+    set_pad(pad, [])
+    time.sleep(0.6)
+
+
+def tap(pad, button):
+    set_pad(pad, [button])
+    time.sleep(0.2)
+    set_pad(pad, [])
+
+
+def ra_cmd_port():
+    """The command port in the app's current RetroArch settings (it changes each time the game restarts)."""
+    cfg = Path(os.environ.get("APPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "retroarch.cfg"
+    for line in cfg.read_text(errors="replace").splitlines() if cfg.exists() else []:
+        if line.startswith("network_cmd_port"):
+            return int(line.split('"')[1])
+    return None
 
 
 def set_pad(pad, buttons):
@@ -399,19 +426,27 @@ def main():
         say("look: after the friend connected")
         look("look-2-friend-connected", app, True)
         say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
-        for name, full in (("look-2b-game-full-screen", True), ("look-2c-back-to-the-box", False)):
+        if not window_watch.focus_app(app.pid):
             # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
-            if not window_watch.focus_app(app.pid):
-                fail(f"{name}: couldn't put Game Night in front for the pad presses")
-                continue
-            set_pad(pad_a, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
-            time.sleep(1.4)
-            set_pad(pad_a, [])
-            time.sleep(0.6)
-            set_pad(pad_a, [B.XUSB_GAMEPAD_Y])
-            time.sleep(0.2)
-            set_pad(pad_a, [])
-            look(name, app, True, game_full=full)
+            fail("couldn't put Game Night in front for the pad presses")
+        controls(pad_a)
+        tap(pad_a, B.XUSB_GAMEPAD_Y)
+        look("look-2b-game-full-screen", app, True, game_full=True)
+        say("look: in full screen, L3 + R3 shows the gold popup and its buttons above and below the game")
+        controls(pad_a)
+        look("look-2c-full-screen-lobby-controls", app, True, game_full="strips")
+        say("look: A goes back to the lobby")
+        tap(pad_a, B.XUSB_GAMEPAD_A)
+        look("look-2d-back-to-the-box", app, True)
+        say("full screen and back 6 more times, quickly (Jayden lost control after doing this)")
+        for _ in range(6):
+            controls(pad_a)
+            tap(pad_a, B.XUSB_GAMEPAD_Y)
+            time.sleep(1)
+            controls(pad_a)
+            tap(pad_a, B.XUSB_GAMEPAD_A)
+            time.sleep(1)
+        look("look-2e-after-switching", app, True)
 
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)
@@ -480,6 +515,27 @@ def main():
                 results["sync_after_rejoin"] = sync_round(host, friend, pad_a, pad_b, 20, 8)
         if app.poll() is not None:
             fail(f"the Game Night app closed during the test (exit {app.returncode})")
+
+        say("refresh: L3 + R3, then RB. The host's game saves its spot, restarts and loads the spot again")
+        window_watch.focus_app(app.pid)
+        old_port = ra_cmd_port()
+        m = host.ram(0, 3)
+        before = frame_of(m) if m else None
+        controls(pad_a)
+        tap(pad_a, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        new_port = wait_until(lambda: (p := ra_cmd_port()) and p != old_port and p, 30, 0.5)
+        if not new_port or before is None:
+            fail(f"refresh: the game didn't restart (port {old_port} -> {new_port}, frame before {before})")
+        else:
+            host = Ask(new_port)
+            time.sleep(6)  # started, then the spot loaded 1.5 s after
+            m = host.ram(0, 3)
+            after = frame_of(m) if m else None
+            results["refresh"] = {"frame_before": before, "frame_after": after}
+            say(f"  frame before {before}, after {after}")
+            if after is None or after < before:
+                fail(f"refresh: the game didn't come back at the saved spot (frame {before} before, {after} after)")
+            look("look-2f-after-refresh", app, True)
 
         say("look: Game Night started again as a window (not full screen), hosting a new lobby")
         friend.kill()

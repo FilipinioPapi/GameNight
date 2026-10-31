@@ -36,7 +36,17 @@ struct Want {
     /// The box in CSS pixels; None = not given yet; zero size = hidden.
     rect: Option<(f64, f64, f64, f64)>,
     full: bool,
+    /// In full screen: 0 = the game fills the window, 1 = a strip is left at the top and bottom for the
+    /// lobby controls popup and its buttons, 2 = out of sight (a panel needs the middle of the screen).
+    cover: u8,
 }
+
+/// The strips left free in full screen while lobby controls are open (CSS pixels): the gold popup at the
+/// top and the button hints at the bottom (Lobby.svelte's .banner and full-screen .foot).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const STRIP_TOP: f64 = 72.0;
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const STRIP_BOTTOM: f64 = 56.0;
 
 /// gamebox.log in the player logs folder: where the game window was asked to go and where it really was,
 /// so a flicker or a wrong size can be measured on any PC. Nothing private in it.
@@ -97,6 +107,7 @@ impl GameBox {
         let mut w = self.want.lock().unwrap_or_else(|e| e.into_inner());
         w.pid = None;
         w.full = false;
+        w.cover = 0;
     }
 
     pub fn set_box(&self, x: f64, y: f64, w: f64, h: f64) {
@@ -104,7 +115,14 @@ impl GameBox {
     }
 
     pub fn set_fullscreen(&self, on: bool) {
-        self.want.lock().unwrap_or_else(|e| e.into_inner()).full = on;
+        let mut w = self.want.lock().unwrap_or_else(|e| e.into_inner());
+        w.full = on;
+        w.cover = 0;
+    }
+
+    /// What covers the full screen game (see Want::cover).
+    pub fn set_cover(&self, cover: u8) {
+        self.want.lock().unwrap_or_else(|e| e.into_inner()).cover = cover.min(2);
     }
 
     pub fn fullscreen(&self) -> bool {
@@ -190,9 +208,20 @@ mod win {
         let main = hwnd(w.main);
         unsafe {
             if w.full {
+                if w.cover >= 2 {
+                    return None;
+                }
                 let mut c = RECT::default();
                 GetClientRect(main, &mut c).ok()?;
-                return Some(((0, 0, c.right - c.left, c.bottom - c.top), true));
+                let (cw, ch) = (c.right - c.left, c.bottom - c.top);
+                if w.cover == 1 {
+                    let dpi = GetDpiForWindow(main);
+                    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+                    let top = (super::STRIP_TOP * scale).round() as i32;
+                    let bottom = (super::STRIP_BOTTOM * scale).round() as i32;
+                    return Some(((0, top, cw, (ch - top - bottom).max(1)), true));
+                }
+                return Some(((0, 0, cw, ch), true));
             }
             let (x, y, bw, bh) = w.rect?;
             if bw <= 0.0 || bh <= 0.0 {
@@ -232,7 +261,7 @@ mod win {
     pub(super) fn follow(want: Arc<Mutex<Want>>, log: Arc<Mutex<BoxLog>>) {
         let say = |s: &str| log.lock().unwrap_or_else(|e| e.into_inner()).line(s);
         let mut moves: u64 = 0; // times the game window had to be put back
-        let mut last_want: Option<(Option<(f64, f64, f64, f64)>, bool)> = None;
+        let mut last_want: Option<(Option<(f64, f64, f64, f64)>, bool, u8)> = None;
         let mut game: isize = 0; // the game window being kept
         let mut adopted: isize = 0; // the window already made a child of Game Night's window
         let mut hidden = false;
@@ -278,16 +307,17 @@ mod win {
                 if IsIconic(main).as_bool() {
                     continue; // a child: it's out of sight along with Game Night's window
                 }
-                if last_want != Some((w.rect, w.full)) {
-                    last_want = Some((w.rect, w.full));
+                if last_want != Some((w.rect, w.full, w.cover)) {
+                    last_want = Some((w.rect, w.full, w.cover));
                     say(&format!(
-                        "asked: box {:?} (window pixels), full screen {}; Game Night's scale {}% -> {:?}",
-                        w.rect, w.full, GetDpiForWindow(main) * 100 / 96, target(&w)
+                        "asked: box {:?} (window pixels), full screen {} (cover {}); Game Night's scale {}% -> {:?}",
+                        w.rect, w.full, w.cover, GetDpiForWindow(main) * 100 / 96, target(&w)
                     ));
                 }
                 let Some((rect, full)) = target(&w) else {
                     // A zero-size box: out of sight until the box comes back.
-                    if adopted == game && w.rect.is_some_and(|r| r.2 <= 0.0 || r.3 <= 0.0) && !w.full && !hidden {
+                    let covered = if w.full { w.cover >= 2 } else { w.rect.is_some_and(|r| r.2 <= 0.0 || r.3 <= 0.0) };
+                    if adopted == game && covered && !hidden {
                         let _ = ShowWindow(g, SW_HIDE);
                         hidden = true;
                         say("hidden (a panel covers the box)");

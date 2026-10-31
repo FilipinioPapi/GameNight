@@ -843,6 +843,68 @@ pub async fn couch_rejoin<R: Runtime>(app: AppHandle<R>) -> Result<Value, String
     Ok(couch.view().unwrap_or(Value::Null))
 }
 
+/// The newest save state file in a folder, and when it was written.
+fn newest_state(dir: &Path) -> Option<(PathBuf, std::time::SystemTime)> {
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains(".state"))
+        .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
+        .max_by_key(|(_, t)| *t)
+}
+
+/// "Refresh game" (lobby controls): gets a player back in control after something went wrong, without
+/// losing progress. The host saves the game's spot (RetroArch's SAVE_STATE), restarts its game and loads
+/// that spot again; netplay then hands everyone the host's game. A friend or watcher only restarts their
+/// game: joining again, netplay gives them the host's game exactly where it is.
+#[tauri::command]
+pub async fn couch_refresh<R: Runtime>(app: AppHandle<R>) -> Result<Value, String> {
+    let couch = app.state::<Couch>();
+    let mut g = couch.session.lock().await;
+    let s = g.as_mut().ok_or("You're not in a lobby.")?;
+    let mut saved = false;
+    if s.host && s.ra.is_some() {
+        let dir = s.game.root.join("states").join(&s.game.console);
+        let before = newest_state(&dir).map(|(_, t)| t);
+        let port = lock(&couch.local).cmd_port;
+        s.log.line("refresh: saving the game's spot (SAVE_STATE)");
+        send_cmd(port, "SAVE_STATE");
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if newest_state(&dir).is_some_and(|(_, t)| Some(t) != before) {
+                saved = true;
+                break;
+            }
+        }
+        // Give RetroArch a moment to finish writing the file.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        s.log.line(if saved { "refresh: spot saved" } else { "refresh: the spot wasn't saved in 4 s; restarting anyway" });
+    }
+    s.log.line("refresh: restarting the game");
+    rejoin(&app, s, None).await?;
+    let log = s.log.clone();
+    drop(g);
+    if saved {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let couch = app2.state::<Couch>();
+            // Wait for the new game to be up, then load the spot (slot 0, the one just saved).
+            for _ in 0..200 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if lock(&couch.local).state == RaState::Running {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    let port = lock(&couch.local).cmd_port;
+                    send_cmd(port, "LOAD_STATE");
+                    log.line("refresh: loaded the saved spot (LOAD_STATE)");
+                    return;
+                }
+            }
+            log.line("refresh: the game didn't come back within 20 s, so the spot wasn't loaded");
+        });
+    }
+    Ok(couch.view().unwrap_or(Value::Null))
+}
+
 /// Runs a server call for the lobby you're in and takes the answer.
 async fn lobby_call<R: Runtime>(app: &AppHandle<R>, method: reqwest::Method, tail: &str, body: Option<Value>) -> Result<Value, String> {
     let couch = app.state::<Couch>();
@@ -918,6 +980,18 @@ pub fn couch_fullscreen<R: Runtime>(app: AppHandle<R>, on: bool) {
     }
     app.state::<Couch>().gamebox.set_fullscreen(on);
     emit_update(&app);
+}
+
+/// In full screen, what covers the game: "whole" (nothing), "strips" (lobby controls: the gold popup at the
+/// top and the button hints at the bottom stay visible) or "hidden" (a panel in the middle).
+#[tauri::command]
+pub fn couch_full_cover<R: Runtime>(app: AppHandle<R>, cover: String) {
+    let c = match cover.as_str() {
+        "strips" => 1,
+        "hidden" => 2,
+        _ => 0,
+    };
+    app.state::<Couch>().gamebox.set_cover(c);
 }
 
 /// CI's Couch Play test only (the "e2e" build, never shipped): with GAMENIGHT_E2E=couchhost the app uses the

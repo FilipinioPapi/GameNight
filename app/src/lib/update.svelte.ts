@@ -17,6 +17,10 @@ class Updates {
   total = $state(0);
   error = $state("");
   private lastCheck = 0;
+  /** True while there is an update to offer (not after one just finished). */
+  get offered() {
+    return !!this.info && this.phase !== "none" && this.phase !== "updated";
+  }
   private listening = false;
 
   /** When the main menu opens. Asks at most every half hour, never while playing. */

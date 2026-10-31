@@ -398,7 +398,10 @@ try {
   while ((Get-Process -Id $AppPid -ErrorAction SilentlyContinue) -and $t -lt 120) { Start-Sleep -Milliseconds 250; $t++ }
   Log ("Game Night closed; old version: " + (Get-Item $Exe).VersionInfo.ProductVersion)
   for ($try = 1; $try -le 2; $try++) {
-    $p = Start-Process -FilePath $Setup -ArgumentList '/P', '/UPDATE', '/R' -WindowStyle Normal -PassThru -Wait -ErrorAction Stop
+    # Wait for the installer itself only. (Start-Process -Wait would also wait for the Game Night it opens.)
+    $p = Start-Process -FilePath $Setup -ArgumentList '/P', '/UPDATE', '/R' -WindowStyle Normal -PassThru -ErrorAction Stop
+    $null = $p.Handle
+    $p.WaitForExit()
     Log "installer finished with code $($p.ExitCode) (try $try)"
     if ($p.ExitCode -eq 0) { $ok = $true; break }
     Start-Sleep -Seconds 2

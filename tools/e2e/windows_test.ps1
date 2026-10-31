@@ -134,6 +134,9 @@ if ($new) {
   $windows | ForEach-Object { Write-Host "  | $_" }
 }
 Start-Sleep 2
+# Read the log now, while the new Game Night is still open, so the checks below only count steps that
+# happened before anyone closed it.
+$log = if (Test-Path $updLog) { Get-Content $updLog } else { @() }
 Stop-Job $camera -ErrorAction SilentlyContinue; Remove-Job $camera -Force -ErrorAction SilentlyContinue
 Write-Host "update log:"
 if (Test-Path $updLog) { Get-Content $updLog | ForEach-Object { Write-Host "  | $_" } } else { Write-Host "  (no update.log)" }
@@ -141,12 +144,11 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | 
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 
 # What has to be true, measured:
-$log = if (Test-Path $updLog) { Get-Content $updLog } else { @() }
 function At($text) { $l = $log | Select-String -SimpleMatch $text | Select-Object -First 1; if ($l) { [datetime]::ParseExact($l.Line.Substring(0, 23), 'yyyy-MM-dd HH:mm:ss.fff', $null) } }
 $closing = At 'Game Night closes now'; $back = At "Game Night $NewVersion opened"
 if ($closing -and $back) { Write-Host "time between the old window closing and the new one opening: $([math]::Round(($back - $closing).TotalSeconds, 1)) s" }
 $problems = @()
-foreach ($want in 'screen shows downloading 100%', 'screen shows checking 100%', 'screen shows installing', 'helper: installer finished with code 0', 'back after the update', 'screen shows updated') {
+foreach ($want in 'screen shows downloading 100%', 'screen shows checking 100%', 'screen shows installing', 'helper: installer finished with code 0', 'helper: the installer opens Game Night again', 'back after the update', 'screen shows updated') {
   if (-not ($log | Select-String -SimpleMatch $want)) { $problems += "the update log never says '$want'" }
 }
 if (-not ($ver -like "$NewVersion*")) { $problems += "installed version is '$ver', wanted $NewVersion" }

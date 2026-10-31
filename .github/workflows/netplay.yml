@@ -1,10 +1,10 @@
 # Online co-op test: two copies of Game Night's pinned RetroArch play together on GitHub's Windows machine,
 # each with its own pretend Xbox pad, and tools/e2e/netplay_test.py measures whether they connect, stay in sync,
 # and put each pad on the right player. Nothing here touches Game Night's app or releases.
-# Rounds: straight on this machine, with pretend internet delay, and (step 2) through libretro's public relay
-# servers over the real internet (New York, Madrid, Sao Paulo, Singapore). The relay rounds are the only part
-# that goes to the internet: libretro's lobby (to find the relay, and one round that lists a password-protected
-# test game publicly the way stock RetroArch does) and the relays themselves.
+# Rounds: straight on this machine and with pretend internet delay (every push), and through libretro's public
+# relay servers over the real internet (New York, Madrid, Sao Paulo, Singapore; only when started by hand, and
+# reported without failing the job). Only the relay rounds go to the internet: libretro's lobby (to find the
+# relay; one round lists a test game publicly the way stock RetroArch does) and the relays themselves.
 name: Online co-op test
 
 on:
@@ -18,8 +18,8 @@ on:
         description: "How long each round presses random buttons (seconds)"
         default: "90"
       rounds:
-        description: "Only these rounds (space separated, e.g. relay-private-nyc); empty = all"
-        default: ""
+        description: "Only these rounds (space separated, e.g. relay-private-nyc), or all"
+        default: "all"
 
 permissions:
   contents: read
@@ -49,7 +49,10 @@ jobs:
         shell: pwsh
         env:
           NETPLAY_MASH_SECONDS: ${{ github.event.inputs.seconds || '90' }}
-          NETPLAY_ROUNDS: ${{ github.event.inputs.rounds || '' }}
+          # A push (including a merge that brings these files into another branch) runs only the rounds on this
+          # machine. The internet relay rounds run when started by hand (Actions > Online co-op test > Run
+          # workflow; "rounds" = all or a list), and their problems are reported as warnings, not failures.
+          NETPLAY_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rounds || (github.event_name == 'workflow_dispatch' && 'all' || 'direct delayed') }}
         run: python tools/e2e/netplay_test.py "$env:RUNNER_TEMP/player" "$env:RUNNER_TEMP/netplay" "$env:RUNNER_TEMP/netplay-results"
       - name: Keep the results (logs, numbers, screenshots)
         if: always()

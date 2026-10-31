@@ -29,6 +29,7 @@ class Play {
     });
     await listen<{ id: string; ok: boolean; silent?: boolean }>("game-closed", (e) => {
       this.playing = null;
+      app.stoppedPlaying(e.payload.id);
       if (e.payload.silent) {
         this.errors[e.payload.id] = "The game's sound didn't start on this PC. Game Night will try another way next time you play.";
       }
@@ -82,6 +83,7 @@ class Play {
     try {
       await invoke("play_game", { root: app.settings.romsFolder, id: g.id, settings: app.consoleSettings(g.console) });
       this.playing = g.id;
+      app.startedPlaying(g.id);
     } catch (e) {
       this.errors[g.id] = String(e);
     }

@@ -137,8 +137,8 @@ async def auth_callback(request: web.Request) -> web.StreamResponse:
         uid, name, avatar = await da.check_member(request.app[HTTP], request.app[CFG], request.query["code"])
     except da.NotAllowed:
         return page("Not on the list yet",
-                    "<p>Game Night is for friends with the <b>Game Night</b> role on Jayden's Discord server. "
-                    "Ask Jayden to add it, then try again.</p>", 403)
+                    "<p>Game Night is for friends on Jayden's Discord server. "
+                    "Ask Jayden for an invite (or the Game Night role, if he uses one), then try again.</p>", 403)
     except (da.DiscordError, aiohttp.ClientError) as e:
         log.warning("Discord sign-in failed: %s", e)
         return page("Discord had a hiccup", "<p>Go back to Game Night and try again in a moment.</p>", 502)

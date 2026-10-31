@@ -68,6 +68,14 @@ while ($runs -lt 4) {
   if (-not $result.silent) { break }
 }
 if (-not $result.ok) { Fail "RetroArch exited with an error" }
+# The default bezel (B, dark TV frame) fitted to this screen at game start, and RetroArch told to show it.
+$bezelNote = Join-Path $cache 'player\logs\bezel.txt'
+if (Test-Path $bezelNote) { Write-Host "bezel.txt:"; Get-Content $bezelNote | ForEach-Object { Write-Host "  | $_" } } else { Fail "no bezel note was written" }
+$bezelCfg = Get-ChildItem (Join-Path $cache 'player\bezels') -Filter 'tv-nes-*.cfg' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $bezelCfg) { Fail "the TV-frame bezel wasn't fitted for this screen" }
+if (-not (Select-String -Path $cfgFile -SimpleMatch "input_overlay = `"$($bezelCfg.FullName)`"" -Quiet)) { Fail "RetroArch's settings don't point at the bezel $($bezelCfg.FullName)" }
+if (-not (Select-String -Path $cfgFile -Pattern 'video_scale_integer = "true"' -Quiet)) { Fail "whole-pixel scaling isn't on for a solo game" }
+Write-Host "bezel $($bezelCfg.Name) fitted and set, whole-pixel scaling on"
 # Game Night steps aside when the game starts, and comes back when it closes (window.txt has each step).
 $winLog = Join-Path $cache 'player\logs\window.txt'
 if (Test-Path $winLog) { Write-Host "window.txt:"; Get-Content $winLog | ForEach-Object { Write-Host "  | $_" } } else { Fail "no window note was written" }

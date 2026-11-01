@@ -1,7 +1,7 @@
 // Downloading and playing games. The Windows side does the work (src-tauri/src/games.rs);
 // this file keeps track of what to show: what's on this PC, download progress, what's running.
 
-import type { ConsoleId } from "./consoles";
+import { CONSOLES, type ConsoleId } from "./consoles";
 import type { Game } from "./library";
 import { inTauri } from "./settings";
 import { app } from "./state.svelte";
@@ -20,7 +20,8 @@ class Play {
   playing = $state<string | null>(null);
   private listening = false;
 
-  private async listen() {
+  /** Hears the Windows side's game events (called once when the app starts, and before downloads and games). */
+  async listen() {
     if (this.listening || !inTauri) return;
     this.listening = true;
     const { listen } = await import("@tauri-apps/api/event");
@@ -33,6 +34,15 @@ class Play {
       if (e.payload.silent) {
         this.errors[e.payload.id] = "The game's sound didn't start on this PC. Game Night will try another way next time you play.";
       }
+    });
+    // The in-game menu's GAME tab switched rewind or fast forward (board IG4): saved for that console's next game.
+    await listen<{ console: string; rewind?: boolean; fastForward?: boolean }>("ingame-console-setting", (e) => {
+      const c = CONSOLES.find((x) => x.id === e.payload.console);
+      if (!c) return;
+      const patch: { rewind?: boolean; fastForward?: boolean } = {};
+      if (typeof e.payload.rewind === "boolean") patch.rewind = e.payload.rewind;
+      if (typeof e.payload.fastForward === "boolean") patch.fastForward = e.payload.fastForward;
+      if (Object.keys(patch).length) app.setConsoleSettings(c.id, patch);
     });
   }
 

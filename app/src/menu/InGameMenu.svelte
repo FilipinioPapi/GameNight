@@ -84,12 +84,58 @@
     void run("look", next);
   }
 
-  const tabs = ["HOME", "MY SCREEN"];
+  // ---- GAME tab (board IG4)
+  function stepVolume(d: 1 | -1) {
+    if (!info) return;
+    const next = Math.min(100, Math.max(10, info.volume + d * 10));
+    if (next === info.volume) return;
+    info = { ...info, volume: next };
+    void run("volume", d > 0 ? "up" : "down");
+  }
+  function flip(which: "rewind" | "fast_forward") {
+    if (!info) return;
+    const key = which === "rewind" ? "rewind_next" : "fast_forward_next";
+    const on = !info[key];
+    info = { ...info, [key]: on };
+    void run(which, on ? "on" : "off");
+  }
+  /** "Hold LT in the game", or when switched in this menu: from the next game. */
+  function holdSub(button: string, now: boolean, next: boolean) {
+    if (now === next) return now ? `Hold ${button} in the game` : "Off in this game";
+    return next ? `On from the next game (hold ${button})` : "Off from the next game";
+  }
+
+  // ---- CONTROLLER tab (board IG4)
+  let padName = $state("");
+  const myPlayer = $derived(couch ? (you?.seat ? `P${you.seat}` : "WATCHING") : "P1");
+
+  const tabs = ["HOME", "MY SCREEN", "GAME", "CONTROLLER"];
   const items = $derived.by<Item[]>(() => {
     if (!info) return [];
     if (tab === 1)
       return [
         { name: "LOOK", sub: couch ? "Your screen only. Friends keep their own look" : "Changes straight away behind the menu", val: lookName(info.look), step: stepLook, act: () => stepLook(1) },
+      ];
+    if (tab === 2) {
+      const vol: Item = { name: couch ? "MY VOLUME" : "VOLUME", sub: couch ? "Only your speakers. Changes straight away" : "Game sound. Changes when you go back to the game", val: `${info.volume}%`, step: stepVolume, act: () => stepVolume(info && info.volume >= 100 ? -1 : 1) };
+      if (couch) {
+        const list: Item[] = [vol];
+        list.push(info.host
+          ? { name: "RESET GAME", sub: "Host only. Asks first, restarts for everyone", act: () => ask("RESET THE GAME FOR EVERYONE?", "The game starts again from the beginning for all of you.", "YES, RESET", () => void run("reset")) }
+          : { name: "RESET GAME", sub: "Only the host can", dis: true });
+        list.push({ name: "REWIND / FAST FORWARD", sub: "Off online, so everyone stays in sync", dis: true });
+        return list;
+      }
+      const sw = (on: boolean) => (on ? "ON" : "OFF");
+      return [
+        vol,
+        { name: "REWIND", sub: holdSub(pad === "dualsense" ? "L2" : "LT", info.rewind, info.rewind_next), val: sw(info.rewind_next), step: () => flip("rewind"), act: () => flip("rewind") },
+        { name: "FAST FORWARD", sub: holdSub(pad === "dualsense" ? "R2" : "RT", info.fast_forward, info.fast_forward_next), val: sw(info.fast_forward_next), step: () => flip("fast_forward"), act: () => flip("fast_forward") },
+      ];
+    }
+    if (tab === 3)
+      return [
+        { name: "MY CONTROLLER", sub: padName || (pad === "dualsense" ? "DualSense controller" : "Xbox controller"), val: myPlayer },
       ];
     if (!couch)
       return [
@@ -123,8 +169,10 @@
     return seat?.user?.name ?? lobby?.watchers?.find((w) => w.id === id)?.name ?? "you";
   }
   const notes = $derived(couch
-    ? ["Only you see this menu. Your friends keep playing.", "Only your screen changes. Bezel, pixels and screen shape are in Settings › Consoles (from the next game). CRT Royale needs a strong graphics card."]
-    : ["The game is paused while this menu is open.", "Bezel, pixels and screen shape are in Settings › Consoles (from the next game)."]);
+    ? ["Only you see this menu. Your friends keep playing.", "Only your screen changes. Bezel, pixels and screen shape are in Settings › Consoles (from the next game). CRT Royale needs a strong graphics card.",
+      "Anything that changes the game itself is the host's call, so everyone stays in sync.", "Your controller and buttons stay on this PC."]
+    : ["The game is paused while this menu is open.", "Bezel, pixels and screen shape are in Settings › Consoles (from the next game).",
+      "Rewind and fast forward work in solo games only. Switching one on or off counts from the next game.", "Your controller and buttons stay on this PC."]);
   const s = $derived(Math.min(sel, Math.max(0, items.length - 1)));
 
   // ---- seats on the right (Couch Play)
@@ -243,6 +291,8 @@
     if (p?.connected) {
       const t = padTypeFromId(`${p.name} ${p.id}`);
       if (t !== pad) pad = t;
+      const n = (p.name || "").slice(0, 60);
+      if (n !== padName) padName = n;
     }
     if (open && !busy && p?.connected) {
       const now = performance.now();
@@ -383,7 +433,7 @@
     {/if}
 
     <footer class="guide" aria-label="Controller buttons">
-      <span class="gi"><img class="px" src={prompt("a")} alt="A" />{confirm ? "Pick" : tab === 1 ? "Change" : "Pick"}</span>
+      <span class="gi"><img class="px" src={prompt("a")} alt="A" />{confirm ? "Pick" : tab === 1 || tab === 2 ? "Change" : "Pick"}</span>
       {#if !confirm}<span class="gi"><img class="px wide" src={prompt("lb")} alt="LB" /><img class="px wide" src={prompt("rb")} alt="RB" />Tabs</span>{/if}
       <span class="gi"><img class="px" src={prompt("b")} alt="B" />{confirm ? "Cancel" : "Back to game"}</span>
       <span class="gi"><span class="gb" aria-hidden="true"></span>{homeName}: close menu</span>

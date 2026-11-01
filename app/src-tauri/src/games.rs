@@ -333,6 +333,8 @@ pub struct ConfigPaths {
     pub menu_theme: Option<PathBuf>,
     /// RetroArch's command port on this PC (127.0.0.1), for Game Night's in-game menu. None = off.
     pub cmd_port: Option<u16>,
+    /// Game sound, 10 to 100 (%), from the in-game menu (volume.rs).
+    pub volume: u8,
 }
 
 /// Ways RetroArch can play sound on Windows, best first. If one doesn't start on a PC
@@ -371,6 +373,7 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         "stretch" => (24, false), // fill the screen
         _ => (0, false),          // 4:3, like an old TV
     };
+    let (lt, rt) = triggers(pads);
     let base: Vec<(&str, String)> = vec![
         // Never write these settings back, never show menus or online extras.
         ("config_save_on_exit", "false".into()),
@@ -424,6 +427,7 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         // the sound, so without sound they race at the screen's refresh rate (e.g. 144 Hz).
         ("audio_enable", "true".into()),
         ("audio_mute_enable", "false".into()),
+        ("audio_volume", crate::volume::config_value(p.volume)),
         ("audio_driver", SOUND_WAYS[sound.min(SOUND_WAYS.len() - 1)].into()),
         ("audio_device", "".into()),
         ("audio_wasapi_exclusive_mode", "false".into()),
@@ -431,10 +435,15 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         ("video_vsync", "true".into()),
         // Last resort when no sound way works: a plain speed limit instead.
         ("vrr_runloop_enable", yes(sound >= SOUND_WAYS.len()).into()),
-        // Rewind and fast forward (keyboard: R and Space; controllers come with controller setup)
+        // Rewind and fast forward, held down: LT and RT on a controller (board IG4; NES and SNES games never use
+        // the triggers), R and Space on the keyboard.
         ("rewind_enable", yes(s.rewind).into()),
         ("input_rewind", if s.rewind { "r" } else { "nul" }.into()),
+        ("input_rewind_axis", if s.rewind { lt.0 } else { "nul" }.into()),
+        ("input_rewind_btn", if s.rewind { lt.1 } else { "nul" }.into()),
         ("input_hold_fast_forward", if s.fast_forward { "space" } else { "nul" }.into()),
+        ("input_hold_fast_forward_axis", if s.fast_forward { rt.0 } else { "nul" }.into()),
+        ("input_hold_fast_forward_btn", if s.fast_forward { rt.1 } else { "nul" }.into()),
         ("input_toggle_fast_forward", "nul".into()),
         // Controllers
         // "xinput" normally; "dinput" when an extra hidden Xbox-style slot would make "xinput" read
@@ -493,6 +502,22 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
     out
 }
 
+/// Player 1's LT and RT (L2 / R2) as RetroArch numbers them: (axis, button) each. RetroArch binds shortcuts to
+/// the raw controller, and the numbers depend on its reader and the pad (its autoconfig files): "xinput" Xbox pads
+/// have the triggers on axes 4 and 5; "dinput" Xbox pads share one axis (+2 left, -2 right, autoconfig
+/// "Controller (Xbox One For Windows)"); PlayStation pads (Sony, 054c) are read by "dinput" either way and have
+/// L2 / R2 as buttons 6 and 7 (autoconfig "Wireless Controller").
+fn triggers(pads: &crate::controllers::Plan) -> ((&'static str, &'static str), (&'static str, &'static str)) {
+    let sony = pads.player1.as_deref().is_some_and(|id| id.starts_with("054c:"));
+    if sony {
+        (("nul", "6"), ("nul", "7"))
+    } else if pads.joypad_driver == "dinput" {
+        (("+2", "nul"), ("-2", "nul"))
+    } else {
+        (("+4", "nul"), ("+5", "nul"))
+    }
+}
+
 /// RetroArch's own pop-up messages, all off (quiet_retroarch.cfg says which and why). Show FPS needs
 /// RetroArch's message drawing, so with it on only the FPS counter's switch comes back on.
 const QUIET: &str = include_str!("quiet_retroarch.cfg");
@@ -545,7 +570,9 @@ fn netplay_lines(n: &Netplay) -> Vec<(String, String)> {
         // Netplay can't rewind or speed up.
         ("rewind_enable", "false".into()),
         ("input_rewind", "nul".into()),
+        ("input_rewind_axis", "nul".into()),
         ("input_hold_fast_forward", "nul".into()),
+        ("input_hold_fast_forward_axis", "nul".into()),
         ("savestate_auto_load", "false".into()),
         ("savestate_auto_save", "false".into()),
     ]
@@ -691,6 +718,7 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
         overlay: None,
         menu_theme: None,
         cmd_port: None,
+        volume: crate::volume::saved(app),
     };
     let mut paths = paths;
     let mut bezel_note = format!("bezel {} on {}\n", settings.bezel, settings.screen);
@@ -726,6 +754,7 @@ pub(crate) fn prepare<R: Runtime>(app: &AppHandle<R>, root: &Path, id: &str, set
     if net.is_none() && cmd_port != 0 {
         paths.cmd_port = Some(cmd_port);
     }
+    crate::volume::started(cmd_port, paths.volume);
     let _ = fs::write(paths.logs.join("bezel.txt"), bezel_note);
     let cfg = cfg_dir.join("retroarch.cfg");
     if let Some(id) = &pads.player1 {
@@ -788,7 +817,16 @@ pub fn play_game<R: Runtime>(app: AppHandle<R>, root: String, id: String, title:
     let title: String = title.unwrap_or_default().chars().filter(|c| !c.is_control()).take(80).collect();
     crate::ingame::solo_started(
         &app,
-        crate::ingame::Solo { pid: child.id(), cmd_port: launch.cmd_port, title, console: launch.console.clone(), look: launch.look.clone(), player: launch.player.clone() },
+        crate::ingame::Solo {
+            pid: child.id(),
+            cmd_port: launch.cmd_port,
+            title,
+            console: launch.console.clone(),
+            look: launch.look.clone(),
+            player: launch.player.clone(),
+            rewind: settings.rewind,
+            fast_forward: settings.fast_forward,
+        },
     );
     crate::ingame::prepare(&app);
     // Game Night steps aside (minimizes) once the game's window is up, and comes back when it closes.
@@ -850,8 +888,10 @@ pub fn e2e_play<R: Runtime>(app: AppHandle<R>) {
 #[cfg(feature = "e2e")]
 fn e2e_start<R: Runtime>(app: AppHandle<R>) {
     let root = std::env::var("GAMENIGHT_E2E_ROOT").unwrap_or_default();
+    // The in-game menu test (padgame) plays with rewind and fast forward on, like a new player's settings.
+    let on = e2e_mode() == Some("padgame");
     let settings: PlaySettings = serde_json::from_value(serde_json::json!({
-        "screen": "4:3", "picture": "scanlines", "rewind": false, "fastForward": false, "showFps": true
+        "screen": "4:3", "picture": "scanlines", "rewind": on, "fastForward": on, "showFps": true
     }))
     .expect("settings");
     if let Err(e) = play_game(app.clone(), root.clone(), "1".into(), Some("Test game".into()), settings) {
@@ -912,6 +952,7 @@ mod tests {
             overlay: None,
             menu_theme: None,
             cmd_port: None,
+            volume: 100,
         };
         let s = PlaySettings { screen: "4:3".into(), picture: "scanlines".into(), rewind: true, fast_forward: false, show_fps: false, bezel: "tv".into() };
         let pads = crate::controllers::Plan { player1: Some("045e:02ff".into()), parked: vec!["1532:02a7".into()], joypad_driver: "dinput" };
@@ -983,6 +1024,7 @@ mod tests {
             overlay: Some(PathBuf::from("/c/bezels/tv.cfg")),
             menu_theme: Some(PathBuf::from("/c/hidden.cfg")),
             cmd_port: None,
+            volume: 100,
         }
     }
 
@@ -1002,10 +1044,27 @@ mod tests {
             assert!(cfg.contains(want), "missing {want}");
         }
         assert!(!cfg.contains("input_quit_gamepad_combo = \"2\""));
+        // GAME tab (board IG4): hold LT to rewind, RT to fast forward; the saved volume (80% = -2 dB).
+        p.volume = 80;
+        let cfg = retroarch_config(&p, &s, 0, &Default::default(), None);
+        for want in ["input_rewind_axis = \"+4\"", "input_hold_fast_forward_axis = \"+5\"", "rewind_enable = \"true\"", "audio_volume = \"-2.0\""] {
+            assert_eq!(line(&cfg, want.split(" = ").next().unwrap()), vec![want.to_string()], "{want}");
+        }
+        let mut dinput = crate::controllers::Plan::default();
+        dinput.joypad_driver = "dinput";
+        let cfg = retroarch_config(&p, &s, 0, &dinput, None);
+        assert!(cfg.contains("input_rewind_axis = \"+2\"") && cfg.contains("input_hold_fast_forward_axis = \"-2\""));
+        let mut ps = crate::controllers::Plan::default();
+        ps.player1 = Some("054c:0ce6".into());
+        let cfg = retroarch_config(&p, &s, 0, &ps, None);
+        assert!(cfg.contains("input_rewind_btn = \"6\"") && cfg.contains("input_hold_fast_forward_btn = \"7\"") && cfg.contains("input_rewind_axis = \"nul\""));
+        let off = PlaySettings { rewind: false, fast_forward: false, ..s.clone() };
+        let cfg = retroarch_config(&p, &off, 0, &Default::default(), None);
+        assert!(cfg.contains("input_rewind_axis = \"nul\"") && cfg.contains("input_hold_fast_forward_axis = \"nul\""));
         // Couch Play: only the host's "Pause for everyone" pauses; RetroArch's own pause key is off.
         let host = Netplay { host: true, seat: Some(1), cmd_port: 55123, remaps: None, nickname: "J".into(), window: None, args: vec![] };
         let cfg = retroarch_config(&paths(), &s, 0, &Default::default(), Some(&host));
-        for want in ["netplay_allow_pausing = \"true\"", "input_pause_toggle = \"nul\"", "menu_pause_libretro = \"false\"", "pause_nonactive = \"false\"", "network_cmd_port = \"55123\""] {
+        for want in ["netplay_allow_pausing = \"true\"", "input_pause_toggle = \"nul\"", "menu_pause_libretro = \"false\"", "pause_nonactive = \"false\"", "network_cmd_port = \"55123\"", "input_rewind_axis = \"nul\"", "input_hold_fast_forward_axis = \"nul\""] {
             assert_eq!(line(&cfg, want.split(" = ").next().unwrap()), vec![want.to_string()], "{want}");
         }
     }

@@ -20,6 +20,7 @@ mod pads;
 mod relay;
 mod retroports;
 mod updater;
+mod volume;
 
 use serde::Serialize;
 use std::fs;

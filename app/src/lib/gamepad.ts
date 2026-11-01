@@ -44,9 +44,15 @@ async function note(text: string) {
   }
 }
 
+/** Game Night's in-game menu is open over the game (its own window has the pad then). */
+let inGameMenu = false;
+
 let events = 0;
 async function listenNative() {
   const { listen } = await import("@tauri-apps/api/event");
+  await listen<{ open?: boolean }>("ingame-menu", (e) => {
+    inGameMenu = !!e.payload?.open;
+  });
   await listen<NativePad>("pad", (e) => {
     if (events++ === 0) void note("first pad event arrived");
     useNative(e.payload);
@@ -360,8 +366,13 @@ function repeat(key: string, active: boolean, now: number, fire: () => void) {
 function tick() {
   if (inTauri) void askNative();
   const pad = readPad();
-  // While a game is running, the controller belongs to the game.
-  if (!pad || play.playing) {
+  // While a game is running, the controller belongs to the game (or to the in-game menu over it).
+  if (!pad || play.playing || inGameMenu) {
+    if (pad) {
+      prevButtons = [...pad.buttons];
+      prevAxes = [...pad.axes];
+      held = null;
+    }
     if (!pad && app.pad.connected) app.pad = { ...app.pad, connected: false };
     requestAnimationFrame(tick);
     return;

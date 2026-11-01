@@ -3,6 +3,7 @@
 
     python pad_test.py menus <GameNight.exe> <Game Night folder> <screenshot folder>
     python pad_test.py game  <GameNight.exe> <Game Night folder> <screenshot folder>
+    python pad_test.py ingame <GameNight.exe> <Game Night folder> <screenshot folder>
 
 Uses ViGEmBus (installed on the CI machine only) through vgamepad. Like Jayden's PC, two pads are
 plugged in: a "dead" one in the first slot that is never pressed (his Razer keyboard's hidden pad),
@@ -317,9 +318,208 @@ def games():
     return "the game's player 1 got every button, right, from the pad used in the menus"
 
 
+# ---------------------------------------------------------------- the in-game menu (boards IG2, on your own)
+
+INGAME_LOG = CACHE / "player" / "logs" / "ingame.txt"
+
+
+def ingame_lines():
+    try:
+        return INGAME_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def menu_window(pid):
+    """Game Night's in-game menu window: (visible, (x, y, w, h)) or None if it was never made."""
+    user32 = ctypes.windll.user32
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+
+    def each(hwnd, _):
+        h = ctypes.c_void_p(hwnd)
+        p = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetWindowTextW(h, buf, 64)
+        if p.value == pid and buf.value == "Game Night menu":
+            r = RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            found.append((bool(user32.IsWindowVisible(h)), (r.l, r.t, r.r - r.l, r.b - r.t)))
+        return True
+
+    user32.EnumWindows(proc(each), 0)
+    return found[0] if found else None
+
+
+def frame():
+    """The test game's frame number ($00-$02 in the netplay test cartridge), or None."""
+    answer = ask_game("READ_CORE_MEMORY 0 3")
+    parts = answer.split()
+    if len(parts) == 5 and parts[0] == "READ_CORE_MEMORY":
+        try:
+            return int(parts[2], 16) | int(parts[3], 16) << 8 | int(parts[4], 16) << 16
+        except ValueError:
+            pass
+    return None
+
+
+def moving(seconds=1.0):
+    a = frame()
+    time.sleep(seconds)
+    b = frame()
+    say(f"    frames {a} -> {b}")
+    return a is not None and b is not None and b > a
+
+
+def hold(pad, buttons, seconds):
+    for b in buttons:
+        pad.press_button(button=b)
+    pad.update()
+    time.sleep(seconds)
+    for b in buttons:
+        pad.release_button(button=b)
+    pad.update()
+    time.sleep(0.3)
+
+
+def ingame():
+    """On your own: the Xbox button and L3 + R3 open Game Night's menu over the game, which pauses it; B and the
+    Xbox button close it and the game carries on; the look can change; Quit asks first, then goes back to Game Night."""
+    import make_netplay_rom
+    lib = json.loads((ROOT / "library.json").read_text())
+    game_file = ROOT / lib["1"]["console"] / lib["1"]["file"]
+    original = game_file.read_bytes()
+    game_file.write_bytes(make_netplay_rom.rom())  # same buttons at $10, plus a frame number at $00-$02
+    pad = vg.VX360Gamepad(vid=0x045E, pid=0x02FF)
+    time.sleep(2)
+    for f in (CACHE / "player" / "logs" / "retroarch.log", ROOT / "e2e-result.json"):
+        f.unlink(missing_ok=True)
+    app = start_app("padgame")
+    G = B.XUSB_GAMEPAD_GUIDE
+
+    def check(ok, what):
+        say(f"  {'ok' if ok else 'FAIL'}: {what}")
+        if not ok:
+            failures.append(f"in-game menu: {what}")
+        return ok
+
+    def shown():
+        w = menu_window(app.pid)
+        return bool(w and w[0])
+
+    try:
+        say("pressing A in the menus (Game Night then starts the test game)")
+        press(pad, B.XUSB_GAMEPAD_A)
+        for _ in range(30):
+            time.sleep(1)
+            if not ask_game("VERSION").startswith("(no answer"):
+                break
+        time.sleep(3)
+        check(front_is_game(), f"the game is in front before the menu ({in_front()})")
+        check(moving(), "the game runs")
+
+        say("\n--- Xbox button: the menu opens over the game and the game pauses")
+        press(pad, G)
+        time.sleep(1.5)
+        w = menu_window(app.pid)
+        say(f"    menu window: {w}; in front {in_front()}")
+        screenshot("ingame-1-xbox-button-open")
+        check(bool(w and w[0]), "the menu window shows after the Xbox button")
+        if w and w[0]:
+            check(w[1][2] >= 1000 and w[1][3] >= 600, f"the menu covers the game's screen ({w[1]})")
+        check(not moving(1.5), "the game is paused while the menu is open")
+
+        say("\n--- B: back to the game")
+        press(pad, B.XUSB_GAMEPAD_B)
+        time.sleep(1.5)
+        screenshot("ingame-2-b-closed")
+        check(not shown(), "B closes the menu")
+        check(moving(), "the game carries on after B")
+        check(front_is_game(), f"the game is in front again ({in_front()})")
+        say("    pad A in the game after the menu closed (player 1 must see it):")
+        p1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_A, "ingame-2b-pad-reaches-game")
+        check(p1 == 0x40, f"the pad reaches the game again after the menu (player 1 {p1})")
+
+        say("\n--- hold L3 + R3 for 1.4 s: the menu opens")
+        hold(pad, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB], 1.4)
+        time.sleep(1)
+        screenshot("ingame-3-l3-r3-open")
+        check(shown(), "holding L3 + R3 opens the menu")
+        check(not moving(1.2), "the game is paused (L3 + R3)")
+
+        say("\n--- RB: MY SCREEN tab, right: the next look")
+        before = len(ingame_lines())
+        press(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        time.sleep(0.6)
+        press(pad, B.XUSB_GAMEPAD_DPAD_RIGHT)
+        time.sleep(2.5)
+        screenshot("ingame-4-my-screen-look")
+        new = ingame_lines()[before:]
+        for line in new:
+            say(f"    | {line}")
+        check(any("action look" in l for l in new), "right on LOOK changes the look")
+        check(shown(), "the menu stays open while changing the look")
+        log = CACHE / "player" / "logs" / "retroarch.log"
+        text = log.read_text(errors="replace") if log.exists() else ""
+        say("    RetroArch's shader lines: " + " / ".join(l.strip() for l in text.splitlines() if "hader" in l)[-600:])
+        press(pad, B.XUSB_GAMEPAD_LEFT_SHOULDER)
+        time.sleep(0.5)
+
+        say("\n--- Xbox button again: closes the menu")
+        press(pad, G)
+        time.sleep(1.5)
+        check(not shown(), "the Xbox button closes the menu")
+        check(moving(), "the game carries on")
+
+        say("\n--- Quit to Library: asks first; Keep playing; then Yes")
+        press(pad, G)
+        time.sleep(1.5)
+        for _ in range(4):
+            press(pad, B.XUSB_GAMEPAD_DPAD_DOWN)
+            time.sleep(0.35)
+        press(pad, B.XUSB_GAMEPAD_A)
+        time.sleep(1)
+        screenshot("ingame-5-quit-asks")
+        check(app.poll() is None and frame() is not None, "Quit asks first (the game is still there)")
+        press(pad, B.XUSB_GAMEPAD_A)  # "Keep playing" is picked first
+        time.sleep(0.8)
+        check(shown() and frame() is not None, "Keep playing keeps the menu and the game")
+        press(pad, B.XUSB_GAMEPAD_A)  # Quit again
+        time.sleep(0.8)
+        press(pad, B.XUSB_GAMEPAD_DPAD_LEFT)  # to "Yes, quit"
+        time.sleep(0.4)
+        screenshot("ingame-6-quit-yes")
+        press(pad, B.XUSB_GAMEPAD_A)
+        try:
+            app.wait(30)
+        except subprocess.TimeoutExpired:
+            pass
+        result = ROOT / "e2e-result.json"
+        res = json.loads(result.read_text()) if result.exists() else {}
+        say(f"    e2e result: {res}")
+        check(app.poll() is not None and res.get("ok") is not None, "Yes, quit closes the game (and the test app with it)")
+        check(bool((res.get("window") or {}).get("back_in_front")), "Game Night came back in front after quitting")
+    finally:
+        if app.poll() is None:
+            app.kill()
+        subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+        game_file.write_bytes(original)
+        say("\ningame.txt:")
+        for line in ingame_lines():
+            say(f"  | {line}")
+        dump_log("\nwhole pads.txt:")
+        del pad
+        time.sleep(2)
+    return "the in-game menu opened with the Xbox button and L3 + R3, paused the game, changed the look and quit after asking"
+
+
 def main():
     SHOTS.mkdir(parents=True, exist_ok=True)
-    done = {"menus": menus, "game": games}[MODE]()
+    done = {"menus": menus, "game": games, "ingame": ingame}[MODE]()
     if failures:
         for f in failures:
             print(f"::error::controller test ({MODE}): {f}", flush=True)

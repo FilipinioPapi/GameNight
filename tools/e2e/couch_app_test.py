@@ -27,6 +27,7 @@ and stays put (no flicker) while sampled 25 times a second. Then the app is star
 import json
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -174,6 +175,9 @@ class Ask:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.sendto(command.encode(), ("127.0.0.1", self.cmd_port))
 
+    # No GET_STATUS here: on RetroArch 1.22.2 it crashes a Couch Play host (reads a missing name; cdb stack in
+    # run 41246455248: retroarch+0x1af761 called from the GET_STATUS handler). Frames from READ_CORE_MEMORY instead.
+
     def ram(self, start=0, length=1024):
         parts = (self.ask(f"READ_CORE_MEMORY {start:x} {length}") or "").split()
         if len(parts) == length + 2 and parts[0] == "READ_CORE_MEMORY":
@@ -200,7 +204,9 @@ class Friend(Ask):
             "cheevos_enable": "false", "discord_allow": "false", "rewind_enable": "false", "input_exit_emulator": "nul",
             "network_cmd_enable": "true", "network_cmd_port": str(self.cmd_port),
             "netplay_public_announce": "false", "netplay_nat_traversal": "false", "netplay_use_mitm_server": "false",
-            "netplay_check_frames": "0", "netplay_nickname": "Friend",
+            "netplay_check_frames": "0", "netplay_nickname": "Friend", "netplay_allow_pausing": "true",
+            # Like the friend's Game Night (display.rs): the hidden menu never pauses the game by itself.
+            "menu_pause_libretro": "false",
             f"netplay_request_device_p{seat}": "true",
             "video_driver": "d3d11", "video_fullscreen": "false", "video_scale": "2",
             "video_window_save_positions": "true", "video_windowed_position_x": "1600",
@@ -234,22 +240,130 @@ class Friend(Ask):
             self.proc.wait(10)
 
 
+class HostAsk(Ask):
+    """The app's RetroArch: follows its command port when the app starts it again (a crash or Refresh), so one
+    problem shows as one failure instead of every later check reading nothing."""
+
+    def __init__(self, port):
+        self.first = port
+
+    @property
+    def cmd_port(self):
+        return ra_cmd_port() or self.first
+
+
 def frame_of(mem):
     return mem[0] | mem[1] << 8 | mem[2] << 16
 
 
-def controls(pad):
-    """Holds L3 + R3 for 1.4 s: the lobby controls open."""
-    set_pad(pad, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB])
-    time.sleep(1.4)
-    set_pad(pad, [])
-    time.sleep(0.6)
+def friend_follows(friend, on, delay):
+    """The friend here is a plain RetroArch, so the test does what the friend's Game Night does when the server
+    says paused / resumed (couch.rs follow_pause): 3.5 s after the change (after the host), pause or resume
+    inside the hidden menu."""
+    def go():
+        time.sleep(delay)
+        first, second = ("MENU_TOGGLE", "PAUSE_TOGGLE") if on else ("PAUSE_TOGGLE", "MENU_TOGGLE")
+        friend.send(first)
+        time.sleep(0.6)
+        friend.send(second)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def speed(game, seconds=2.0):
+    """Frames a second in `game` (the test cart counts frames), or None."""
+    a = game.ram(0, 3)
+    time.sleep(seconds)
+    b = game.ram(0, 3)
+    return round((frame_of(b) - frame_of(a)) / seconds, 1) if a and b else None
+
+
+def menu_window(pid):
+    """Game Night's in-game menu window: (visible, (x, y, w, h)) or None."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    found = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
+
+    def each(hwnd, _):
+        h = ctypes.c_void_p(hwnd)
+        p = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetWindowTextW(h, buf, 64)
+        if p.value == pid and buf.value == "Game Night menu":
+            r = RECT()
+            user32.GetWindowRect(h, ctypes.byref(r))
+            found.append((bool(user32.IsWindowVisible(h)), (r.l, r.t, r.r - r.l, r.b - r.t)))
+        return True
+
+    user32.EnumWindows(proc(each), 0)
+    return found[0] if found else None
+
+
+def menu_shown(app):
+    w = menu_window(app.pid)
+    return bool(w and w[0])
+
+
+# The host's in-game menu, HOME tab (not paused): RESUME, PAUSE FOR EVERYONE, FULL SCREEN / BACK TO LOBBY,
+# REFRESH GAME, END GAME FOR EVERYONE.
+HOST_ITEMS = {"resume": 0, "pause": 1, "full": 2, "lobby": 2, "refresh": 3}
+
+
+def menu(app, pad, item=None):
+    """The Xbox button opens the in-game menu; then D-pad down to `item` and A (None = leave it open)."""
+    tap(pad, B.XUSB_GAMEPAD_GUIDE)
+    if not wait_until(lambda: menu_shown(app), 4, 0.1):
+        fail(f"the in-game menu didn't open with the Xbox button (for {item})")
+        return False
+    time.sleep(0.5)
+    if item is None:
+        return True
+    for _ in range(HOST_ITEMS[item]):
+        tap(pad, B.XUSB_GAMEPAD_DPAD_DOWN)
+        time.sleep(0.3)
+    tap(pad, B.XUSB_GAMEPAD_A)
+    time.sleep(0.8)
+    return True
 
 
 def tap(pad, button):
     set_pad(pad, [button])
     time.sleep(0.2)
     set_pad(pad, [])
+
+
+CDB = Path(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe")
+
+
+def watch_host_crashes(stop):
+    """CI only: Windows saved no crash dump for the host's RetroArch (runs 41243488319, 41245117334), so attach
+    Microsoft's debugger (cdb) to each host RetroArch the app starts. On a crash it writes the call stack to
+    host-cdb-<process>.txt in the results."""
+    # Off unless asked: attaching stops the host's RetroArch while cdb starts up (run 41261525120: the game
+    # window was placed 32 s late and the friend's join timed out). The crash it found (GET_STATUS) is fixed.
+    if os.environ.get("COUCH_TRACE_CRASHES") != "1":
+        return
+    if not CDB.exists():
+        say("  (no cdb on this machine: the host's crashes won't be traced)")
+        return
+    log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "couch.log"
+    seen = set()
+    cmds = ('sxe -c ".echo FIRST-CHANCE ACCESS VIOLATION; .exr -1; kn 12; gn" '
+            '-c2 ".echo CRASH (second chance); .exr -1; .ecxr; r; kn 40; lmf; q" av; '
+            'sxe -c ".echo FIRST-CHANCE C++ EH; kn 8; gn" eh; g')
+    while not stop.is_set():
+        text = log.read_text(errors="replace") if log.exists() else ""
+        for m in re.finditer(r"started RetroArch as host \(process (\d+)\)", text):
+            pid = m.group(1)
+            if pid not in seen:
+                seen.add(pid)
+                subprocess.Popen([str(CDB), "-p", pid, "-G", "-loga", str(OUT / f"host-cdb-{pid}.txt"), "-c", cmds],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stop.wait(0.5)
 
 
 def ra_cmd_port():
@@ -259,6 +373,31 @@ def ra_cmd_port():
         if line.startswith("network_cmd_port"):
             return int(line.split('"')[1])
     return None
+
+
+def bezel_pixels(name, rect):
+    """In screenshot `name`-3: share of lit pixels in a band left of where the game sits (8-18 % across, middle
+    rows). The TV frame (bezel B) is dark grey there (about 26 of 255, measured in run 41236464953) with a red
+    logo; with no bezel it's black."""
+    from PIL import Image
+    img = Image.open(OUT / f"{name}-3.png").convert("RGB")
+    x, y, w, h = rect
+    part = img.crop((x + int(w * 0.08), y + int(h * 0.3), x + int(w * 0.18), y + int(h * 0.7))).resize((32, 32))
+    px = list(part.getdata())
+    return {"band": round(sum(1 for p in px if max(p) > 12) / len(px), 3)}
+
+
+def app_bezel():
+    """The bezel file the app's RetroArch settings point at, and how many pages it has."""
+    cfg = Path(os.environ.get("APPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "retroarch.cfg"
+    lines = cfg.read_text(errors="replace").splitlines() if cfg.exists() else []
+    get = lambda k: next((l.split('"')[1] for l in lines if l.startswith(k + " ") and '"' in l), None)
+    overlay = get("input_overlay")
+    pages = None
+    if overlay and Path(overlay).is_file():
+        first = Path(overlay).read_text(errors="replace").splitlines()[:1]
+        pages = first[0].split("=")[1].strip() if first else None
+    return {"enabled": get("input_overlay_enable"), "file": Path(overlay).name if overlay else None, "pages": pages}
 
 
 def set_pad(pad, buttons):
@@ -380,6 +519,8 @@ def main():
     app_log = open(OUT / "app.log", "w")
     t0 = time.time()
     app = subprocess.Popen([str(APP)], env=env, stdout=app_log, stderr=subprocess.STDOUT)
+    crash_watch_stop = threading.Event()
+    threading.Thread(target=watch_host_crashes, args=(crash_watch_stop,), daemon=True).start()
     friend = Friend(slot_b)
     try:
         info_file = root / "e2e-couch.json"
@@ -390,7 +531,7 @@ def main():
         results["host_ready_seconds"] = round(time.time() - t0, 1)
         code = info["code"]
         say(f"  app hosted lobby {code} in {results['host_ready_seconds']} s (its RetroArch command port {info['cmd_port']})")
-        host = Ask(int(info["cmd_port"]))
+        host = HostAsk(int(info["cmd_port"]))
         screenshot("1-host-lobby")
         say("look: the lobby screen, full screen by default")
         look("look-1-full-screen", app, True)
@@ -425,30 +566,169 @@ def main():
         screenshot("2-friend-connected")
         say("look: after the friend connected")
         look("look-2-friend-connected", app, True)
-        say("look: hold L3 + R3 for lobby controls, then Y: the game goes full screen")
+        say("look: Xbox button for the in-game menu, then FULL SCREEN: the game goes full screen")
         if not window_watch.focus_app(app.pid):
             # The test friend's own RetroArch window opened last and is in front; a player would be in Game Night.
             fail("couldn't put Game Night in front for the pad presses")
-        controls(pad_a)
-        tap(pad_a, B.XUSB_GAMEPAD_Y)
+        menu(app, pad_a, "full")
+        if menu_shown(app):
+            fail("the in-game menu stayed open after FULL SCREEN")
         look("look-2b-game-full-screen", app, True, game_full=True)
-        say("look: in full screen, L3 + R3 shows the gold popup and its buttons above and below the game")
-        controls(pad_a)
-        # Lobby controls close by themselves after 8 s without a press, so this look is kept short.
-        look("look-2c-full-screen-lobby-controls", app, True, game_full="strips", settle=1.5, seconds=4)
-        say("look: A goes back to the lobby")
-        controls(pad_a)  # opens them again if they closed (does nothing if they're still open)
-        tap(pad_a, B.XUSB_GAMEPAD_A)
+        say("look: the bezel (TV frame) around the full screen game, none in the lobby's small box")
+        results["bezel"] = {"settings": app_bezel()}
+        say(f"  RetroArch's bezel setting: {results['bezel']['settings']}")
+        b = results["bezel"]["settings"]
+        if b["enabled"] != "true" or not (b["file"] or "").endswith("-couch.cfg") or b["pages"] != "2":
+            fail(f"Couch Play's RetroArch isn't set up with the two-page bezel: {b}")
+        full_rect = results["look"]["look-2b-game-full-screen"]["last_game"]
+        results["bezel"]["full_screen"] = bezel_pixels("look-2b-game-full-screen", full_rect)
+        say(f"  full screen, lit share left of the game: {results['bezel']['full_screen']}")
+        if results["bezel"]["full_screen"]["band"] < 0.5:
+            fail(f"no bezel around the full screen game: {results['bezel']['full_screen']}")
+            # Measure why: flip the page ourselves. Lit now = Game Night's page count was off by one;
+            # still dark = RetroArch isn't drawing the bezel at all.
+            host.send("OVERLAY_NEXT")
+            time.sleep(1.5)
+            screenshot("look-2b-bezel-after-one-more-flip-3")
+            results["bezel"]["after_one_more_flip"] = bezel_pixels("look-2b-bezel-after-one-more-flip", full_rect)
+            say(f"  after one more OVERLAY_NEXT sent by the test: {results['bezel']['after_one_more_flip']}")
+            host.send("OVERLAY_NEXT")
+            time.sleep(0.5)
+        say("look: in full screen, the in-game menu over the game (the game stays full screen behind it)")
+        results["speed_full_screen"] = {"host": speed(host), "friend": speed(friend)}
+        say(f"  frames a second, full screen, menu closed: {results['speed_full_screen']}")
+        menu(app, pad_a)
+        results["speed_full_screen_menu"] = {"host": speed(host), "friend": speed(friend)}
+        say(f"  frames a second, full screen, host's menu open: {results['speed_full_screen_menu']}")
+        w = menu_window(app.pid)
+        say(f"  menu window: {w}")
+        if w and w[0] and (w[1][2] < 1000 or w[1][3] < 600):
+            fail(f"the in-game menu doesn't cover Game Night's window: {w}")
+        look("look-2c-full-screen-menu-open", app, True, game_full=True, settle=1.0, seconds=4)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["menu_open_host"] = {"frames": [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]}
+        say(f"  host's RetroArch with the menu open: {results['menu_open_host']}")
+        say("menu open: the host's presses stop reaching the game, the friend's still do")
+        set_pad(pad_a, [B.XUSB_GAMEPAD_X])  # X does nothing in the menu
+        set_pad(pad_b, [B.XUSB_GAMEPAD_A])
+        time.sleep(1.5)
+        # Netplay brings the friend's press to the host's game a little later, and slower with the menu open on
+        # CI's software graphics (host 0000, friend 0040 at 1.5 s in run 41263774912): wait up to 4 s more.
+        t_end = time.time() + 4
+        while True:
+            a, b = host.ram(0x10, 2), friend.ram(0x10, 2)
+            if (a and b and a[1] == 0x40 and b[1] == 0x40) or time.time() > t_end:
+                break
+            time.sleep(0.25)
+        set_pad(pad_a, [])
+        set_pad(pad_b, [])
+        results["menu_open_buttons"] = {"host": a.hex() if a else None, "friend": b.hex() if b else None}
+        say(f"  with the host's menu open, holding X on pad A and A on pad B: host game {results['menu_open_buttons']['host']}, friend game {results['menu_open_buttons']['friend']}")
+        if not a or not b or a[0] != 0 or b[0] != 0 or a[1] != 0x40 or b[1] != 0x40:
+            fail(f"menu open: pad A should go nowhere and pad B reach player 2 in both games: {results['menu_open_buttons']}")
+        m1 = friend.ram(0, 3)
+        time.sleep(1)
+        m2 = friend.ram(0, 3)
+        if not m1 or not m2 or frame_of(m2) - frame_of(m1) < 30:
+            fail(f"the game didn't keep going for the friend while the host's menu was open: {m1} {m2}")
+        tap(pad_a, B.XUSB_GAMEPAD_B)
+        time.sleep(1)
+        if menu_shown(app):
+            fail("B didn't close the in-game menu")
+        buttons_check(host, friend, pad_a, "A (after the host's menu closed)", 0)
+        say("look: the in-game menu's BACK TO LOBBY")
+        menu(app, pad_a, "lobby")
         look("look-2d-back-to-the-box", app, True)
-        say("full screen and back 6 more times, quickly (Jayden lost control after doing this)")
+        box_rect = results["look"]["look-2d-back-to-the-box"]["last_game"]
+        results["bezel"]["box"] = bezel_pixels("look-2d-back-to-the-box", box_rect)
+        # Recorded only: in the box the game itself fills that band.
+        say(f"  in the box, lit share in the same band: {results['bezel']['box']} (the game fills most of the box)")
+        say("full screen and back 6 more times through the menu, quickly (Jayden lost control after doing this)")
         for _ in range(6):
-            controls(pad_a)
-            tap(pad_a, B.XUSB_GAMEPAD_Y)
+            menu(app, pad_a, "full")
             time.sleep(1)
-            controls(pad_a)
-            tap(pad_a, B.XUSB_GAMEPAD_A)
+            menu(app, pad_a, "lobby")
             time.sleep(1)
         look("look-2e-after-switching", app, True)
+
+        say("pause for everyone (host's menu), then resume for everyone")
+        menu(app, pad_a, "pause")
+        paused = wait_until(lambda: friend_api.call("GET", f"/api/lobbies/{code}")[1].get("paused"), 6, 0.5)
+        friend_follows(friend, True, 3.5)
+        time.sleep(0.5)  # the pause reaches the friend's game a few frames later (2 frames in run 41249302754)
+        f1 = friend.ram(0, 3)
+        time.sleep(2)
+        f2 = friend.ram(0, 3)
+        results["pause_host"] = {"server": paused, "friend_frames": [frame_of(f1) if f1 else None, frame_of(f2) if f2 else None]}
+        screenshot("2f-host-paused-for-everyone")
+        say(f"  {results['pause_host']}")
+        if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
+            fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["host_frames_paused"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
+        # A long pause: RetroArch's netplay dropped the friend after about 10 s before everyone paused inside
+        # their own hidden menu (run 41251728442).
+        time.sleep(19)
+        tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
+        friend_follows(friend, False, 3.5)
+        time.sleep(1.5)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["host_frames_resumed_before_friend"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
+        time.sleep(2.5)
+        f1 = friend.ram(0, 3)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        f2 = friend.ram(0, 3)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["friend_frames_resumed"] = [frame_of(f1) if f1 else None, frame_of(f2) if f2 else None]
+        results["pause_host"]["host_frames_resumed_menu_open"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
+        tap(pad_a, B.XUSB_GAMEPAD_B)
+        time.sleep(1)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["host_frames_menu_closed"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
+        say(f"  after resuming: {results['pause_host']}")
+        if not f1 or not f2 or frame_of(f2) - frame_of(f1) < 30:
+            fail(f"RESUME FOR EVERYONE didn't start the game again for the friend: {f1} {f2}")
+        hm = results["pause_host"]["host_frames_menu_closed"]
+        if None in hm or hm[1] - hm[0] < 30:
+            fail(f"RESUME FOR EVERYONE didn't start the host's game again: {results['pause_host']}")
+
+        say("a friend pauses for everyone (through the server); the host's app pauses the game and shows who")
+        status, view = friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": True})
+        if status != 200 or not (view or {}).get("paused"):
+            fail(f"the friend couldn't pause through the server: {status} {view}")
+        friend_follows(friend, True, 3.5)
+        time.sleep(5)  # the host's app hears it with its next heartbeat (every 3 s)
+        h1 = host.ram(0, 3)
+        time.sleep(2)
+        h2 = host.ram(0, 3)
+        w = menu_window(app.pid)
+        screenshot("2g-paused-by-friend")
+        results["pause_friend"] = {"host_frames": [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None], "paused_by_window": w}
+        say(f"  {results['pause_friend']}")
+        if not h1 or not h2 or frame_of(h2) != frame_of(h1):
+            fail(f"the friend's pause didn't pause the game: {results['pause_friend']}")
+        if not (w and w[0]):
+            fail("the host's screen didn't show \"Paused by\" while the friend had paused")
+        time.sleep(15)  # a long pause
+        friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": False})
+        friend_follows(friend, False, 3.5)
+        time.sleep(6)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        if not h1 or not h2 or frame_of(h2) - frame_of(h1) < 30:
+            fail(f"the game didn't carry on after the friend resumed: {h1} {h2}")
+        if menu_shown(app):
+            fail("\"Paused by\" stayed on the host's screen after the friend resumed")
 
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)
@@ -489,7 +769,9 @@ def main():
             m = host.ram(0, 3)
             frames.append(frame_of(m) if m else None)
             time.sleep(0.5)
-        if None in frames or frames != sorted(frames) or frames[-1] - frames[0] < 150:
+        results["after_drop_frames"] = frames
+        # Every reading moves on (a stall would repeat one), at CI speed (about 30-45 frames a second here).
+        if None in frames or any(b <= a for a, b in zip(frames, frames[1:])) or frames[-1] - frames[0] < 60:
             fail(f"the host's game didn't keep going after the friend dropped: {frames}")
         else:
             say(f"  host kept playing ({frames[-1] - frames[0]} frames in 3.5 s)")
@@ -518,13 +800,12 @@ def main():
         if app.poll() is not None:
             fail(f"the Game Night app closed during the test (exit {app.returncode})")
 
-        say("refresh: L3 + R3, then RB. The host's game saves its spot, restarts and loads the spot again")
+        say("refresh: the in-game menu's REFRESH GAME. The host's game saves its spot, restarts and loads the spot again")
         window_watch.focus_app(app.pid)
         old_port = ra_cmd_port()
         m = host.ram(0, 3)
         before = frame_of(m) if m else None
-        controls(pad_a)
-        tap(pad_a, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        menu(app, pad_a, "refresh")
         new_port = wait_until(lambda: (p := ra_cmd_port()) and p != old_port and p, 30, 0.5)
         if not new_port or before is None:
             fail(f"refresh: the game didn't restart (port {old_port} -> {new_port}, frame before {before})")
@@ -543,9 +824,10 @@ def main():
         friend.kill()
         app.kill()
         app.wait(15)
-        first_log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "gamebox.log"
-        if first_log.exists():
-            (OUT / "host-gamebox-full-screen-run.log").write_bytes(first_log.read_bytes())
+        logs = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs"
+        for name in ("gamebox.log", "couch.log", "retroarch.log", "ingame.txt", "relay.log", "retroarch-crash.log"):
+            if (logs / name).exists():
+                (OUT / f"host-{name.split('.')[0]}-full-screen-run.log").write_bytes((logs / name).read_bytes())
         info_file.unlink(missing_ok=True)
         time.sleep(2)
         app = subprocess.Popen([str(APP)], env=dict(env, GAMENIGHT_E2E_WINDOWED="1"), stdout=app_log, stderr=subprocess.STDOUT)
@@ -558,12 +840,13 @@ def main():
             window_watch.move_app(app.pid, 40, 30, 1500, 900)
             look("look-4-windowed-moved", app, False)
     finally:
+        crash_watch_stop.set()
         friend.kill()
         (OUT / "friend-retroarch.log").write_text(friend.log())
         if app.poll() is None:
             app.kill()
         server.kill()
-        for name in ("retroarch.log", "relay.log", "couch.log", "gamebox.log"):
+        for name in ("retroarch.log", "relay.log", "couch.log", "gamebox.log", "ingame.txt", "retroarch-crash.log"):
             for base in (Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs",):
                 src = base / name
                 if src.exists():

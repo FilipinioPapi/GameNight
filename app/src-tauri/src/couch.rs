@@ -27,6 +27,9 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const CODE_LETTERS: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const BEAT: Duration = Duration::from_secs(3);
+/// Pause for everyone: friends and watchers pause / resume this long after the change (after the host, which
+/// hears it within one BEAT; see follow_pause).
+const FOLLOW_AFTER: Duration = Duration::from_millis(3500);
 /// No answer from the server for this long (while the app is open) = give up on the lobby.
 const GIVE_UP_BEATS: u32 = 20;
 /// A RetroArch that closes this soon after starting is started once more (measured: occasional crash at start).
@@ -153,6 +156,16 @@ struct Local {
     cmd_port: u16,
     /// The host's relay bridge stopped for good (friends already in carry on; nobody new can join).
     relay_lost: bool,
+    /// Host: this PC's RetroArch is paused for everyone (it follows the lobby's "paused" on the server).
+    paused: bool,
+    /// The look (shader) on this screen now (the in-game menu can change it).
+    look: String,
+    /// The bezel is on, and which of its pages shows: 0 = the bezel (full screen), 1 = empty (the small box).
+    bezel: bool,
+    overlay_page: u8,
+    /// RetroArch has had time to load the bezel (it loads in the background after the game starts; a page
+    /// flip sent before that is lost and the pages would be the wrong way round).
+    bezel_ready: bool,
 }
 
 struct Game {
@@ -211,6 +224,8 @@ impl Couch {
         if v.get("you").is_some_and(Value::is_object) {
             v["you"]["game"] = json!(game);
         }
+        // Top level too: the lobby screen follows it (the in-game menu's "Back to lobby" / "Full screen").
+        v["fullscreen"] = json!(self.gamebox.fullscreen());
         v["local"] = json!({
             "retroarch": state,
             "netplay": if l.disconnected { "disconnected" } else { "ok" },
@@ -237,6 +252,7 @@ fn emit_update<R: Runtime>(app: &AppHandle<R>) {
     if let Some(v) = app.state::<Couch>().view() {
         let _ = app.emit("couch-update", v);
     }
+    crate::ingame::lobby_changed(app);
 }
 
 fn main_hwnd<R: Runtime>(app: &AppHandle<R>) -> isize {
@@ -318,6 +334,13 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         l.seat = seat;
         l.watching = seat.is_none();
         l.cmd_port = cmd_port;
+        l.paused = false;
+        l.look = game.settings.picture.clone();
+        l.bezel = launch.bezel;
+        l.overlay_page = 0;
+        l.bezel_ready = false;
+        // A new RetroArch starts unpaused: no old pause wish carries over (follow_pause applies the lobby's again).
+        crate::ingame::pause_reset();
         l.gen
     };
     log.line(&format!(
@@ -332,6 +355,10 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
     std::thread::spawn(move || monitor(app2, launch, watched, gen, host, log2));
     Ok(Ra { child })
 }
+
+/// How long after RetroArch starts before Game Night flips the bezel's pages (measured: a flip sent at 2 s
+/// was sometimes lost, CI run 41234261790).
+const BEZEL_SETTLE: Duration = Duration::from_secs(5);
 
 /// Watches the local RetroArch: running after 2 s, one retry if it closes sooner, "disconnected" from its log.
 fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mutex<Option<std::process::Child>>>, gen: u64, host: bool, log: FileLog) {
@@ -367,6 +394,10 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
             }
             launch.after_exit();
             log.line(&format!("RetroArch closed ({status})"));
+            if !status.success() {
+                // Keep its log: the next start replaces retroarch.log.
+                let _ = std::fs::copy(&launch.log_file, launch.log_file.with_file_name("retroarch-crash.log"));
+            }
             {
                 let mut l = lock(&couch.local);
                 if !mine(&l) {
@@ -388,9 +419,14 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
                 l.state = RaState::Running;
                 changed = true;
             }
+            if l.state == RaState::Running && !l.bezel_ready && started.elapsed() >= BEZEL_SETTLE {
+                l.bezel_ready = true;
+                changed = true;
+            }
         }
         if last_look.elapsed() >= Duration::from_secs(1) {
             last_look = Instant::now();
+            sync_bezel(&app);
             let text = new_log_text(&launch.log_file, &mut offset);
             if netplay_dropped(&text, host) {
                 let mut l = lock(&couch.local);
@@ -402,9 +438,29 @@ fn monitor<R: Runtime>(app: AppHandle<R>, launch: games::Launch, child: Arc<Mute
             }
         }
         if changed {
+            sync_bezel(&app);
             emit_update(&app);
         }
     }
+}
+
+/// The bezel only fits the full screen game: in the lobby's small box its empty page shows instead.
+/// RetroArch's OVERLAY_NEXT flips between the two pages (display.rs prepare_bezel).
+fn sync_bezel<R: Runtime>(app: &AppHandle<R>) {
+    let couch = app.state::<Couch>();
+    let want = if couch.gamebox.fullscreen() { 0 } else { 1 };
+    let port = {
+        let mut l = lock(&couch.local);
+        // Not straight after RetroArch's menu opened or closed (the flip could be lost); the game's monitor
+        // tries again every second.
+        if !l.bezel || !l.bezel_ready || l.state != RaState::Running || l.overlay_page == want || !crate::ingame::ra_menu_settled() {
+            return;
+        }
+        l.overlay_page = want;
+        l.cmd_port
+    };
+    crate::ingame::note(app, &format!("bezel page {want} ({}): OVERLAY_NEXT", if want == 0 { "full screen" } else { "small box" }));
+    send_cmd(port, "OVERLAY_NEXT");
 }
 
 fn stop_ra<R: Runtime>(app: &AppHandle<R>, ra: Ra, log: &FileLog) {
@@ -488,10 +544,99 @@ fn take_lobby<R: Runtime>(app: &AppHandle<R>, s: &mut Session, lobby: Value) -> 
     let changed = lock(&couch.latest).as_ref() != Some(&lobby);
     *lock(&couch.latest) = Some(lobby.clone());
     reconcile(app, s, &lobby);
+    follow_pause(app, s, &lobby);
     if changed {
         emit_update(app);
     }
     None
+}
+
+/// "Pause for everyone" lives on the server (anyone playing can ask, from their in-game menu). Every PC in the
+/// lobby (host, players and watchers) pauses its own RetroArch from inside its hidden menu, so RetroArch's
+/// netplay never sees a pause: measured (in-game menu test, run 41253096478, 20 s pauses), that was the only
+/// way the game came back for everyone; the host pausing alone, or RetroArch's own netplay pause, dropped the
+/// friend or left the game stuck.
+fn follow_pause<R: Runtime>(app: &AppHandle<R>, s: &Session, lobby: &Value) {
+    if s.ra.is_none() {
+        return;
+    }
+    let want = lobby.get("paused").is_some_and(Value::is_object);
+    let couch = app.state::<Couch>();
+    let port = {
+        let mut l = lock(&couch.local);
+        if l.state != RaState::Running || l.disconnected || l.paused == want {
+            return;
+        }
+        l.paused = want;
+        l.cmd_port
+    };
+    // The order RetroArch's netplay survives (in-game menu test, run 41254795377): the host pauses and resumes
+    // first, everyone else after it (2.5 s later came back fine, even after 90 s; a friend resuming before the
+    // host was dropped). Each PC hears the change on its own heartbeat (within BEAT), so the host acts at once
+    // and the others wait until FOLLOW_AFTER since the change (the server says how long ago it was).
+    let ago = if want { lobby["paused"]["ago"].as_f64() } else { lobby["resumed_ago"].as_f64() };
+    let after = match ago {
+        Some(ago) if !s.host => FOLLOW_AFTER.saturating_sub(Duration::from_secs_f64(ago.max(0.0))),
+        _ => Duration::ZERO,
+    };
+    let by = lobby["paused"]["by"]["name"].as_str().unwrap_or("someone");
+    s.log.line(&if want { format!("paused for everyone (asked by {by}): PAUSE_TOGGLE in {:.1} s", after.as_secs_f64()) } else { format!("resumed for everyone: PAUSE_TOGGLE in {:.1} s", after.as_secs_f64()) });
+    crate::ingame::pause_for_everyone(app, port, want, after);
+}
+
+/// "Pause for everyone" / "Resume for everyone" from the in-game menu (board IG2), through the server.
+pub async fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), String> {
+    lobby_call(app, reqwest::Method::POST, "/pause", Some(json!({ "on": on }))).await.map(|_| ())
+}
+
+/// What the in-game menu needs to know about this PC's Couch Play game.
+pub struct MenuContext {
+    pub running: bool,
+    pub cmd_port: u16,
+    pub host: bool,
+    pub watching: bool,
+    pub fullscreen: bool,
+    pub title: String,
+    pub console: String,
+    pub look: String,
+    pub player: PathBuf,
+    pub view: Value,
+}
+
+pub fn menu_context<R: Runtime>(app: &AppHandle<R>) -> Option<MenuContext> {
+    let couch = app.state::<Couch>();
+    let view = couch.view()?;
+    let (running, cmd_port, watching, look) = {
+        let l = lock(&couch.local);
+        (l.state == RaState::Running && !l.disconnected, l.cmd_port, l.watching, l.look.clone())
+    };
+    Some(MenuContext {
+        running,
+        cmd_port,
+        host: view["you"]["role"].as_str() == Some("host"),
+        watching,
+        fullscreen: couch.gamebox.fullscreen(),
+        title: view["game"]["title"].as_str().unwrap_or("").to_string(),
+        console: view["game"]["console"].as_str().unwrap_or("").to_string(),
+        look,
+        player: games::player_dir(app).unwrap_or_default(),
+        view,
+    })
+}
+
+/// The in-game menu changed the look: it stays for this lobby (also after the game restarts).
+pub fn set_menu_look<R: Runtime>(app: &AppHandle<R>, look: &str) {
+    let couch = app.state::<Couch>();
+    lock(&couch.local).look = look.to_string();
+    let app = app.clone();
+    let look = look.to_string();
+    tauri::async_runtime::spawn(async move {
+        let couch = app.state::<Couch>();
+        let mut g = couch.session.lock().await;
+        if let Some(s) = g.as_mut() {
+            s.game.settings.picture = look;
+        }
+    });
 }
 
 /// Ends this PC's part in the lobby: closes the game and the relay session.
@@ -672,7 +817,7 @@ async fn host_steps<R: Runtime>(app: &AppHandle<R>, mut game: Game, open: bool, 
         let bridge = relay::Bridge::start(
             relay_at,
             s.netplay_port,
-            relay::Limits::default(),
+            relay::Limits { hold: crate::ingame::paused_for_everyone, ..relay::Limits::default() },
             rlog,
             // The relay closed the session and the bridge opened a new one: friends need the new id.
             Box::new(move |session: String| {
@@ -869,8 +1014,14 @@ pub async fn couch_refresh<R: Runtime>(app: AppHandle<R>) -> Result<Value, Strin
         let port = lock(&couch.local).cmd_port;
         s.log.line("refresh: saving the game's spot (SAVE_STATE)");
         send_cmd(port, "SAVE_STATE");
-        for _ in 0..40 {
+        for i in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if i == 15 && !saved {
+                // A command sent just as RetroArch's hidden menu closes can be lost (as Quit was, CI run
+                // 41238375842): ask once more.
+                s.log.line("refresh: not saved after 1.5 s: SAVE_STATE again");
+                send_cmd(port, "SAVE_STATE");
+            }
             if newest_state(&dir).is_some_and(|(_, t)| Some(t) != before) {
                 saved = true;
                 break;
@@ -979,6 +1130,7 @@ pub fn couch_fullscreen<R: Runtime>(app: AppHandle<R>, on: bool) {
         }
     }
     app.state::<Couch>().gamebox.set_fullscreen(on);
+    sync_bezel(&app);
     emit_update(&app);
 }
 

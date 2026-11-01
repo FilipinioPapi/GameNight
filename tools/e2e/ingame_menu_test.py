@@ -75,6 +75,13 @@ QUIET_MENU = {
     "menu_show_quit_retroarch": "false", "menu_show_restart_retroarch": "false", "menu_show_information": "false",
     "menu_show_configurations": "false", "menu_show_help": "false", "menu_show_overlays": "false",
     "menu_show_rewind": "false", "menu_show_latency": "false",
+    # Main menu and tabs empty too (display.rs hidden_menu_lines): B in the hidden menu goes back to the main menu.
+    **{f"menu_show_{k}": "false" for k in (
+        "load_disc", "dump_disc", "eject_disc", "online_updater", "core_updater", "legacy_thumbnail_updater",
+        "core_manager_steam", "reboot", "shutdown", "advanced_settings")},
+    **{f"content_show_{k}": "false" for k in (
+        "settings", "favorites", "images", "music", "video", "netplay", "history", "playlists", "explore")},
+    "content_show_add_entry": "0", "content_show_contentless_cores": "0", "quick_menu_show_game_ai": "false",
     **{f"quick_menu_show_{k}": "false" for k in (
         "resume_content", "restart_content", "close_content", "savestate_submenu", "save_load_state", "replay",
         "take_screenshot", "undo_save_load_state", "add_to_favorites", "add_to_playlist", "start_recording",
@@ -534,6 +541,42 @@ class Trio(cl.Couch):
             if not res["menu"]["blocks_own_presses"]:
                 fail("couch: with P2's menu open, pad B still reached the game")
 
+            # ---- the HOST's menu open, each button pressed on its own (Couch Play app test: the host's RetroArch
+            # crashed, 0xc0000005, while its hidden menu was open and buttons were pressed; runs 41236464953,
+            # 41238376028). Which button, and does it happen without Game Night?
+            p1 = self.copies["P1"]
+            res["host_menu"] = {"buttons": []}
+            p1.send("MENU_TOGGLE")
+            time.sleep(2)
+            # With the host's menu open, the friend's pad must still reach seat 2 in every copy (the app test saw
+            # the host's game show nothing from the friend then).
+            res["host_menu"]["friend_reaches_seat_2"] = self.seat_check({2: pads[2]}, "host's menu open: pad B still plays")
+            if not res["host_menu"]["friend_reaches_seat_2"]:
+                fail("couch: with the host's menu open, the friend's presses didn't reach every copy")
+            for label, btn in (("A", B.XUSB_GAMEPAD_A), ("B", B.XUSB_GAMEPAD_B), ("X", B.XUSB_GAMEPAD_X),
+                               ("Y", B.XUSB_GAMEPAD_Y), ("LB", B.XUSB_GAMEPAD_LEFT_SHOULDER),
+                               ("RB", B.XUSB_GAMEPAD_RIGHT_SHOULDER), ("Start", B.XUSB_GAMEPAD_START),
+                               ("Back", B.XUSB_GAMEPAD_BACK), ("Up", B.XUSB_GAMEPAD_DPAD_UP),
+                               ("Down", B.XUSB_GAMEPAD_DPAD_DOWN), ("Left", B.XUSB_GAMEPAD_DPAD_LEFT),
+                               ("Right", B.XUSB_GAMEPAD_DPAD_RIGHT), ("L3", B.XUSB_GAMEPAD_LEFT_THUMB),
+                               ("R3", B.XUSB_GAMEPAD_RIGHT_THUMB), ("A again", B.XUSB_GAMEPAD_A),
+                               ("X held 1.5 s", B.XUSB_GAMEPAD_X)):
+                set_pad(pads[1], [btn])
+                time.sleep(1.5 if "held" in label else 0.3)
+                set_pad(pads[1], [])
+                time.sleep(1.0)
+                alive = p1.alive()
+                res["host_menu"]["buttons"].append({"button": label, "host_alive": alive})
+                say(f"  host's hidden menu open, pad A pressed {label}: host's RetroArch still running: {alive}")
+                if not alive:
+                    res["host_menu"]["crashed_on"] = label
+                    res["host_menu"]["host_log_tail"] = p1.log_text().splitlines()[-15:]
+                    fail(f"couch: the host's RetroArch closed when {label} was pressed in its hidden menu")
+                    break
+            if p1.alive():
+                p1.send("MENU_TOGGLE")
+                time.sleep(2)
+
             # ---- the known way, for comparison: switch to watching and back
             res["watch_way"] = [self.timed("P2 switches to watching", lambda: p2.send("NETPLAY_GAME_WATCH"), 4)]
             res["watch_way_pad_b_goes_nowhere"] = self.pad_goes_nowhere(pads[2], "P2 watching, pad B")
@@ -623,6 +666,115 @@ class Trio(cl.Couch):
         return go
 
 
+PAUSE_HOLD_SECONDS = int(os.environ.get("INGAME_PAUSE_SECONDS", "20"))
+
+
+class PausePair(cl.Couch):
+    """Host P1 + friend P2 through the nyc relay, like the app. Measures how RetroArch 1.22.2 netplay survives
+    a LONG pause for everyone. Found in the Couch Play app test: a host pause with its hidden menu open dropped
+    the friend after about 10 s (run 41251728442, RetroArch's 10 s client stall limit), and a host pause with
+    the menu closed left the game stuck after resuming (run 41247795649, RetroArch's 5 s host stall limit)."""
+
+    def run_variant(self, label, pause, resume, hold=PAUSE_HOLD_SECONDS):
+        res = self.res
+        common = {"netplay_allow_pausing": "true", "menu_pause_libretro": "false", "pause_nonactive": "false",
+                  **DISPLAY, **QUIET_MENU}
+        host = self.person("P1", 0, self.slots[1], {**common, "netplay_request_device_p1": "true"})
+        self.person("P2", 1, self.slots[2], {**common, "netplay_request_device_p2": "true"})
+        try:
+            relay_host, relay_port = np.relay_address("nyc")
+            self.relay = (relay_host, relay_port)
+            host.start(self.rom, ["--host", "--port", str(cl.NETPLAY_PORT)])
+            if not host.locate(40):
+                fail(f"pause {label}: the host's game never started")
+                return res
+            self.live.append(host)
+            self.watch = cl.FrameWatch(host)
+            self.watch.start()
+            time.sleep(2)
+            self.bridge = cl.FreezableBridge(relay_host, relay_port, cl.NETPLAY_PORT)
+            self.bridge.start()
+            self.bridge.ready.wait(30)
+            if not self.bridge.session or not self.join("P2"):
+                fail(f"pause {label}: the friend couldn't join ({self.bridge.error})")
+                return res
+            p1, p2 = host, self.copies["P2"]
+            owners = {1: self.pads[1], 2: self.pads[2]}
+            time.sleep(3)
+            res["before"] = self.seat_check(owners, f"{label}: before the pause")
+            pause(p1, p2)
+            time.sleep(2)
+            a = (p1.frame(), p2.frame())
+            time.sleep(2)
+            b = (p1.frame(), p2.frame())
+            res["paused"] = a == b and None not in a
+            say(f"  {label}: frames 2 s apart while paused: {a} -> {b} (paused for both: {res['paused']})")
+            time.sleep(max(0, hold - 4))
+            res["log_while_paused"] = {k: c.new_netplay_lines()[-6:] for k, c in self.copies.items()}
+            resume(p1, p2)
+            time.sleep(4)
+            a = (p1.frame(), p2.frame())
+            time.sleep(2)
+            b = (p1.frame(), p2.frame())
+            res["running_after"] = None not in a and None not in b and b[0] - a[0] > 30 and b[1] - a[1] > 30
+            res["log_after"] = {k: c.new_netplay_lines()[-6:] for k, c in self.copies.items()}
+            res["link"] = dict(self.bridge.stats, error=self.bridge.error, events=self.bridge.events[-8:])
+            say(f"  {label}: after resuming {a} -> {b} (both running: {res['running_after']}); logs {res['log_after']}")
+            res["after"] = self.seat_check(owners, f"{label}: after resuming") if res["running_after"] else False
+            if res["after"]:
+                r = self.mash_and_compare(owners, 15, f"{label}: after resuming")
+                res["sync_after"] = {k: r.get(k) for k in ("frames_compared", "frames_different")}
+            res["ok"] = bool(res["paused"] and res["after"])
+            say(f"  RESULT pause {label}: {'SURVIVED' if res['ok'] else 'BROKE'} a {hold} s pause")
+            return res
+        finally:
+            if self.watch:
+                self.watch.stop.set()
+            if self.bridge:
+                self.bridge.stop()
+            for c in self.copies.values():
+                if c.proc:
+                    c.quit()
+            subprocess.run(["taskkill", "/F", "/IM", "retroarch.exe"], capture_output=True)
+            time.sleep(3)
+
+
+def part_pause(rom, pads, slots):
+    """Pause for everyone the way the app does it, held 30 s, through the relay."""
+    say("\n################ part 3: pause for everyone held 30 s ################")
+
+    # Run 41253096478 (20 s pauses): only "everyone's RetroArch pauses inside its own hidden menu" survived; the
+    # host alone (menu open or closed) and RetroArch's own netplay pause (both, either order) all broke.
+    def menu_pause(c):
+        c.send("MENU_TOGGLE")
+        time.sleep(0.6)
+        c.send("PAUSE_TOGGLE")
+
+    def menu_resume(c):
+        c.send("PAUSE_TOGGLE")
+        time.sleep(0.6)
+        c.send("MENU_TOGGLE")
+
+    def friend_later(f, gap=2.5):
+        def go(p1, p2):
+            f(p1)
+            time.sleep(gap)
+            f(p2)
+        return go
+
+    # Run 41254795377: together, friend 2.5 s after the host, and a 90 s pause all came back; the friend
+    # resuming 2.5 s BEFORE the host was dropped. So the app has friends follow 3.5 s after the change, after
+    # the host (couch.rs follow_pause). This checks that way, held 30 s: a failure here is a real failure.
+    out = {"part": "pause", "variants": {}}
+    label = "the app's way: friend 3.5 s after the host both times, 30 s pause"
+    out["variants"][label] = PausePair("pause", rom, pads, slots).run_variant(
+        label, friend_later(menu_pause, 3.5), friend_later(menu_resume, 3.5), 30)
+    if not out["variants"][label].get("ok"):
+        fail(f"pause for everyone, {label}: the game didn't come back for both")
+    say("\npause check: " + json.dumps({k: v.get("ok") for k, v in out["variants"].items()}))
+    return out
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
@@ -653,6 +805,7 @@ def main():
 
     run_part("looks", lambda: part_looks(rom, pads[1], slots[1]))
     run_part("couch", lambda: Trio("couch", rom, pads, slots).run())
+    run_part("pause", lambda: part_pause(rom, pads, slots))
     # Last, because Windows may show a firewall question on screen that would spoil screenshots.
     run_part("port", lambda: {"part": "port", "command_port_on_network": command_port_check(cl.SnesCopy("port", 55600, slots[1]), rom)})
     results["ok"] = not cl.failures

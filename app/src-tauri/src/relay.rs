@@ -56,6 +56,9 @@ pub struct Limits {
     pub host_quiet: Duration,
     /// Friend side silent this long = gone, whatever the host does (a live RetroArch pings every 3 s).
     pub friend_gone: Duration,
+    /// True while this PC holds a pause for everyone (and a few seconds after): everyone's game is meant to be
+    /// silent then, so no link is closed for being quiet (Couch Play app test run 41256780032).
+    pub hold: fn() -> bool,
 }
 
 impl Default for Limits {
@@ -65,6 +68,7 @@ impl Default for Limits {
             watcher_silent: Duration::from_secs(7),
             host_quiet: Duration::from_secs(2),
             friend_gone: Duration::from_secs(20),
+            hold: || false,
         }
     }
 }
@@ -459,6 +463,11 @@ pub async fn splice(friend: TcpStream, host: TcpStream, limits: Limits) -> Strin
                 Ok(Err(e)) => return format!("the friend's side broke: {e}"),
                 Err(_) => {
                     let now = ms(Instant::now());
+                    if (limits.hold)() {
+                        // Paused for everyone: silence is expected, so it starts counting again afterwards.
+                        last_friend.store(now, Ordering::Relaxed);
+                        continue;
+                    }
                     let friend_quiet = now.saturating_sub(last_friend.load(Ordering::Relaxed));
                     let host_quiet = now.saturating_sub(last_host.load(Ordering::Relaxed));
                     if friend_quiet >= limits.friend_gone.as_millis() as u64 {
@@ -634,6 +643,7 @@ mod tests {
             watcher_silent: Duration::from_millis(1500),
             host_quiet: Duration::from_millis(400),
             friend_gone: Duration::from_secs(5),
+            hold: || false,
         };
         let relay = FakeRelay::new().await;
         let host = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -687,6 +697,7 @@ mod tests {
             watcher_silent: Duration::from_millis(900),
             host_quiet: Duration::from_millis(200),
             friend_gone: Duration::from_secs(5),
+            hold: || false,
         };
         let relay = FakeRelay::new().await;
         let host = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -733,5 +744,48 @@ mod tests {
         let (log, _) = logger();
         let r = Bridge::start(("127.0.0.1".into(), port), 9, Limits::default(), log, Box::new(|_| {}), Box::new(|_| {})).await;
         assert!(r.is_err());
+    }
+
+    static HOLD_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    #[tokio::test]
+    async fn no_link_is_closed_while_paused_for_everyone() {
+        let limits = Limits {
+            friend_silent: Duration::from_millis(300),
+            watcher_silent: Duration::from_millis(500),
+            host_quiet: Duration::from_millis(200),
+            friend_gone: Duration::from_millis(900),
+            hold: || HOLD_TEST.load(Ordering::SeqCst),
+        };
+        let relay = FakeRelay::new().await;
+        let host = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = host.local_addr().unwrap().port();
+        let (started, mut ctl) = tokio::join!(start(&relay, target, limits), relay.session(1));
+        let (bridge, _log, lines, _news, _end) = started;
+
+        // A player sends buttons, then the game is paused for everyone: both sides go silent for 1.5 s,
+        // longer than every limit. The link stays open, and still carries data afterwards.
+        let mut player = relay.friend(&mut ctl, [3; 12]).await;
+        let (mut host_p, _) = host.accept().await.unwrap();
+        for _ in 0..15 {
+            player.write_all(b"in").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        let mut got = [0u8; 30];
+        host_p.read_exact(&mut got).await.unwrap();
+        HOLD_TEST.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        HOLD_TEST.store(false, Ordering::SeqCst);
+        player.write_all(b"back").await.unwrap();
+        let mut back = [0u8; 4];
+        timeout(Duration::from_secs(2), host_p.read_exact(&mut back)).await.expect("still open").unwrap();
+        assert_eq!(&back, b"back");
+        let text = lines.lock().unwrap().join("\n");
+        assert!(!text.contains("closed after"), "{text}");
+
+        // Once the pause is over, silence counts again: the link is closed as before.
+        let mut rest = Vec::new();
+        timeout(Duration::from_secs(3), host_p.read_to_end(&mut rest)).await.expect("closed after the pause").unwrap();
+        drop(bridge);
     }
 }

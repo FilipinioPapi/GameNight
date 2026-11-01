@@ -106,6 +106,52 @@ def test_switch(book):
     assert e.value.status == 409
 
 
+def test_pause_for_everyone(book):
+    code = book.host(person(0), MARIO, True)["code"]
+    book.join(code, person(1), "play")
+    book.join(code, person(2), "watch")
+    assert book.view(book.lobbies[code], "100")["paused"] is None
+    with pytest.raises(lb.LobbyError) as e:
+        book.pause(code, "102", True)          # watchers can't pause
+    assert e.value.status == 409
+    v = book.pause(code, "101", True)           # a friend pauses
+    assert v["paused"] == {"by": person(1), "seconds": 0, "ago": 0.0}
+    book.clock_.t += 5
+    beat(book, code, person(0), person(1), person(2))
+    v = book.pause(code, "100", True)           # already paused: stays the friend's
+    assert v["paused"]["by"]["id"] == "101" and v["paused"]["seconds"] == 5 and v["paused"]["ago"] == 5.0
+    assert v["resumed_ago"] is None
+    with pytest.raises(lb.LobbyError) as e:
+        book.pause(code, "102", False)          # someone else can't resume it
+    assert e.value.status == 403
+    v = book.pause(code, "100", False)          # the host can
+    assert v["paused"] is None and v["resumed_ago"] == 0.0
+    book.clock_.t += 2.5
+    assert book.view(book.lobbies[code], "101")["resumed_ago"] == 2.5   # each PC knows how long ago it ended
+    book.clock_.t += 13
+    assert book.view(book.lobbies[code], "101")["resumed_ago"] is None  # and after 15 s it's forgotten
+    book.pause(code, "101", True)
+    assert book.pause(code, "101", False)["paused"] is None   # and so can the one who paused
+    # the one who paused drops out, switches to watching or leaves: the game carries on
+    book.pause(code, "101", True)
+    book.clock_.t += 11
+    beat(book, code, person(0))
+    assert book.view(book.lobbies[code], "100")["paused"] is None
+    book.join(code, person(1), "play")
+    book.pause(code, "101", True)
+    assert book.switch(code, "101", "watch")["paused"] is None
+    book.switch(code, "101", "play")
+    book.pause(code, "101", True)
+    book.leave(code, "101")
+    assert book.view(book.lobbies[code], "100")["paused"] is None
+    # a pause ends by itself after 10 minutes
+    book.pause(code, "100", True)
+    for _ in range(67):
+        book.clock_.t += 9
+        beat(book, code, person(0))
+    assert book.view(book.lobbies[code], "100")["paused"] is None
+
+
 def test_drop_hold_then_empty(book):
     code = book.host(person(0), MARIO, True)["code"]
     book.join(code, person(1), "play")
@@ -327,6 +373,14 @@ async def test_web_flow(client):
     assert r.status == 403 and await r.text() == "Only the host can do that."
     r = await c.patch(f"/api/lobbies/{code}", json={"open": False}, headers=h[0])
     assert (await r.json())["open"] is False
+    r = await c.post(f"/api/lobbies/{code}/pause", json={"on": True}, headers=h[1])
+    assert (await r.json())["paused"]["by"]["id"] == "101"
+    r = await c.post(f"/api/lobbies/{code}/pause", json={"on": "yes"}, headers=h[1])
+    assert r.status == 400
+    r = await c.post(f"/api/lobbies/{code}/pause", json={"on": False}, headers=h[4])
+    assert r.status == 403
+    r = await c.post(f"/api/lobbies/{code}/pause", json={"on": False}, headers=h[0])
+    assert (await r.json())["paused"] is None
     r = await c.post(f"/api/lobbies/{code}/seat", json={"seat": 4, "action": "give", "user": "103"}, headers=h[0])
     assert (await r.json())["seats"][3]["user"]["id"] == "103"
     r = await c.post(f"/api/lobbies/{code}/leave", headers=h[0])

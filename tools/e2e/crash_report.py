@@ -40,3 +40,27 @@ for d in dumps[:6]:
         lines = r.stdout.splitlines()
         start = next((i for i, l in enumerate(lines) if ".ecxr" in l), 0)
         print("\n".join(lines[start:start + 45]))
+
+# The workflow also sets Microsoft's debugger (cdb) as the crash debugger: it writes what it saw to crash.txt.
+log = folder / "crash.txt"
+if log.exists():
+    text = log.read_text(errors="replace").splitlines()
+    print(f"\n==== crash.txt from the crash debugger ({len(text)} lines)")
+    print("\n".join(text[:400]))
+else:
+    print("no crash.txt from the crash debugger")
+
+# The Couch Play test also attaches cdb to each host RetroArch: host-cdb-<process>.txt in the results folder.
+for extra in sys.argv[2:]:
+    for f in sorted(Path(extra).glob("host-cdb-*.txt")):
+        text = f.read_text(errors="replace").splitlines()
+        hits = [i for i, l in enumerate(text) if "CRASH" in l or "FIRST-CHANCE" in l]
+        print(f"\n==== {f.name}: {len(text)} lines, {len(hits)} exception(s)")
+        shown = set()
+        for i in hits[:6]:
+            for j in range(i, min(i + 70, len(text))):
+                if j not in shown:
+                    shown.add(j)
+                    print(text[j])
+        if not hits:
+            print("\n".join(text[-8:]))

@@ -184,7 +184,11 @@ pub fn animated_overlay(player: &Path, console: &str) -> PathBuf {
 
 /// Makes (or reuses) the bezel for this screen and returns the overlay file RetroArch should load.
 /// `cache`: Game Night's cache folder for the player. None = no bezel (style "none", or no picture).
-pub fn prepare_bezel(player: &Path, cache: &Path, style: &str, console: &str, screen: (u32, u32), tv: bool) -> Result<Option<PathBuf>, String> {
+/// `box_page`: Couch Play. The overlay gets a second, empty page for when the game is in the lobby's small box
+/// (the bezel only fits the full screen game); Game Night flips between them with RetroArch's OVERLAY_NEXT.
+/// Bezel C (its own overlay file, with pages of its own) isn't used there: Couch Play gets the TV frame instead.
+pub fn prepare_bezel(player: &Path, cache: &Path, style: &str, console: &str, screen: (u32, u32), tv: bool, box_page: bool) -> Result<Option<PathBuf>, String> {
+    let style = if box_page && style == "pad" { "tv" } else { style };
     if style == "pad" {
         let f = animated_overlay(player, console);
         return Ok(f.is_file().then_some(f));
@@ -205,10 +209,21 @@ pub fn prepare_bezel(player: &Path, cache: &Path, style: &str, console: &str, sc
         std::fs::rename(&tmp, &png_path).map_err(|_| "Couldn't save the bezel.")?;
     }
     // A picture only: no buttons on it (nothing to click), full screen.
-    let cfg = format!(
-        "overlays = 1\noverlay0_overlay = \"{}\"\noverlay0_full_screen = true\noverlay0_normalized = true\noverlay0_descs = 0\n",
+    let mut cfg = format!(
+        "overlays = {}\noverlay0_overlay = \"{}\"\noverlay0_full_screen = true\noverlay0_normalized = true\noverlay0_descs = 0\n",
+        if box_page { 2 } else { 1 },
         png_path.file_name().and_then(|n| n.to_str()).unwrap_or_default()
     );
+    let cfg_path = if box_page {
+        let empty = dir.join("empty.png");
+        if !empty.is_file() {
+            write_png(&empty, &Picture { w: 1, h: 1, rgba: vec![0, 0, 0, 0] })?;
+        }
+        cfg += "overlay1_overlay = \"empty.png\"\noverlay1_full_screen = true\noverlay1_normalized = true\noverlay1_descs = 0\n";
+        dir.join(format!("{stem}-couch.cfg"))
+    } else {
+        cfg_path
+    };
     std::fs::write(&cfg_path, cfg).map_err(|_| "Couldn't save the bezel.")?;
     Ok(Some(cfg_path))
 }
@@ -278,6 +293,30 @@ pub fn hidden_menu_lines(theme: &Path, online: bool) -> Vec<(String, String)> {
         ("menu_show_overlays", "false".into()),
         ("menu_show_rewind", "false".into()),
         ("menu_show_latency", "false".into()),
+        // RetroArch's main menu and tabs are empty too. Its hidden menu still hears the pad while Game Night's
+        // menu shows, so B there goes back to its main menu: nothing may be left to press (e.g. its Netplay
+        // menu, which can stop hosting).
+        ("menu_show_load_disc", "false".into()),
+        ("menu_show_dump_disc", "false".into()),
+        ("menu_show_eject_disc", "false".into()),
+        ("menu_show_online_updater", "false".into()),
+        ("menu_show_core_updater", "false".into()),
+        ("menu_show_legacy_thumbnail_updater", "false".into()),
+        ("menu_show_core_manager_steam", "false".into()),
+        ("menu_show_reboot", "false".into()),
+        ("menu_show_shutdown", "false".into()),
+        ("menu_show_advanced_settings", "false".into()),
+        ("content_show_settings", "false".into()),
+        ("content_show_favorites", "false".into()),
+        ("content_show_images", "false".into()),
+        ("content_show_music", "false".into()),
+        ("content_show_video", "false".into()),
+        ("content_show_netplay", "false".into()),
+        ("content_show_history", "false".into()),
+        ("content_show_playlists", "false".into()),
+        ("content_show_explore", "false".into()),
+        ("content_show_add_entry", "0".into()),
+        ("content_show_contentless_cores", "0".into()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -286,7 +325,7 @@ pub fn hidden_menu_lines(theme: &Path, online: bool) -> Vec<(String, String)> {
         "resume_content", "restart_content", "close_content", "savestate_submenu", "save_load_state", "replay", "take_screenshot",
         "undo_save_load_state", "add_to_favorites", "add_to_playlist", "start_recording", "start_streaming", "set_core_association",
         "reset_core_association", "options", "core_options_flush", "controls", "cheats", "shaders", "save_core_overrides",
-        "save_content_dir_overrides", "save_game_overrides", "information", "download_thumbnails",
+        "save_content_dir_overrides", "save_game_overrides", "information", "download_thumbnails", "game_ai",
     ] {
         v.push((format!("quick_menu_show_{k}"), "false".into()));
     }
@@ -331,6 +370,36 @@ mod tests {
     }
 
     #[test]
+    fn couch_play_bezel_has_an_empty_page_for_the_small_box() {
+        let root = std::env::temp_dir().join(format!("gn-bezel-{}", std::process::id()));
+        let player = root.join("player");
+        let src = player.join("overlays").join("bezels");
+        std::fs::create_dir_all(&src).unwrap();
+        // a 64x36 frame with a hole in the middle
+        let mut rgba = vec![200u8; 64 * 36 * 4];
+        for y in 6..30 {
+            for x in 16..48 {
+                rgba[(y * 64 + x) * 4 + 3] = 0;
+            }
+        }
+        write_png(&src.join("tv-snes.png"), &Picture { w: 64, h: 36, rgba }).unwrap();
+        let cache = root.join("cache");
+        let solo = prepare_bezel(&player, &cache, "tv", "snes", (1920, 1080), true, false).unwrap().unwrap();
+        let couch = prepare_bezel(&player, &cache, "pad", "snes", (1920, 1080), true, true).unwrap().unwrap();
+        let solo_cfg = std::fs::read_to_string(&solo).unwrap();
+        let couch_cfg = std::fs::read_to_string(&couch).unwrap();
+        assert!(solo_cfg.starts_with("overlays = 1\n") && !solo_cfg.contains("overlay1_"));
+        // Bezel C falls back to the TV frame; page 0 = the same fitted bezel, page 1 = the empty picture.
+        assert!(couch_cfg.starts_with("overlays = 2\n"));
+        assert!(couch_cfg.contains("overlay0_overlay = \"tv-snes-1920x1080-tv.png\""));
+        assert!(couch_cfg.contains("overlay1_overlay = \"empty.png\""));
+        let empty = read_png(&cache.join("bezels").join("empty.png")).unwrap();
+        assert_eq!((empty.w, empty.h, empty.rgba[3]), (1, 1, 0));
+        assert_ne!(solo, couch);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn looks_and_menu_settings() {
         let p = Path::new("player");
         assert!(look_preset(p, "royale").unwrap().ends_with("crt-royale.slangp"));
@@ -342,6 +411,10 @@ mod tests {
         assert!(solo.contains(&("menu_pause_libretro".into(), "true".into())));
         let online = hidden_menu_lines(Path::new("t.cfg"), true);
         assert!(online.contains(&("menu_pause_libretro".into(), "false".into())));
+        // Nothing left to press in RetroArch's hidden menu, Netplay menu included.
+        for k in ["content_show_netplay", "content_show_settings", "menu_show_load_content", "quick_menu_show_resume_content"] {
+            assert!(online.contains(&(k.into(), "false".into())), "{k}");
+        }
         assert!(hidden_menu_theme().lines().all(|l| l.ends_with("\"0x00000000\"")));
     }
 }

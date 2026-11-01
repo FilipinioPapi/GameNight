@@ -1,8 +1,10 @@
 //! Game Night's own in-game menu (boards IG2 and IG3, approved 2026-10-31).
 //!
-//! - The Xbox / PS button, or holding both stick clicks (L3 + R3) for 1 second, opens it while a game runs
-//!   (pads.rs spots the press, even while the game is the window in front). Never Start + Select: Windows and
-//!   Steam use it for their own shortcuts.
+//! - Only the Xbox / PS button opens it while a game runs (pads.rs spots the press, even while the game is the
+//!   window in front), and only RESUME (or an item that leaves the game screen) closes it (Jayden, 2026-11-01).
+//!   Never Start + Select: Windows and Steam use it for their own shortcuts.
+//! - RetroArch's own controller profiles also say "Xbox / PS button = RetroArch's menu"; Game Night's copy of them
+//!   leaves that out (tools/player/fetch_player.py), so only Game Night ever flips RetroArch's hidden menu.
 //! - The menu is a see-through window of its own ("menu", menu.html) laid over the game.
 //! - While it's open, RetroArch's own menu is open too, hidden (fully see-through, nothing on it to pick:
 //!   display.rs), which stops your presses reaching the game (measured on GitHub's Windows machine). On your own
@@ -51,10 +53,16 @@ static PAUSE_APPLY: Mutex<()> = Mutex::new(());
 /// When Game Night last sent MENU_TOGGLE.
 static RA_MENU_AT: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// Opens or closes RetroArch's hidden menu (MENU_TOGGLE) only if it isn't that way already.
+/// Opens or closes RetroArch's hidden menu (MENU_TOGGLE) only if it isn't that way already. Two toggles close
+/// together can count as one in RetroArch (a command is a "button press" for one frame), so a toggle within
+/// 0.5 s of the last one waits for the rest of that time first.
 fn ra_menu(port: u16, want: bool) {
     let mut g = lock(&RA_MENU);
     if (*g == Some(port)) != want {
+        let since = lock(&RA_MENU_AT).map(|t| t.elapsed());
+        if let Some(wait) = since.and_then(|e| Duration::from_millis(500).checked_sub(e)) {
+            std::thread::sleep(wait);
+        }
         send_cmd(port, "MENU_TOGGLE");
         *g = want.then_some(port);
         *lock(&RA_MENU_AT) = Some(Instant::now());
@@ -307,9 +315,10 @@ fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.emit("ingame-menu", v);
 }
 
-/// The Xbox / PS button or L3 + R3 (pads.rs). Presses that come in too quickly after each other (one press
-/// seen through two ways of reading the pad) count once.
-pub fn toggle<R: Runtime>(app: &AppHandle<R>, why: &str) {
+/// The Xbox / PS button (pads.rs): opens the menu. While it's open the button does nothing: only RESUME gives
+/// the game back. Presses that come in too quickly after each other (one press seen through two ways of reading
+/// the pad) count once.
+pub fn home_button<R: Runtime>(app: &AppHandle<R>, why: &str) {
     {
         let mut last = lock(&LAST_TOGGLE);
         if last.is_some_and(|t| t.elapsed() < Duration::from_millis(450)) {
@@ -317,15 +326,27 @@ pub fn toggle<R: Runtime>(app: &AppHandle<R>, why: &str) {
         }
         *last = Some(Instant::now());
     }
+    if is_open() {
+        note(app, &format!("{why}: the menu is already open (only Resume closes it)"));
+        return;
+    }
     let app = app.clone();
     let why = why.to_string();
-    std::thread::spawn(move || {
-        if is_open() {
-            close(&app, &why);
-        } else {
-            open(&app, &why);
-        }
-    });
+    std::thread::spawn(move || open(&app, &why));
+}
+
+/// Waits (at most 2 s) until no button is down on any controller, so the press that picked an item in the menu
+/// isn't still held when the game gets the controller back (it reached the game as a stray A: Jayden, 2026-11-01).
+fn wait_buttons_up<R: Runtime>(app: &AppHandle<R>) {
+    let t = Instant::now();
+    while crate::pads::ANY_HELD.load(Ordering::SeqCst) && t.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let waited = t.elapsed();
+    if waited >= Duration::from_millis(20) {
+        let still = crate::pads::ANY_HELD.load(Ordering::SeqCst);
+        note(app, &format!("waited {} ms for the buttons to be let go{}", waited.as_millis(), if still { " (one is still down)" } else { "" }));
+    }
 }
 
 pub fn open<R: Runtime>(app: &AppHandle<R>, why: &str) {
@@ -357,13 +378,6 @@ pub fn close<R: Runtime>(app: &AppHandle<R>, why: &str) {
         return;
     }
     let p = playing(app);
-    if let Some(p) = &p {
-        // A pause for everyone keeps RetroArch's hidden menu open until it's resumed.
-        let port = cmd_port(p);
-        if *lock(&PAUSE_HOLD) != Some(port) {
-            ra_menu(port, false);
-        }
-    }
     // Still paused for everyone: the window stays, showing "Paused by ..." (board IG3).
     let paused = matches!(&p, Some(Playing::Couch(c)) if c.view.get("paused").is_some_and(Value::is_object));
     PAUSE_SHOWN.store(paused, Ordering::SeqCst);
@@ -373,6 +387,14 @@ pub fn close<R: Runtime>(app: &AppHandle<R>, why: &str) {
         }
     }
     emit_state(app);
+    if let Some(p) = &p {
+        // A pause for everyone keeps RetroArch's hidden menu open until it's resumed.
+        let port = cmd_port(p);
+        if *lock(&PAUSE_HOLD) != Some(port) {
+            wait_buttons_up(app);
+            ra_menu(port, false);
+        }
+    }
     // Back to the game: on your own the game's window goes in front again; in Couch Play, Game Night's.
     match &p {
         Some(Playing::Solo(s)) => {

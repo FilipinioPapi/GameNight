@@ -2,7 +2,8 @@
   // Game Night's in-game menu (board IG2) and the "Paused by" screen (board IG3), both approved 2026-10-31.
   // This page lives in a see-through window of its own over the game (src-tauri/src/ingame.rs).
   // Controller first: D-pad or left stick moves, A picks, left / right changes a value, LB / RB change tab,
-  // B goes back to the game (the Xbox / PS button closes it too, on the Windows side). Mouse and keyboard work too.
+  // B cancels a question. Only RESUME gives the game back (Jayden, 2026-11-01): B and the Xbox / PS button don't close
+  // the menu. Mouse and keyboard work too.
   import { onMount, tick } from "svelte";
   import { padTypeFromId, type PadType } from "../lib/pads";
   import { inTauri } from "../lib/settings";
@@ -195,9 +196,7 @@
     if (confirm) {
       confirm = null;
       focusSel();
-      return;
     }
-    void run("resume");
   }
   function switchTab(d: 1 | -1) {
     if (confirm) return;
@@ -385,8 +384,7 @@
     <footer class="guide" aria-label="Controller buttons">
       <span class="gi"><img class="px" src={prompt("a")} alt="A" />{confirm ? "Pick" : tab === 1 ? "Change" : "Pick"}</span>
       {#if !confirm}<span class="gi"><img class="px wide" src={prompt("lb")} alt="LB" /><img class="px wide" src={prompt("rb")} alt="RB" />Tabs</span>{/if}
-      <span class="gi"><img class="px" src={prompt("b")} alt="B" />{confirm ? "Cancel" : "Back to game"}</span>
-      <span class="gi"><span class="gb" aria-hidden="true"></span>{homeName}: close menu</span>
+      {#if confirm}<span class="gi"><img class="px" src={prompt("b")} alt="B" />Cancel</span>{/if}
     </footer>
   </div>
 {:else if info && couch && paused}

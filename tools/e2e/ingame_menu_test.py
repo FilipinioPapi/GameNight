@@ -787,7 +787,10 @@ def part_guide(rom, pad, slot):
       2. Xbox button + MENU_TOGGLE 30 ms later, while the button is still down (Game Night quick);
       3. Xbox button tapped, MENU_TOGGLE 300 ms after it was let go (Game Night slow): two flips = menu closed;
       4. two MENU_TOGGLEs 100 ms apart (the second one lost?);
-      5. A held down when RetroArch's menu closes: does the game get that A (the stray A)?"""
+      5. A held down when RetroArch's menu closes: does the game get that A (the stray A)?
+    Before the fix (run 41328147992, RetroArch's own profiles): 1 yes, 2 open (both count as one press),
+    3 CLOSED (two flips: the lost control), 4 open, 5 yes. With Game Night's profiles (shortcuts left out,
+    fetch_player.py) 1 must be no and 3 open. 5 is RetroArch's way; Game Night waits for the buttons first."""
     say("\n################ part 4: the Xbox button and RetroArch's own hidden menu ################")
     out = {"part": "guide"}
     copy = cl.SnesCopy("guide", 55610, slot)
@@ -828,6 +831,8 @@ def part_guide(rom, pad, slot):
         time.sleep(0.8)
         out["1_xbox_button_alone_opens_retroarch_menu"] = menu_open()
         say(f"  1. Xbox button alone, RetroArch's menu open: {out['1_xbox_button_alone_opens_retroarch_menu']}")
+        if out["1_xbox_button_alone_opens_retroarch_menu"]:
+            fail("guide: the Xbox button still opens RetroArch's own menu (it must be Game Night's only)")
         make_closed("1")
 
         set_pad(pad, [G])
@@ -838,6 +843,8 @@ def part_guide(rom, pad, slot):
         time.sleep(0.8)
         out["2_xbox_button_plus_quick_toggle_open"] = menu_open()
         say(f"  2. Xbox button + MENU_TOGGLE 30 ms later, menu open: {out['2_xbox_button_plus_quick_toggle_open']}")
+        if not out["2_xbox_button_plus_quick_toggle_open"]:
+            fail("guide: the Xbox button + Game Night's toggle left RetroArch's menu closed")
         make_closed("2")
 
         set_pad(pad, [G])
@@ -848,6 +855,8 @@ def part_guide(rom, pad, slot):
         time.sleep(0.8)
         out["3_xbox_button_plus_late_toggle_open"] = menu_open()
         say(f"  3. Xbox button, MENU_TOGGLE 300 ms after letting go, menu open: {out['3_xbox_button_plus_late_toggle_open']}")
+        if not out["3_xbox_button_plus_late_toggle_open"]:
+            fail("guide: a slow Game Night toggle after the Xbox button left RetroArch's menu closed (flipped twice)")
         make_closed("3")
 
         copy.send("MENU_TOGGLE")

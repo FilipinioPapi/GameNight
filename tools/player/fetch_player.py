@@ -10,6 +10,7 @@ three CRT looks (Lottes, Geom, Royale), the animated NES / Super Famicom bezels,
 bezel pictures from libretro/overlay-borders. Needs 7-Zip on the PATH (the GitHub Windows machines have it).
 """
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,37 @@ def slang_files(root: Path, presets: list[str]) -> set[str]:
     return need
 
 
+# A controller profile line that binds one of the game's own buttons or sticks: kept. Every other button line
+# (RetroArch shortcuts) goes, see strip_autoconfig_shortcuts.
+GAME_BIND = re.compile(r"^input_(a|b|x|y|l|r|l2|r2|l3|r3|start|select|up|down|left|right|"
+                       r"[lr]_[xy]_(plus|minus))_(btn|axis|mbtn)(_label)?$")
+SHORTCUT = re.compile(r"^input_\w+_(btn|axis|mbtn)(_label)?$|^input_menu_toggle(_label)?$")
+
+
+def strip_autoconfig_shortcuts(folder: Path) -> int:
+    """RetroArch's controller profiles also bind shortcuts, mostly "Xbox / PS button = RetroArch's menu"
+    (input_menu_toggle_btn, 136 profiles in 1.22.2). Game Night's in-game menu opens RetroArch's hidden menu
+    itself (MENU_TOGGLE), so RetroArch reacting to the same button flipped that menu twice: the game took
+    presses meant for Game Night's menu and then locked up after Resume (Jayden, 2026-11-01). A setting can't
+    turn a profile's shortcut off ("nul" falls back to the profile), so the shortcut lines are left out of
+    Game Night's copy. The game's own buttons and the profile's name, maker and model lines stay."""
+    removed = 0
+    for cfg in folder.rglob("*.cfg"):
+        # Bytes, so every other line stays exactly as RetroArch shipped it (line endings, odd characters).
+        lines = cfg.read_bytes().splitlines(keepends=True)
+        keep = []
+        for line in lines:
+            key = line.split(b"=", 1)[0].strip().decode("ascii", errors="replace")
+            if b"=" in line and SHORTCUT.match(key) and not GAME_BIND.match(key):
+                removed += 1
+                continue
+            keep.append(line)
+        if len(keep) != len(lines):
+            cfg.write_bytes(b"".join(keep))
+    print(f"controller profiles: {removed} RetroArch shortcut lines left out (the Xbox / PS button is Game Night's)")
+    return removed
+
+
 def main(out: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -134,6 +166,7 @@ def main(out: Path) -> None:
         for c in CORES:
             shutil.copy2(src / "cores" / c, out / "cores" / c)
         shutil.copytree(src / "autoconfig", out / "autoconfig")
+        strip_autoconfig_shortcuts(out / "autoconfig")
         shutil.copytree(src / SHADER, out / "shaders" / "zfast_crt")
         shutil.copy2(HERE / "scanlines.slangp", out / "shaders" / "scanlines.slangp")
         for f in sorted(slang_files(src / SLANG, LOOKS)):

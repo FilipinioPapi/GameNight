@@ -92,6 +92,10 @@ Strongly inferred, Unknown.
   holding the release). Waiting on Jayden after merge: update the Game Night container in Unraid (the server now
   times pauses: `paused.ago`, `resumed_ago`). Not built yet: the GAME and CONTROLLER tabs of the menu.
   Details: `docs/HANDOFF_INGAME_MENU.md`.
+- Fixing (thread "Fix game controls after the pause menu", branch `claude/project-thread-rprf9e`): game control lost
+  after the menu in 0.3.7. Cause Confirmed: RetroArch's own controller profiles also open its menu on the Xbox
+  button. Fix: those shortcuts left out, only Xbox / PS opens, only RESUME closes, no stray A. Waiting on CI, then
+  gatekeeper, then Jayden's real-pad test.
 
 ## Hide non-game files from game lists (thread "Hide non-game files from game lists")
 - Built: the Game Night server leaves anything that isn't a game file for its console out of the game

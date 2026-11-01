@@ -192,3 +192,21 @@ the PS button reaches Game Night while a game is in front (needs Jayden's real D
 - Debug aids kept in CI only: WER LocalDumps + cdb as crash debugger (couch-app.yml), cdb attached to each host
   RetroArch (`watch_host_crashes`, now only with `COUCH_TRACE_CRASHES=1`: attaching froze the host's start for
   ~30 s, run 41261525120), summary in the "Where RetroArch crashed" step.
+
+## Game control lost after the menu (thread "Fix game controls after the pause menu", 2026-11-01)
+Jayden (0.3.7, real Xbox pad): after the menu he couldn't control the game, and "Back to lobby" seemed to press A.
+- Confirmed (in-game menu test part "guide", run 41328147992, RetroArch alone): RetroArch's own controller profiles
+  bind the Xbox button to RetroArch's menu (`input_menu_toggle_btn`, 136 profiles; DualSense too). A setting can't
+  undo that (`nul` falls back to the profile). Xbox button + Game Night's MENU_TOGGLE within the press = one flip
+  (why CI passed); MENU_TOGGLE arriving after the button is let go = TWO flips: RetroArch's menu closed while Game
+  Night's was open (presses reach the game: the "stray A"), then Resume opened it (game locked).
+- Confirmed (same run): a button still held when RetroArch's menu closes reaches the game (pad 1 = 8000 while held).
+- Confirmed (same run): two MENU_TOGGLEs 100 ms apart both count (none lost).
+- Fix: `fetch_player.py` leaves every shortcut line out of Game Night's copy of the profiles (the game's own buttons
+  stay). Only the Xbox / PS button opens the menu (L3 + R3 hold removed); while open it does nothing; B only cancels
+  a question; only RESUME (or an item that leaves the game screen) closes it. `close()` hides the menu, then waits
+  (max 2 s) until no button is down (`pads::ANY_HELD`) before giving RetroArch's input back. `ra_menu` keeps
+  toggles 0.5 s apart.
+- Proof: in-game menu test part "guide" (Xbox button no longer opens RetroArch's menu; a late toggle leaves it open),
+  `pad_test.py ingame` and `couch_app_test.py` (B / Xbox don't close, the A held on RESUME never reaches the game,
+  control comes back). Unknown until Jayden tries: his real pad and DualSense (PS button) with Steam open.

@@ -387,8 +387,9 @@ def hold(pad, buttons, seconds):
 
 
 def ingame():
-    """On your own: the Xbox button and L3 + R3 open Game Night's menu over the game, which pauses it; B and the
-    Xbox button close it and the game carries on; the look can change; Quit asks first, then goes back to Game Night."""
+    """On your own: only the Xbox button opens Game Night's menu over the game, which pauses it; only RESUME closes it
+    (B, the Xbox button and L3 + R3 do nothing), and the A that picked RESUME never reaches the game; the look can
+    change; Quit asks first, then goes back to Game Night."""
     import make_netplay_rom
     lib = json.loads((ROOT / "library.json").read_text())
     game_file = ROOT / lib["1"]["console"] / lib["1"]["file"]
@@ -433,25 +434,46 @@ def ingame():
             check(w[1][2] >= 1000 and w[1][3] >= 600, f"the menu covers the game's screen ({w[1]})")
         check(not moving(1.5), "the game is paused while the menu is open")
 
-        say("\n--- B: back to the game")
+        say("\n--- B and the Xbox button don't close it: only RESUME does (Jayden, 2026-11-01)")
         press(pad, B.XUSB_GAMEPAD_B)
-        time.sleep(1.5)
-        screenshot("ingame-2-b-closed")
-        check(not shown(), "B closes the menu")
-        check(moving(), "the game carries on after B")
+        time.sleep(1.0)
+        check(shown(), "B leaves the menu open")
+        press(pad, G)
+        time.sleep(1.0)
+        screenshot("ingame-2-b-and-xbox-stay")
+        check(shown(), "the Xbox button leaves the menu open")
+        check(not moving(1.2), "the game stays paused (B, Xbox button)")
+
+        say("\n--- RESUME, with A held down for 1 s: the game must not get that A")
+        pad.press_button(button=B.XUSB_GAMEPAD_A)
+        pad.update()
+        time.sleep(1.0)
+        p1_held, _, raw = buttons()
+        say(f"    player 1 while A is still held after picking RESUME: {p1_held} ({raw}); menu shown {shown()}")
+        pad.release_button(button=B.XUSB_GAMEPAD_A)
+        pad.update()
+        time.sleep(1.2)
+        screenshot("ingame-2a-resumed")
+        check(p1_held == 0, f"the A that picked RESUME never reaches the game (player 1 {p1_held})")
+        check(not shown(), "RESUME closes the menu")
+        check(moving(), "the game carries on after RESUME")
         check(front_is_game(), f"the game is in front again ({in_front()})")
         say("    pad A in the game after the menu closed (player 1 must see it):")
         p1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_A, "ingame-2b-pad-reaches-game")
         check(p1 == 0x40, f"the pad reaches the game again after the menu (player 1 {p1})")
 
-        say("\n--- hold L3 + R3 for 1.4 s: the menu opens")
+        say("\n--- hold L3 + R3 for 1.4 s: no menu any more (only the Xbox / PS button opens it)")
         hold(pad, [B.XUSB_GAMEPAD_LEFT_THUMB, B.XUSB_GAMEPAD_RIGHT_THUMB], 1.4)
         time.sleep(1)
-        screenshot("ingame-3-l3-r3-open")
-        check(shown(), "holding L3 + R3 opens the menu")
-        check(not moving(1.2), "the game is paused (L3 + R3)")
+        check(not shown(), "holding L3 + R3 doesn't open the menu")
+        check(moving(), "the game keeps running (L3 + R3)")
 
-        say("\n--- RB: MY SCREEN tab, right: the next look")
+        say("\n--- Xbox button, RB: MY SCREEN tab, right: the next look")
+        press(pad, G)
+        time.sleep(1.5)
+        screenshot("ingame-3-open-again")
+        check(shown(), "the Xbox button opens the menu again")
+        check(not moving(1.2), "the game is paused again")
         before = len(ingame_lines())
         press(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
         time.sleep(0.6)
@@ -469,11 +491,13 @@ def ingame():
         press(pad, B.XUSB_GAMEPAD_LEFT_SHOULDER)
         time.sleep(0.5)
 
-        say("\n--- Xbox button again: closes the menu")
-        press(pad, G)
+        say("\n--- RESUME (quick tap) closes it again")
+        press(pad, B.XUSB_GAMEPAD_A)
         time.sleep(1.5)
-        check(not shown(), "the Xbox button closes the menu")
+        check(not shown(), "RESUME closes the menu (second time)")
         check(moving(), "the game carries on")
+        p1, _ = hold_and_read(pad, B.XUSB_GAMEPAD_A, "ingame-4b-pad-reaches-game")
+        check(p1 == 0x40, f"the pad reaches the game after the second RESUME (player 1 {p1})")
 
         say("\n--- Quit to Library: asks first; Keep playing; then Yes")
         press(pad, G)
@@ -514,7 +538,7 @@ def ingame():
         dump_log("\nwhole pads.txt:")
         del pad
         time.sleep(2)
-    return "the in-game menu opened with the Xbox button and L3 + R3, paused the game, changed the look and quit after asking"
+    return "the in-game menu opened only with the Xbox button, closed only with RESUME (no stray A), changed the look and quit after asking"
 
 
 def main():

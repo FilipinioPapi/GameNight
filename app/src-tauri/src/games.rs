@@ -408,7 +408,7 @@ pub fn retroarch_config(p: &ConfigPaths, s: &PlaySettings, sound: usize, pads: &
         // Quitting goes straight back to Game Night.
         ("input_exit_emulator", "escape".into()),
         ("quit_press_twice", "false".into()),
-        // No controller shortcut quits: the Xbox / PS button (or holding L3 + R3) opens Game Night's in-game
+        // No controller shortcut quits: the Xbox / PS button opens Game Night's in-game
         // menu, which has "Quit to Library". Never Start/Select: Windows and Steam use those for their own shortcuts.
         ("input_quit_gamepad_combo", "0".into()),
         // Screen

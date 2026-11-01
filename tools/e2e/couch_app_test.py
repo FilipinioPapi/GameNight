@@ -628,15 +628,37 @@ def main():
         say(f"  with the host's menu open, holding X on pad A and A on pad B: host game {results['menu_open_buttons']['host']}, friend game {results['menu_open_buttons']['friend']}")
         if not a or not b or a[0] != 0 or b[0] != 0 or a[1] != 0x40 or b[1] != 0x40:
             fail(f"menu open: pad A should go nowhere and pad B reach player 2 in both games: {results['menu_open_buttons']}")
-        m1 = friend.ram(0, 3)
-        time.sleep(1)
-        m2 = friend.ram(0, 3)
-        if not m1 or not m2 or frame_of(m2) - frame_of(m1) < 30:
-            fail(f"the game didn't keep going for the friend while the host's menu was open: {m1} {m2}")
+        # "Keeps going", not "full speed": on CI's software graphics the friend runs about 22 frames a second with
+        # the host's menu open, and netplay sometimes holds it a moment right after presses (6 frames in 1 s in run
+        # 41328553281, 18 in run 41323863229 on another branch). So 3 s, and every reading must move on.
+        m = [friend.ram(0, 3)]
+        for _ in range(3):
+            time.sleep(1)
+            m.append(friend.ram(0, 3))
+        fr = [frame_of(x) if x else None for x in m]
+        results["menu_open_friend_frames"] = fr
+        say(f"  friend's frames with the host's menu open, once a second: {fr}")
+        if None in fr or any(b <= a for a, b in zip(fr, fr[1:])) or fr[-1] - fr[0] < 30:
+            fail(f"the game didn't keep going for the friend while the host's menu was open: {fr}")
+        # Only RESUME closes the menu (Jayden, 2026-11-01): B and the Xbox button leave it open.
         tap(pad_a, B.XUSB_GAMEPAD_B)
+        time.sleep(0.8)
+        tap(pad_a, B.XUSB_GAMEPAD_GUIDE)
+        time.sleep(0.8)
+        if not menu_shown(app):
+            fail("B or the Xbox button closed the in-game menu (only RESUME may)")
+        # RESUME with A held 1 s: that A must not reach the game (Jayden's stray A).
+        set_pad(pad_a, [B.XUSB_GAMEPAD_A])
+        time.sleep(1.0)
+        held = host.ram(0x10, 2)
+        set_pad(pad_a, [])
         time.sleep(1)
+        results["resume_held_a"] = held.hex() if held else None
+        say(f"  host game while the A that picked RESUME is still held: {results['resume_held_a']}")
+        if not held or held[0] != 0:
+            fail(f"the A that picked RESUME reached the game: {results['resume_held_a']}")
         if menu_shown(app):
-            fail("B didn't close the in-game menu")
+            fail("RESUME didn't close the in-game menu")
         buttons_check(host, friend, pad_a, "A (after the host's menu closed)", 0)
         say("look: the in-game menu's BACK TO LOBBY")
         menu(app, pad_a, "lobby")
@@ -688,7 +710,9 @@ def main():
         h2 = host.ram(0, 3)
         results["pause_host"]["friend_frames_resumed"] = [frame_of(f1) if f1 else None, frame_of(f2) if f2 else None]
         results["pause_host"]["host_frames_resumed_menu_open"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
-        tap(pad_a, B.XUSB_GAMEPAD_B)
+        tap(pad_a, B.XUSB_GAMEPAD_DPAD_UP)  # to RESUME, the only way out of the menu
+        time.sleep(0.4)
+        tap(pad_a, B.XUSB_GAMEPAD_A)
         time.sleep(1)
         h1 = host.ram(0, 3)
         time.sleep(1)

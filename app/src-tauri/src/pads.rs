@@ -14,6 +14,10 @@ use std::sync::Mutex;
 /// (Jayden's Razer Huntsman does exactly that).
 pub static LAST_USED: Mutex<Option<(u16, u16)>> = Mutex::new(None);
 
+/// Some button is down on a controller that's allowed (any window in front). The in-game menu waits for every
+/// button to be let go before it hands the game back, so the press that picked Resume never reaches the game.
+pub static ANY_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The latest reading, for the menus to ask for (as well as the "pad" event).
 static LATEST: Mutex<Option<PadState>> = Mutex::new(None);
 
@@ -189,12 +193,8 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
         let mut was_focused = None;
         let mut presses_noted = 0;
         let mut tick = 0u32;
-        // The in-game menu: a game is running (checked 5 times a second), and when each pad's L3 + R3 went down.
+        // The in-game menu: a game is running (checked 5 times a second).
         let mut in_game = false;
-        let mut both_since: [Option<std::time::Instant>; 4] = [None; 4];
-        let mut both_fired = [false; 4];
-        let mut gilrs_both: Option<std::time::Instant> = None;
-        let mut gilrs_fired = false;
         let usb = |p: &gilrs::Gamepad| p.vendor_id().zip(p.product_id());
         loop {
             if tick.is_multiple_of(25) {
@@ -251,7 +251,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                         // The PS button opens the in-game menu, whatever window is in front.
                         EventType::ButtonPressed(Button::Mode, _) if in_game && gilrs_allowed(&g.gamepad(ev.id)) => {
                             note(format!("PS / guide button on gilrs {}: in-game menu", ev.id));
-                            crate::ingame::toggle(&app, "PS / guide button");
+                            crate::ingame::home_button(&app, "PS / guide button");
                         }
                         EventType::ButtonPressed(b, _) if focused && gilrs_allowed(&g.gamepad(ev.id)) => {
                             active = Some(Source::Gilrs(ev.id));
@@ -273,6 +273,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
             // Xbox-style pads, straight from their XInput slots. A slot's presses are checked last, so an
             // Xbox pad that gilrs also sees ends up read from its slot.
             let mut slots: [Option<XINPUT_STATE>; 4] = [None; 4];
+            let mut held = false;
             for (i, st) in slots.iter_mut().enumerate() {
                 *st = if present[i] { read_slot(i) } else { None };
                 if st.is_none() {
@@ -287,23 +288,13 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 };
                 let g = s.Gamepad;
                 let now = xinput_buttons(g.wButtons.0, g.bLeftTrigger, g.bRightTrigger);
-                // The in-game menu: the Xbox button, or both stick clicks held for 1 second.
-                if in_game && slot_allowed(i, &slot_ids) {
-                    if now[16] && !prev_slot[i].get(16).copied().unwrap_or(false) {
-                        note(format!("Xbox button on xinput slot {}: in-game menu", i + 1));
-                        crate::ingame::toggle(&app, "Xbox button");
-                    }
-                    if now[10] && now[11] {
-                        let since = *both_since[i].get_or_insert_with(std::time::Instant::now);
-                        if !both_fired[i] && since.elapsed() >= Duration::from_secs(1) {
-                            both_fired[i] = true;
-                            note(format!("L3 + R3 held on xinput slot {}: in-game menu", i + 1));
-                            crate::ingame::toggle(&app, "L3 + R3");
-                        }
-                    } else {
-                        both_since[i] = None;
-                        both_fired[i] = false;
-                    }
+                // The in-game menu: only the Xbox button opens it (Jayden, 2026-11-01).
+                if in_game && slot_allowed(i, &slot_ids) && now[16] && !prev_slot[i].get(16).copied().unwrap_or(false) {
+                    note(format!("Xbox button on xinput slot {}: in-game menu", i + 1));
+                    crate::ingame::home_button(&app, "Xbox button");
+                }
+                if slot_allowed(i, &slot_ids) && now.iter().any(|d| *d) {
+                    held = true;
                 }
                 let pressed = now.iter().enumerate().find(|(b, d)| **d && !prev_slot[i].get(*b).copied().unwrap_or(false));
                 if let Some((b, _)) = pressed {
@@ -324,23 +315,13 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 }
                 prev_slot[i] = now;
             }
-            // L3 + R3 on a pad only gilrs sees (PlayStation pads).
-            if in_game {
-                let held = gilrs.as_ref().is_some_and(|g| {
-                    g.gamepads().any(|(_, p)| p.is_connected() && gilrs_allowed(&p) && p.is_pressed(Button::LeftThumb) && p.is_pressed(Button::RightThumb))
+            // Pads only gilrs sees (PlayStation pads): any button down.
+            if !held {
+                held = gilrs.as_ref().is_some_and(|g| {
+                    g.gamepads().any(|(_, p)| p.is_connected() && gilrs_allowed(&p) && BUTTONS.iter().any(|b| p.is_pressed(*b)))
                 });
-                if held {
-                    let since = *gilrs_both.get_or_insert_with(std::time::Instant::now);
-                    if !gilrs_fired && since.elapsed() >= Duration::from_secs(1) {
-                        gilrs_fired = true;
-                        note("L3 + R3 held on a gilrs pad: in-game menu".into());
-                        crate::ingame::toggle(&app, "L3 + R3");
-                    }
-                } else {
-                    gilrs_both = None;
-                    gilrs_fired = false;
-                }
             }
+            ANY_HELD.store(held, std::sync::atomic::Ordering::SeqCst);
             if active.is_some_and(|a| match a {
                 Source::Slot(i) => !slot_allowed(i, &slot_ids),
                 Source::Gilrs(id) => gilrs.as_ref().is_none_or(|g| !g.gamepad(id).is_connected() || !gilrs_allowed(&g.gamepad(id))),

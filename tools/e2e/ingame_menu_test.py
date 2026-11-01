@@ -23,7 +23,7 @@ Jayden 2026-10-31) work with Game Night's RetroArch? Measured before anything is
     python ingame_menu_test.py <player folder> <work folder> <results folder>
 
 <player folder> is what tools/player/fetch_player.py builds. Nothing is installed or changed outside <work folder>
-and <results folder>, and nothing goes to the internet. INGAME_PARTS picks parts ("looks", "couch"); all by default.
+and <results folder>, and nothing goes to the internet. INGAME_PARTS picks parts ("looks", "couch", "pause", "guide", "port"); all by default.
 """
 import json
 import os
@@ -775,6 +775,121 @@ def part_pause(rom, pads, slots):
     return out
 
 
+# ---------------------------------------------------------------- part 4: the Xbox button and RetroArch's own menu
+
+def part_guide(rom, pad, slot):
+    """Jayden 2026-11-01 (0.3.7, real Xbox pad): after the in-game menu the game no longer took his presses, and
+    "Back to lobby" seemed to press A in the game. RetroArch's own controller files (autoconfig) say "Xbox button =
+    RetroArch's menu", and Game Night opens RetroArch's hidden menu with MENU_TOGGLE too. Measured here on
+    RetroArch alone (no Game Night), with the player folder's controller files and Game Night's menu settings
+    (input_menu_toggle nul, no combo, the menu pauses the game so "paused" = RetroArch's menu is open):
+      1. a plain tap of the Xbox button: does RetroArch's menu open by itself?
+      2. Xbox button + MENU_TOGGLE 30 ms later, while the button is still down (Game Night quick);
+      3. Xbox button tapped, MENU_TOGGLE 300 ms after it was let go (Game Night slow): two flips = menu closed;
+      4. two MENU_TOGGLEs 100 ms apart (the second one lost?);
+      5. A held down when RetroArch's menu closes: does the game get that A (the stray A)?
+    Before the fix (run 41328147992, RetroArch's own profiles): 1 yes, 2 open (both count as one press),
+    3 CLOSED (two flips: the lost control), 4 open, 5 yes. With Game Night's profiles (shortcuts left out,
+    fetch_player.py) 1 must be no and 3 open. 5 is RetroArch's way; Game Night waits for the buttons first."""
+    say("\n################ part 4: the Xbox button and RetroArch's own hidden menu ################")
+    out = {"part": "guide"}
+    copy = cl.SnesCopy("guide", 55610, slot)
+    G = B.XUSB_GAMEPAD_GUIDE
+
+    def running(seconds=0.8):
+        a = copy.frame()
+        time.sleep(seconds)
+        b = copy.frame()
+        return a is not None and b is not None and b > a
+
+    def menu_open():
+        return not running()
+
+    def make_closed(label):
+        # Back to "RetroArch's menu closed" for the next step; MENU_TOGGLE only (never the Xbox button).
+        for _ in range(3):
+            if not menu_open():
+                return True
+            copy.send("MENU_TOGGLE")
+            time.sleep(1.0)
+        fail(f"guide ({label}): couldn't get RetroArch's menu closed again")
+        return False
+
+    if not start_copy(copy, rom, {"menu_pause_libretro": "true", "menu_driver": "rgui"}):
+        return out
+    try:
+        out["autoconfig_lines"] = [l for l in copy.log_text().splitlines() if "utoconf" in l or "XInput" in l][-12:]
+        say("  " + "\n  ".join(out["autoconfig_lines"]))
+        out["runs_at_start"] = running()
+        if not out["runs_at_start"]:
+            fail("guide: the game didn't run at the start")
+            return out
+
+        set_pad(pad, [G])
+        time.sleep(0.2)
+        set_pad(pad, [])
+        time.sleep(0.8)
+        out["1_xbox_button_alone_opens_retroarch_menu"] = menu_open()
+        say(f"  1. Xbox button alone, RetroArch's menu open: {out['1_xbox_button_alone_opens_retroarch_menu']}")
+        if out["1_xbox_button_alone_opens_retroarch_menu"]:
+            fail("guide: the Xbox button still opens RetroArch's own menu (it must be Game Night's only)")
+        make_closed("1")
+
+        set_pad(pad, [G])
+        time.sleep(0.03)
+        copy.send("MENU_TOGGLE")
+        time.sleep(0.2)
+        set_pad(pad, [])
+        time.sleep(0.8)
+        out["2_xbox_button_plus_quick_toggle_open"] = menu_open()
+        say(f"  2. Xbox button + MENU_TOGGLE 30 ms later, menu open: {out['2_xbox_button_plus_quick_toggle_open']}")
+        if not out["2_xbox_button_plus_quick_toggle_open"]:
+            fail("guide: the Xbox button + Game Night's toggle left RetroArch's menu closed")
+        make_closed("2")
+
+        set_pad(pad, [G])
+        time.sleep(0.1)
+        set_pad(pad, [])
+        time.sleep(0.3)
+        copy.send("MENU_TOGGLE")
+        time.sleep(0.8)
+        out["3_xbox_button_plus_late_toggle_open"] = menu_open()
+        say(f"  3. Xbox button, MENU_TOGGLE 300 ms after letting go, menu open: {out['3_xbox_button_plus_late_toggle_open']}")
+        if not out["3_xbox_button_plus_late_toggle_open"]:
+            fail("guide: a slow Game Night toggle after the Xbox button left RetroArch's menu closed (flipped twice)")
+        make_closed("3")
+
+        copy.send("MENU_TOGGLE")
+        time.sleep(0.1)
+        copy.send("MENU_TOGGLE")
+        time.sleep(0.8)
+        out["4_two_toggles_100ms_apart_open"] = menu_open()
+        say(f"  4. two MENU_TOGGLEs 100 ms apart, menu open (second one lost): {out['4_two_toggles_100ms_apart_open']}")
+        make_closed("4")
+
+        copy.send("MENU_TOGGLE")
+        time.sleep(1.0)
+        opened = menu_open()
+        set_pad(pad, [B.XUSB_GAMEPAD_A])
+        time.sleep(0.4)
+        before = copy.ram(0x10, 2)
+        copy.send("MENU_TOGGLE")
+        time.sleep(0.8)
+        held = copy.ram(0x10, 2)
+        set_pad(pad, [])
+        time.sleep(0.5)
+        after = copy.ram(0x10, 2)
+        out["5_held_button"] = {"menu_opened": opened, "pad1_while_menu_open": before.hex() if before else None,
+                                "pad1_after_close_still_held": held.hex() if held else None,
+                                "pad1_after_letting_go": after.hex() if after else None}
+        out["5_game_gets_held_button_after_close"] = bool(held and any(held))
+        say(f"  5. A held while RetroArch's menu closes: {out['5_held_button']}")
+        make_closed("5")
+    finally:
+        stop_copy(copy)
+    return out
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
@@ -806,6 +921,7 @@ def main():
     run_part("looks", lambda: part_looks(rom, pads[1], slots[1]))
     run_part("couch", lambda: Trio("couch", rom, pads, slots).run())
     run_part("pause", lambda: part_pause(rom, pads, slots))
+    run_part("guide", lambda: part_guide(rom, pads[1], slots[1]))
     # Last, because Windows may show a firewall question on screen that would spoil screenshots.
     run_part("port", lambda: {"part": "port", "command_port_on_network": command_port_check(cl.SnesCopy("port", 55600, slots[1]), rom)})
     results["ok"] = not cl.failures

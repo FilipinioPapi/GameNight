@@ -2,7 +2,8 @@
   // Game Night's in-game menu (board IG2) and the "Paused by" screen (board IG3), both approved 2026-10-31.
   // This page lives in a see-through window of its own over the game (src-tauri/src/ingame.rs).
   // Controller first: D-pad or left stick moves, A picks, left / right changes a value, LB / RB change tab,
-  // B goes back to the game (the Xbox / PS button closes it too, on the Windows side). Mouse and keyboard work too.
+  // B cancels a question. Only RESUME gives the game back (Jayden, 2026-11-01): B and the Xbox / PS button don't close
+  // the menu. Mouse and keyboard work too.
   import { onMount, tick } from "svelte";
   import { padTypeFromId, type PadType } from "../lib/pads";
   import { inTauri } from "../lib/settings";
@@ -195,9 +196,7 @@
     if (confirm) {
       confirm = null;
       focusSel();
-      return;
     }
-    void run("resume");
   }
   function switchTab(d: 1 | -1) {
     if (confirm) return;
@@ -215,10 +214,16 @@
   let heldDir: { key: number; since: number; last: number } | null = null;
   function take(p: NativePad) {
     if (typeof p.seq === "number") {
-      if (p.seq < newest) return;
+      if (p.seq <= newest) {
+        latest = latest ?? p;
+        return;
+      }
       newest = p.seq;
     }
     latest = p;
+    // Handled as soon as it arrives, not only on the next animation frame: Windows can slow a window's frames right
+    // down when the game is behind it, and presses were missed that way (a 1 s hold on RESUME, CI run 41329637723).
+    step();
   }
   /** Buttons already down when the menu opens (the press that opened it) aren't new presses. */
   function forgetHeld() {
@@ -234,11 +239,19 @@
     else if (i === 5) switchTab(1);
   }
   let asking = false;
-  async function frame() {
+  function frame() {
     if (inTauri && !asking) {
       asking = true;
       invoke<NativePad>("pad_state").then(take, () => {}).finally(() => (asking = false));
     }
+    step();
+    frames++;
+    requestAnimationFrame(frame);
+  }
+  // How many animation frames the page gets while the menu is open (ingame.txt), to spot a slowed-down window.
+  let frames = 0;
+  /** The latest controller reading: new presses, held D-pad repeat and the stick. */
+  function step() {
     const p = latest;
     if (p?.connected) {
       const t = padTypeFromId(`${p.name} ${p.id}`);
@@ -267,7 +280,15 @@
       if (dir && dir !== stick && stick !== "held") move(dir as "up");
       if (!(stick === "held" && dir)) stick = dir;
     } else if (p) prev = [...p.buttons];
-    requestAnimationFrame(frame);
+  }
+
+  // ---- mouse backup: only a mouse that really moves picks a row. The menu opens over wherever the pointer rests
+  // (the middle of the screen on GitHub's test machine), and Windows/WebView2 then report it "entering" a row
+  // without any movement, which moved the highlight to RESTART GAME (CI runs 41329637723, 41331233845).
+  let lastMouse: [number, number] | null = null;
+  function hover(e: MouseEvent, i: number) {
+    const moved = !!lastMouse && (lastMouse[0] !== e.screenX || lastMouse[1] !== e.screenY);
+    if (moved && !items[i]?.dis) sel = i;
   }
 
   // ---- keyboard backup (once the menu window is in front)
@@ -295,6 +316,8 @@
       toast = "";
       forgetHeld();
       focusSel();
+      const f0 = frames;
+      setTimeout(() => note(`animation frames in the first 3 s open: ${frames - f0}`), 3000);
       note(`showing: ${info?.mode} menu, ${items.length} items on HOME (${items.map((x) => x.name).join(", ")})`);
     }
     wasOpen = o;
@@ -322,7 +345,7 @@
   const homeName = $derived(pad === "dualsense" ? "PS button" : "Xbox button");
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onmousemove={(e) => (lastMouse = [e.screenX, e.screenY])} />
 
 {#if info && open}
   <div class="root" class:solo={!couch}>
@@ -361,7 +384,7 @@
         <span class="glide" style="transform: translateY({s * 62}px)"></span>
         {#each items as x, i (tab + x.name)}
           <button class="it" class:danger={x.danger} class:dis={x.dis} disabled={x.dis}
-            onclick={() => { sel = i; pick(); }} onmouseenter={() => { if (!x.dis) sel = i; }}>
+            onclick={() => { sel = i; pick(); }} onmousemove={(e) => hover(e, i)}>
             <span class="col"><b>{x.name}</b><span class="sub">{x.sub}</span></span>
             {#if x.val}<span class="val"><i>◀</i>{x.val}<i>▶</i></span>{/if}
           </button>
@@ -385,8 +408,7 @@
     <footer class="guide" aria-label="Controller buttons">
       <span class="gi"><img class="px" src={prompt("a")} alt="A" />{confirm ? "Pick" : tab === 1 ? "Change" : "Pick"}</span>
       {#if !confirm}<span class="gi"><img class="px wide" src={prompt("lb")} alt="LB" /><img class="px wide" src={prompt("rb")} alt="RB" />Tabs</span>{/if}
-      <span class="gi"><img class="px" src={prompt("b")} alt="B" />{confirm ? "Cancel" : "Back to game"}</span>
-      <span class="gi"><span class="gb" aria-hidden="true"></span>{homeName}: close menu</span>
+      {#if confirm}<span class="gi"><img class="px" src={prompt("b")} alt="B" />Cancel</span>{/if}
     </footer>
   </div>
 {:else if info && couch && paused}

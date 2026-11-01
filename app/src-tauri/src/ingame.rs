@@ -41,6 +41,10 @@ static LOG: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
 static RA_MENU: Mutex<Option<u16>> = Mutex::new(None);
 /// Couch Play: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
 static PAUSE_HOLD: Mutex<Option<u16>> = Mutex::new(None);
+/// When this PC last resumed from a pause for everyone (friends resume a few seconds after the host).
+static RESUMED_AT: Mutex<Option<Instant>> = Mutex::new(None);
+/// After resuming, the host's relay bridge still allows silence this long, while friends catch up.
+const RESUME_GRACE: Duration = Duration::from_secs(8);
 /// Couch Play: the newest pause / resume wish (command port, paused) and a lock so they apply in turn.
 static PAUSE_WANT: Mutex<Option<(u16, bool)>> = Mutex::new(None);
 static PAUSE_APPLY: Mutex<()> = Mutex::new(());
@@ -61,6 +65,22 @@ fn ra_menu(port: u16, want: bool) {
 /// 41238375842; Refresh's SAVE_STATE, run 41247795649; bezel page flips, runs 41236464953 and 41238376028).
 pub fn ra_menu_settled() -> bool {
     lock(&RA_MENU_AT).is_none_or(|t| t.elapsed() >= Duration::from_millis(500))
+}
+
+/// True while a pause for everyone is wished for or held on this PC, and for a few seconds after resuming.
+/// The relay bridge (relay.rs) doesn't close quiet links then: everyone's game is meant to be silent.
+pub fn paused_for_everyone() -> bool {
+    matches!(*lock(&PAUSE_WANT), Some((_, true)))
+        || lock(&PAUSE_HOLD).is_some()
+        || lock(&RESUMED_AT).is_some_and(|t| t.elapsed() < RESUME_GRACE)
+}
+
+/// A new Couch Play RetroArch started: forget the last game's pause.
+pub fn pause_reset() {
+    let _one_at_a_time = lock(&PAUSE_APPLY);
+    *lock(&PAUSE_WANT) = None;
+    *lock(&PAUSE_HOLD) = None;
+    *lock(&RESUMED_AT) = None;
 }
 
 /// Couch Play, pause for everyone (see couch.rs follow_pause): this PC's RetroArch pauses from inside its
@@ -87,6 +107,7 @@ pub fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, port: u16, want: bool,
             send_cmd(port, "PAUSE_TOGGLE");
             std::thread::sleep(Duration::from_millis(250));
             *lock(&PAUSE_HOLD) = None;
+            *lock(&RESUMED_AT) = Some(Instant::now());
             if !is_open() {
                 ra_menu(port, false);
             }

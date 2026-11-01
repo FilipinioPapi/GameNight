@@ -339,6 +339,8 @@ fn start_ra<R: Runtime>(app: &AppHandle<R>, game: &Game, host: bool, seat: Optio
         l.bezel = launch.bezel;
         l.overlay_page = 0;
         l.bezel_ready = false;
+        // A new RetroArch starts unpaused: no old pause wish carries over (follow_pause applies the lobby's again).
+        crate::ingame::pause_reset();
         l.gen
     };
     log.line(&format!(
@@ -815,7 +817,7 @@ async fn host_steps<R: Runtime>(app: &AppHandle<R>, mut game: Game, open: bool, 
         let bridge = relay::Bridge::start(
             relay_at,
             s.netplay_port,
-            relay::Limits::default(),
+            relay::Limits { hold: crate::ingame::paused_for_everyone, ..relay::Limits::default() },
             rlog,
             // The relay closed the session and the bridge opened a new one: friends need the new id.
             Box::new(move |session: String| {

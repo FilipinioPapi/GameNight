@@ -614,7 +614,14 @@ def main():
         set_pad(pad_a, [B.XUSB_GAMEPAD_X])  # X does nothing in the menu
         set_pad(pad_b, [B.XUSB_GAMEPAD_A])
         time.sleep(1.5)
-        a, b = host.ram(0x10, 2), friend.ram(0x10, 2)
+        # Netplay brings the friend's press to the host's game a little later, and slower with the menu open on
+        # CI's software graphics (host 0000, friend 0040 at 1.5 s in run 41263774912): wait up to 4 s more.
+        t_end = time.time() + 4
+        while True:
+            a, b = host.ram(0x10, 2), friend.ram(0x10, 2)
+            if (a and b and a[1] == 0x40 and b[1] == 0x40) or time.time() > t_end:
+                break
+            time.sleep(0.25)
         set_pad(pad_a, [])
         set_pad(pad_b, [])
         results["menu_open_buttons"] = {"host": a.hex() if a else None, "friend": b.hex() if b else None}
@@ -762,7 +769,9 @@ def main():
             m = host.ram(0, 3)
             frames.append(frame_of(m) if m else None)
             time.sleep(0.5)
-        if None in frames or frames != sorted(frames) or frames[-1] - frames[0] < 150:
+        results["after_drop_frames"] = frames
+        # Every reading moves on (a stall would repeat one), at CI speed (about 30-45 frames a second here).
+        if None in frames or any(b <= a for a, b in zip(frames, frames[1:])) or frames[-1] - frames[0] < 60:
             fail(f"the host's game didn't keep going after the friend dropped: {frames}")
         else:
             say(f"  host kept playing ({frames[-1] - frames[0]} frames in 3.5 s)")

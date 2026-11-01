@@ -282,6 +282,15 @@
     } else if (p) prev = [...p.buttons];
   }
 
+  // ---- mouse backup: only a mouse that really moves picks a row. The menu opens over wherever the pointer rests
+  // (the middle of the screen on GitHub's test machine), and Windows/WebView2 then report it "entering" a row
+  // without any movement, which moved the highlight to RESTART GAME (CI runs 41329637723, 41331233845).
+  let lastMouse: [number, number] | null = null;
+  function hover(e: MouseEvent, i: number) {
+    const moved = !!lastMouse && (lastMouse[0] !== e.screenX || lastMouse[1] !== e.screenY);
+    if (moved && !items[i]?.dis) sel = i;
+  }
+
   // ---- keyboard backup (once the menu window is in front)
   function onKey(e: KeyboardEvent) {
     if (!open) return;
@@ -336,7 +345,7 @@
   const homeName = $derived(pad === "dualsense" ? "PS button" : "Xbox button");
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onmousemove={(e) => (lastMouse = [e.screenX, e.screenY])} />
 
 {#if info && open}
   <div class="root" class:solo={!couch}>
@@ -375,7 +384,7 @@
         <span class="glide" style="transform: translateY({s * 62}px)"></span>
         {#each items as x, i (tab + x.name)}
           <button class="it" class:danger={x.danger} class:dis={x.dis} disabled={x.dis}
-            onclick={() => { sel = i; pick(); }} onmouseenter={() => { if (!x.dis) sel = i; }}>
+            onclick={() => { sel = i; pick(); }} onmousemove={(e) => hover(e, i)}>
             <span class="col"><b>{x.name}</b><span class="sub">{x.sub}</span></span>
             {#if x.val}<span class="val"><i>◀</i>{x.val}<i>▶</i></span>{/if}
           </button>

@@ -256,7 +256,8 @@ def frame_of(mem):
 
 def friend_follows(friend, on, delay):
     """The friend here is a plain RetroArch, so the test does what the friend's Game Night does when the server
-    says paused / resumed (couch.rs follow_pause, on its 3 s heartbeat): pause or resume inside the hidden menu."""
+    says paused / resumed (couch.rs follow_pause): 3.5 s after the change (after the host), pause or resume
+    inside the hidden menu."""
     def go():
         time.sleep(delay)
         first, second = ("MENU_TOGGLE", "PAUSE_TOGGLE") if on else ("PAUSE_TOGGLE", "MENU_TOGGLE")
@@ -642,7 +643,7 @@ def main():
         say("pause for everyone (host's menu), then resume for everyone")
         menu(app, pad_a, "pause")
         paused = wait_until(lambda: friend_api.call("GET", f"/api/lobbies/{code}")[1].get("paused"), 6, 0.5)
-        friend_follows(friend, True, 1.5)
+        friend_follows(friend, True, 3.5)
         time.sleep(0.5)  # the pause reaches the friend's game a few frames later (2 frames in run 41249302754)
         f1 = friend.ram(0, 3)
         time.sleep(2)
@@ -656,8 +657,8 @@ def main():
         # their own hidden menu (run 41251728442).
         time.sleep(20)
         tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
-        friend_follows(friend, False, 1.5)
-        time.sleep(4)
+        friend_follows(friend, False, 3.5)
+        time.sleep(5)
         f1 = friend.ram(0, 3)
         time.sleep(1)
         f2 = friend.ram(0, 3)
@@ -675,7 +676,7 @@ def main():
         status, view = friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": True})
         if status != 200 or not (view or {}).get("paused"):
             fail(f"the friend couldn't pause through the server: {status} {view}")
-        friend_follows(friend, True, 0.5)
+        friend_follows(friend, True, 3.5)
         time.sleep(5)  # the host's app hears it with its next heartbeat (every 3 s)
         h1 = host.ram(0, 3)
         time.sleep(2)
@@ -690,8 +691,8 @@ def main():
             fail("the host's screen didn't show \"Paused by\" while the friend had paused")
         time.sleep(15)  # a long pause
         friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": False})
-        friend_follows(friend, False, 0.5)
-        time.sleep(5)
+        friend_follows(friend, False, 3.5)
+        time.sleep(6)
         h1 = host.ram(0, 3)
         time.sleep(1)
         h2 = host.ram(0, 3)

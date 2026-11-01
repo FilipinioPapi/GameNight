@@ -740,13 +740,11 @@ class PausePair(cl.Couch):
 
 
 def part_pause(rom, pads, slots):
-    """Which way of pausing for everyone lasts? Recorded, never a failure on its own (an experiment)."""
-    say(f"\n################ part 3: pause for everyone held {PAUSE_HOLD_SECONDS} s (experiment) ################")
+    """Pause for everyone the way the app does it, held 30 s, through the relay."""
+    say("\n################ part 3: pause for everyone held 30 s ################")
 
     # Run 41253096478 (20 s pauses): only "everyone's RetroArch pauses inside its own hidden menu" survived; the
-    # host alone (menu open or closed) and RetroArch's own netplay pause (both, either order) all broke. In the
-    # app each PC follows the server's pause on its own heartbeat (every 3 s), so the friend can be seconds
-    # behind or ahead of the host: measure that.
+    # host alone (menu open or closed) and RetroArch's own netplay pause (both, either order) all broke.
     def menu_pause(c):
         c.send("MENU_TOGGLE")
         time.sleep(0.6)
@@ -757,12 +755,6 @@ def part_pause(rom, pads, slots):
         time.sleep(0.6)
         c.send("MENU_TOGGLE")
 
-    def together(f):
-        def go(p1, p2):
-            threading.Thread(target=f, args=(p2,)).start()
-            f(p1)
-        return go
-
     def friend_later(f, gap=2.5):
         def go(p1, p2):
             f(p1)
@@ -770,27 +762,16 @@ def part_pause(rom, pads, slots):
             f(p2)
         return go
 
-    def friend_first(f, gap=2.5):
-        def go(p1, p2):
-            f(p2)
-            time.sleep(gap)
-            f(p1)
-        return go
-
-    variants = [
-        ("both hidden menus, together", together(menu_pause), together(menu_resume), PAUSE_HOLD_SECONDS),
-        ("both hidden menus, friend 2.5 s after the host both times", friend_later(menu_pause), friend_later(menu_resume), PAUSE_HOLD_SECONDS),
-        ("both hidden menus, friend resumes 2.5 s before the host", friend_later(menu_pause), friend_first(menu_resume), PAUSE_HOLD_SECONDS),
-        ("both hidden menus, friend 2.5 s after the host, 90 s pause", friend_later(menu_pause), friend_later(menu_resume), 90),
-    ]
-    out = {"part": "pause", "hold_seconds": PAUSE_HOLD_SECONDS, "variants": {}}
-    for i, (label, pause, resume, hold) in enumerate(variants):
-        before = len(cl.failures)
-        out["variants"][label] = PausePair(f"pause{i}", rom, pads, slots).run_variant(label, pause, resume, hold)
-        # An experiment: what broke is recorded as a finding, not a test failure.
-        out["variants"][label]["findings"] = cl.failures[before:]
-        del cl.failures[before:]
-    say("\npause experiment summary: " + json.dumps({k: v.get("ok") for k, v in out["variants"].items()}))
+    # Run 41254795377: together, friend 2.5 s after the host, and a 90 s pause all came back; the friend
+    # resuming 2.5 s BEFORE the host was dropped. So the app has friends follow 3.5 s after the change, after
+    # the host (couch.rs follow_pause). This checks that way, held 30 s: a failure here is a real failure.
+    out = {"part": "pause", "variants": {}}
+    label = "the app's way: friend 3.5 s after the host both times, 30 s pause"
+    out["variants"][label] = PausePair("pause", rom, pads, slots).run_variant(
+        label, friend_later(menu_pause, 3.5), friend_later(menu_resume, 3.5), 30)
+    if not out["variants"][label].get("ok"):
+        fail(f"pause for everyone, {label}: the game didn't come back for both")
+    say("\npause check: " + json.dumps({k: v.get("ok") for k, v in out["variants"].items()}))
     return out
 
 

@@ -30,6 +30,7 @@ HOLD_SECONDS = 120       # a dropped player's seat is kept for them this long
 HOST_GONE_SECONDS = 30   # host silent this long = lobby closed
 ENDED_KEEP_SECONDS = 60  # members can still see "this lobby ended" for a minute
 PAUSE_MAX_SECONDS = 600  # a "pause for everyone" ends by itself after 10 minutes
+RESUME_NOTE_SECONDS = 15  # how long the lobby says when the last pause ended
 CONSOLES = ("nes", "snes")
 RETROARCH_STATES = ("running", "starting", "stopped")
 
@@ -106,6 +107,7 @@ class Lobby:
     ended_at: float = 0.0
     paused_by: str | None = None  # who paused the game for everyone (in-game menu), if anyone
     paused_at: float = 0.0
+    resumed_at: float | None = None  # when the last pause for everyone ended
 
     def free_seat(self) -> int | None:
         return next((n for n, uid in self.seats.items() if uid is None), None)
@@ -141,7 +143,7 @@ class LobbyBook:
                 who = lobby.members.get(lobby.paused_by)
                 if now - lobby.paused_at >= PAUSE_MAX_SECONDS or not who or who.seat is None \
                         or now - who.last_seen >= DROP_SECONDS:
-                    lobby.paused_by = None
+                    self._unpause(lobby)
                     self._say("%s in %s carries on (the pause ended by itself)", lobby.game["title"], lobby.code)
             for uid, m in list(lobby.members.items()):
                 if uid == lobby.host_id or now - m.last_seen < DROP_SECONDS:
@@ -164,12 +166,16 @@ class LobbyBook:
             if self.where.get(uid) == lobby.code:
                 del self.where[uid]
 
+    def _unpause(self, lobby: Lobby) -> None:
+        lobby.paused_by = None
+        lobby.resumed_at = self.clock()
+
     def _remove(self, lobby: Lobby, uid: str) -> None:
         m = lobby.members.pop(uid, None)
         if not m:
             return
         if lobby.paused_by == uid:
-            lobby.paused_by = None
+            self._unpause(lobby)
         if m.seat is not None and lobby.seats.get(m.seat) == uid:
             lobby.seats[m.seat] = None
         if uid in lobby.watchers:
@@ -254,8 +260,14 @@ class LobbyBook:
             "watchers": [dict(lobby.members[w].user) for w in lobby.watchers],
             "relay": dict(lobby.relay) if lobby.relay and not lobby.ended else None,
             "ended": lobby.ended,
-            "paused": ({"by": dict(lobby.members[lobby.paused_by].user), "seconds": max(0, int(now - lobby.paused_at))}
+            # "ago" / "resumed_ago" (seconds, to 0.01) let every PC pause and resume in the order RetroArch's netplay
+            # survives (the host first, friends after it), each on its own heartbeat (app: couch.rs follow_pause).
+            "paused": ({"by": dict(lobby.members[lobby.paused_by].user), "seconds": max(0, int(now - lobby.paused_at)),
+                        "ago": round(max(0.0, now - lobby.paused_at), 2)}
                        if lobby.paused_by in lobby.members and not lobby.ended else None),
+            "resumed_ago": (round(max(0.0, now - lobby.resumed_at), 2)
+                            if lobby.paused_by is None and lobby.resumed_at is not None
+                            and now - lobby.resumed_at < RESUME_NOTE_SECONDS and not lobby.ended else None),
         })
         return out
 
@@ -350,7 +362,7 @@ class LobbyBook:
             m.seat, m.held_until = None, None
             lobby.watchers.append(uid)
             if lobby.paused_by == uid:
-                lobby.paused_by = None
+                self._unpause(lobby)
         elif as_ == "play" and m.seat is None:
             seat = lobby.free_seat()
             if seat is None:
@@ -376,7 +388,7 @@ class LobbyBook:
         elif lobby.paused_by is not None:
             if uid not in (lobby.paused_by, lobby.host_id):
                 raise LobbyError(403, "Only the one who paused, or the host, can resume.")
-            lobby.paused_by = None
+            self._unpause(lobby)
             self._say("%s resumed %s for everyone", m.user["name"], lobby.game["title"])
         return self.view(lobby, uid)
 

@@ -115,15 +115,21 @@ def test_pause_for_everyone(book):
         book.pause(code, "102", True)          # watchers can't pause
     assert e.value.status == 409
     v = book.pause(code, "101", True)           # a friend pauses
-    assert v["paused"] == {"by": person(1), "seconds": 0}
+    assert v["paused"] == {"by": person(1), "seconds": 0, "ago": 0.0}
     book.clock_.t += 5
     beat(book, code, person(0), person(1), person(2))
     v = book.pause(code, "100", True)           # already paused: stays the friend's
-    assert v["paused"]["by"]["id"] == "101" and v["paused"]["seconds"] == 5
+    assert v["paused"]["by"]["id"] == "101" and v["paused"]["seconds"] == 5 and v["paused"]["ago"] == 5.0
+    assert v["resumed_ago"] is None
     with pytest.raises(lb.LobbyError) as e:
         book.pause(code, "102", False)          # someone else can't resume it
     assert e.value.status == 403
-    assert book.pause(code, "100", False)["paused"] is None   # the host can
+    v = book.pause(code, "100", False)          # the host can
+    assert v["paused"] is None and v["resumed_ago"] == 0.0
+    book.clock_.t += 2.5
+    assert book.view(book.lobbies[code], "101")["resumed_ago"] == 2.5   # each PC knows how long ago it ended
+    book.clock_.t += 13
+    assert book.view(book.lobbies[code], "101")["resumed_ago"] is None  # and after 15 s it's forgotten
     book.pause(code, "101", True)
     assert book.pause(code, "101", False)["paused"] is None   # and so can the one who paused
     # the one who paused drops out, switches to watching or leaves: the game carries on

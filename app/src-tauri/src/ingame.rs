@@ -41,6 +41,9 @@ static LOG: Mutex<Option<(PathBuf, Instant)>> = Mutex::new(None);
 static RA_MENU: Mutex<Option<u16>> = Mutex::new(None);
 /// Couch Play: the game is paused for everyone, holding RetroArch's hidden menu open on this port.
 static PAUSE_HOLD: Mutex<Option<u16>> = Mutex::new(None);
+/// Couch Play: the newest pause / resume wish (command port, paused) and a lock so they apply in turn.
+static PAUSE_WANT: Mutex<Option<(u16, bool)>> = Mutex::new(None);
+static PAUSE_APPLY: Mutex<()> = Mutex::new(());
 /// When Game Night last sent MENU_TOGGLE.
 static RA_MENU_AT: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -62,24 +65,32 @@ pub fn ra_menu_settled() -> bool {
 
 /// Couch Play, pause for everyone (see couch.rs follow_pause): this PC's RetroArch pauses from inside its
 /// hidden menu, which also keeps your buttons out of the paused game.
-pub fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, port: u16, want: bool) {
+pub fn pause_for_everyone<R: Runtime>(app: &AppHandle<R>, port: u16, want: bool, after: Duration) {
+    *lock(&PAUSE_WANT) = Some((port, want));
     let app = app.clone();
     std::thread::spawn(move || {
-        if want {
+        std::thread::sleep(after);
+        let _one_at_a_time = lock(&PAUSE_APPLY);
+        // Changed again while waiting (a short pause): the newest wish wins, and nothing is done twice.
+        if *lock(&PAUSE_WANT) != Some((port, want)) {
+            return;
+        }
+        let applied = *lock(&PAUSE_HOLD) == Some(port);
+        if want && !applied {
             *lock(&PAUSE_HOLD) = Some(port);
             ra_menu(port, true);
             // Commands right after MENU_TOGGLE were sometimes lost (CI run 41238375842).
             std::thread::sleep(Duration::from_millis(250));
             send_cmd(port, "PAUSE_TOGGLE");
-            note(&app, "paused for everyone: hidden menu open, PAUSE_TOGGLE");
-        } else {
+            note(&app, &format!("paused for everyone ({:.1} s after hearing it): hidden menu open, PAUSE_TOGGLE", after.as_secs_f64()));
+        } else if !want && applied {
             send_cmd(port, "PAUSE_TOGGLE");
             std::thread::sleep(Duration::from_millis(250));
             *lock(&PAUSE_HOLD) = None;
             if !is_open() {
                 ra_menu(port, false);
             }
-            note(&app, &format!("resumed for everyone: PAUSE_TOGGLE{}", if is_open() { " (menu still open)" } else { ", hidden menu closed" }));
+            note(&app, &format!("resumed for everyone ({:.1} s after hearing it): PAUSE_TOGGLE{}", after.as_secs_f64(), if is_open() { " (menu still open)" } else { ", hidden menu closed" }));
         }
     });
 }

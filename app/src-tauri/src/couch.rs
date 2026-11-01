@@ -27,6 +27,9 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const CODE_LETTERS: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const BEAT: Duration = Duration::from_secs(3);
+/// Pause for everyone: friends and watchers pause / resume this long after the change (after the host, which
+/// hears it within one BEAT; see follow_pause).
+const FOLLOW_AFTER: Duration = Duration::from_millis(3500);
 /// No answer from the server for this long (while the app is open) = give up on the lobby.
 const GIVE_UP_BEATS: u32 = 20;
 /// A RetroArch that closes this soon after starting is started once more (measured: occasional crash at start).
@@ -565,9 +568,18 @@ fn follow_pause<R: Runtime>(app: &AppHandle<R>, s: &Session, lobby: &Value) {
         l.paused = want;
         l.cmd_port
     };
+    // The order RetroArch's netplay survives (in-game menu test, run 41254795377): the host pauses and resumes
+    // first, everyone else after it (2.5 s later came back fine, even after 90 s; a friend resuming before the
+    // host was dropped). Each PC hears the change on its own heartbeat (within BEAT), so the host acts at once
+    // and the others wait until FOLLOW_AFTER since the change (the server says how long ago it was).
+    let ago = if want { lobby["paused"]["ago"].as_f64() } else { lobby["resumed_ago"].as_f64() };
+    let after = match ago {
+        Some(ago) if !s.host => FOLLOW_AFTER.saturating_sub(Duration::from_secs_f64(ago.max(0.0))),
+        _ => Duration::ZERO,
+    };
     let by = lobby["paused"]["by"]["name"].as_str().unwrap_or("someone");
-    s.log.line(&if want { format!("paused for everyone (asked by {by}): PAUSE_TOGGLE") } else { "resumed for everyone: PAUSE_TOGGLE".to_string() });
-    crate::ingame::pause_for_everyone(app, port, want);
+    s.log.line(&if want { format!("paused for everyone (asked by {by}): PAUSE_TOGGLE in {:.1} s", after.as_secs_f64()) } else { format!("resumed for everyone: PAUSE_TOGGLE in {:.1} s", after.as_secs_f64()) });
+    crate::ingame::pause_for_everyone(app, port, want, after);
 }
 
 /// "Pause for everyone" / "Resume for everyone" from the in-game menu (board IG2), through the server.

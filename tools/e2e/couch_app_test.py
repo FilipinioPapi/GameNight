@@ -653,15 +653,28 @@ def main():
         say(f"  {results['pause_host']}")
         if not paused or not f1 or not f2 or frame_of(f2) != frame_of(f1):
             fail(f"the host's PAUSE FOR EVERYONE didn't pause the friend's game: {results['pause_host']}")
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["host_frames_paused"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
         # A long pause: RetroArch's netplay dropped the friend after about 10 s before everyone paused inside
         # their own hidden menu (run 41251728442).
-        time.sleep(20)
+        time.sleep(19)
         tap(pad_a, B.XUSB_GAMEPAD_A)  # the same spot now says RESUME FOR EVERYONE
         friend_follows(friend, False, 3.5)
-        time.sleep(5)
+        time.sleep(1.5)
+        h1 = host.ram(0, 3)
+        time.sleep(1)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["host_frames_resumed_before_friend"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
+        time.sleep(2.5)
         f1 = friend.ram(0, 3)
+        h1 = host.ram(0, 3)
         time.sleep(1)
         f2 = friend.ram(0, 3)
+        h2 = host.ram(0, 3)
+        results["pause_host"]["friend_frames_resumed"] = [frame_of(f1) if f1 else None, frame_of(f2) if f2 else None]
+        results["pause_host"]["host_frames_resumed_menu_open"] = [frame_of(h1) if h1 else None, frame_of(h2) if h2 else None]
         tap(pad_a, B.XUSB_GAMEPAD_B)
         time.sleep(1)
         h1 = host.ram(0, 3)
@@ -671,6 +684,9 @@ def main():
         say(f"  after resuming: {results['pause_host']}")
         if not f1 or not f2 or frame_of(f2) - frame_of(f1) < 30:
             fail(f"RESUME FOR EVERYONE didn't start the game again for the friend: {f1} {f2}")
+        hm = results["pause_host"]["host_frames_menu_closed"]
+        if None in hm or hm[1] - hm[0] < 30:
+            fail(f"RESUME FOR EVERYONE didn't start the host's game again: {results['pause_host']}")
 
         say("a friend pauses for everyone (through the server); the host's app pauses the game and shows who")
         status, view = friend_api.call("POST", f"/api/lobbies/{code}/pause", {"on": True})

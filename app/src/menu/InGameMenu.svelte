@@ -214,10 +214,16 @@
   let heldDir: { key: number; since: number; last: number } | null = null;
   function take(p: NativePad) {
     if (typeof p.seq === "number") {
-      if (p.seq < newest) return;
+      if (p.seq <= newest) {
+        latest = latest ?? p;
+        return;
+      }
       newest = p.seq;
     }
     latest = p;
+    // Handled as soon as it arrives, not only on the next animation frame: Windows can slow a window's frames right
+    // down when the game is behind it, and presses were missed that way (a 1 s hold on RESUME, CI run 41329637723).
+    step();
   }
   /** Buttons already down when the menu opens (the press that opened it) aren't new presses. */
   function forgetHeld() {
@@ -233,11 +239,19 @@
     else if (i === 5) switchTab(1);
   }
   let asking = false;
-  async function frame() {
+  function frame() {
     if (inTauri && !asking) {
       asking = true;
       invoke<NativePad>("pad_state").then(take, () => {}).finally(() => (asking = false));
     }
+    step();
+    frames++;
+    requestAnimationFrame(frame);
+  }
+  // How many animation frames the page gets while the menu is open (ingame.txt), to spot a slowed-down window.
+  let frames = 0;
+  /** The latest controller reading: new presses, held D-pad repeat and the stick. */
+  function step() {
     const p = latest;
     if (p?.connected) {
       const t = padTypeFromId(`${p.name} ${p.id}`);
@@ -266,7 +280,6 @@
       if (dir && dir !== stick && stick !== "held") move(dir as "up");
       if (!(stick === "held" && dir)) stick = dir;
     } else if (p) prev = [...p.buttons];
-    requestAnimationFrame(frame);
   }
 
   // ---- keyboard backup (once the menu window is in front)
@@ -294,6 +307,8 @@
       toast = "";
       forgetHeld();
       focusSel();
+      const f0 = frames;
+      setTimeout(() => note(`animation frames in the first 3 s open: ${frames - f0}`), 3000);
       note(`showing: ${info?.mode} menu, ${items.length} items on HOME (${items.map((x) => x.name).join(", ")})`);
     }
     wasOpen = o;

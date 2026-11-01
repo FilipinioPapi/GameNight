@@ -29,7 +29,14 @@ pub struct Solo {
     pub console: String,
     pub look: String,
     pub player: PathBuf,
+    /// Rewind (hold LT) and fast forward (hold RT) as this game started. RetroArch can't switch them while a
+    /// game runs, so a change in the menu counts from the next game.
+    pub rewind: bool,
+    pub fast_forward: bool,
 }
+
+/// The menu's rewind / fast forward switches for the next game (start values come from `Solo`).
+static NEXT_GAME: Mutex<Option<(bool, bool)>> = Mutex::new(None);
 
 static SOLO: Mutex<Option<Solo>> = Mutex::new(None);
 static OPEN: AtomicBool = AtomicBool::new(false);
@@ -159,7 +166,8 @@ pub fn free_port() -> u16 {
 
 /// Called by games.rs once a game on your own has started.
 pub fn solo_started<R: Runtime>(app: &AppHandle<R>, game: Solo) {
-    note(app, &format!("game started on its own: {} ({}), process {}, command port {}", game.title, game.console, game.pid, game.cmd_port));
+    note(app, &format!("game started on its own: {} ({}), process {}, command port {}; rewind {}, fast forward {}, volume {}%", game.title, game.console, game.pid, game.cmd_port, game.rewind, game.fast_forward, crate::volume::saved(app)));
+    *lock(&NEXT_GAME) = Some((game.rewind, game.fast_forward));
     *lock(&SOLO) = Some(game);
 }
 
@@ -216,12 +224,22 @@ pub struct MenuInfo {
     pub fullscreen: bool,
     /// The lobby as the lobby screen sees it (Couch Play only).
     pub lobby: Value,
+    /// Game sound on this PC, 10 to 100 (%).
+    pub volume: u8,
+    /// On your own: rewind and fast forward now, and as switched in the menu for the next game.
+    pub rewind: bool,
+    pub fast_forward: bool,
+    pub rewind_next: bool,
+    pub fast_forward_next: bool,
 }
 
 fn info<R: Runtime>(app: &AppHandle<R>) -> Option<MenuInfo> {
     let open = is_open();
+    let volume = crate::volume::saved(app);
     Some(match playing(app)? {
-        Playing::Solo(s) => MenuInfo {
+        Playing::Solo(s) => {
+            let (rewind_next, fast_forward_next) = lock(&NEXT_GAME).unwrap_or((s.rewind, s.fast_forward));
+            MenuInfo {
             open,
             mode: "solo",
             title: s.title,
@@ -231,7 +249,13 @@ fn info<R: Runtime>(app: &AppHandle<R>) -> Option<MenuInfo> {
             watching: false,
             fullscreen: true,
             lobby: Value::Null,
-        },
+            volume,
+            rewind: s.rewind,
+            fast_forward: s.fast_forward,
+            rewind_next,
+            fast_forward_next,
+        }
+        }
         Playing::Couch(c) => MenuInfo {
             open,
             mode: "couch",
@@ -242,6 +266,11 @@ fn info<R: Runtime>(app: &AppHandle<R>) -> Option<MenuInfo> {
             watching: c.watching,
             fullscreen: c.fullscreen,
             lobby: c.view,
+            volume,
+            rewind: false,
+            fast_forward: false,
+            rewind_next: false,
+            fast_forward_next: false,
         },
     })
 }
@@ -362,6 +391,13 @@ pub fn close<R: Runtime>(app: &AppHandle<R>, why: &str) {
         let port = cmd_port(p);
         if *lock(&PAUSE_HOLD) != Some(port) {
             ra_menu(port, false);
+            // A volume change from the GAME tab: RetroArch takes it once its hidden menu is closed and the game runs.
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(700));
+                let vol = crate::volume::saved(&app2);
+                crate::volume::apply(&app2, port, vol);
+            });
         }
     }
     // Still paused for everyone: the window stays, showing "Paused by ..." (board IG3).
@@ -488,6 +524,49 @@ pub async fn ingame_do<R: Runtime>(app: AppHandle<R>, action: String, value: Opt
                 }
                 Playing::Couch(_) => crate::couch::set_menu_look(&app, &look),
             }
+        }
+        // ---- GAME tab (board IG4)
+        ("volume", _) => {
+            let now = crate::volume::saved(&app) as i32;
+            let next = match value.as_deref() {
+                Some("up") => now + crate::volume::STEP as i32,
+                Some("down") => now - crate::volume::STEP as i32,
+                _ => return Err("That volume isn't there.".into()),
+            };
+            let next = crate::volume::tidy(next);
+            crate::volume::save(&app, next);
+            // Couch Play: the game keeps running behind the menu, so it changes straight away. On your own the game
+            // is paused (RetroArch ignores volume steps then): it changes when the menu closes.
+            if matches!(p, Playing::Couch(_)) {
+                crate::volume::apply(&app, port, next);
+            }
+        }
+        ("rewind" | "fast_forward", Playing::Solo(s)) => {
+            let on = match value.as_deref() {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return Err("That can't be done here.".into()),
+            };
+            let (mut r, mut f) = lock(&NEXT_GAME).unwrap_or((s.rewind, s.fast_forward));
+            if action == "rewind" {
+                r = on;
+            } else {
+                f = on;
+            }
+            *lock(&NEXT_GAME) = Some((r, f));
+            let key = if action == "rewind" { "rewind" } else { "fastForward" };
+            let _ = app.emit("ingame-console-setting", json!({ "console": s.console, key: on }));
+        }
+        ("reset", Playing::Couch(c)) => {
+            if !c.host {
+                return Err("Only the host can reset the game.".into());
+            }
+            close(&app, "Reset game");
+            // RESET right after RetroArch's hidden menu closes was sometimes lost (see Refresh): wait a moment.
+            // The host's reset reaches everyone's game (RetroArch netplay, NETPLAY_CMD_RESET).
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            send_cmd(port, "RESET");
+            note(&app, "RESET sent (host): the game restarts for everyone");
         }
         // ---- on your own
         ("save_state", Playing::Solo(_)) => send_cmd(port, "SAVE_STATE"),

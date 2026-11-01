@@ -93,6 +93,16 @@ Strongly inferred, Unknown.
   times pauses: `paused.ago`, `resumed_ago`). Not built yet: the GAME and CONTROLLER tabs of the menu.
   Details: `docs/HANDOFF_INGAME_MENU.md`.
 
+## In-game menu GAME and CONTROLLER tabs (thread "Build the in-game menu GAME and CONTROLLER tabs")
+- Mockup IG4 (main-menu canvas, next to IG3) shows the tabs as buildable now; Jayden's pick asked 2026-11-01.
+- Built (branch claude/project-thread-jqhe6j): GAME tab: volume (saved on this PC, volume.rs; Couch Play changes it
+  straight away, solo when the menu closes), rewind on hold LT and fast forward on hold RT in solo games (on/off
+  counts from the next game), host's RESET GAME in Couch Play. CONTROLLER tab: your controller and player.
+- Found (Confirmed, code read): the button layouts in Settings › Controllers are saved but never passed to games.
+- To prove on GitHub's Windows machine: pad_test.py ingame (volume in RetroArch's log, LT rewinds, RT speeds up,
+  rewind switch saved) and couch_app_test.py (MY VOLUME live, RESET for both, in sync after).
+  Unknown until Jayden's real pad: LT/RT on the "dinput" reader (+2/-2) and on a DualSense (buttons 6/7).
+
 ## Hide non-game files from game lists (thread "Hide non-game files from game lists")
 - Built: the Game Night server leaves anything that isn't a game file for its console out of the game
   lists (Windows' desktop.ini, Thumbs.db, readmes, pictures, save files). Game file types per console

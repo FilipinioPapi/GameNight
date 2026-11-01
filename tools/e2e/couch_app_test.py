@@ -479,6 +479,55 @@ def seat(lobby, n):
 
 # ---------------------------------------------------------------- main
 
+def app_ra_log():
+    log = Path(os.environ.get("LOCALAPPDATA", "")) / "xyz.jjsnas.gamenight" / "player" / "logs" / "retroarch.log"
+    return log.read_text(errors="replace") if log.exists() else ""
+
+
+def game_tab(app, pad, host, friend):
+    """The host's GAME tab (board IG4): MY VOLUME changes straight away (the game keeps running), RESET GAME asks
+    first and restarts the game for everyone, in sync (checked by the random-press round that follows)."""
+    say("GAME tab: MY VOLUME 100% -> 90% while the menu is open")
+    window_watch.focus_app(app.pid)
+    if not menu(app, pad):
+        return
+    for _ in range(2):
+        tap(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        time.sleep(0.4)
+    tap(pad, B.XUSB_GAMEPAD_DPAD_LEFT)
+    got = wait_until(lambda: any("volume: -1.0 dB" in l for l in app_ra_log().splitlines()) or None, 6, 0.25)
+    screenshot("2h-game-tab-volume")
+    vols = [l.strip() for l in app_ra_log().splitlines() if "volume: " in l]
+    results["couch_volume"] = vols[-3:]
+    say(f"  RetroArch's volume lines: {vols[-3:]}")
+    if not got:
+        fail(f"MY VOLUME didn't change the host's game volume straight away: {vols[-3:]}")
+    say("GAME tab: RESET GAME (asks first), the game restarts for both")
+    h = host.ram(0, 3)
+    f = friend.ram(0, 3)
+    before = [frame_of(h) if h else None, frame_of(f) if f else None]
+    tap(pad, B.XUSB_GAMEPAD_DPAD_DOWN)
+    time.sleep(0.3)
+    tap(pad, B.XUSB_GAMEPAD_A)
+    time.sleep(0.8)
+    screenshot("2i-reset-asks")
+    if not menu_shown(app):
+        fail("RESET GAME closed the menu without asking first")
+    tap(pad, B.XUSB_GAMEPAD_DPAD_LEFT)  # to "YES, RESET" ("KEEP PLAYING" is picked first)
+    time.sleep(0.3)
+    tap(pad, B.XUSB_GAMEPAD_A)
+    time.sleep(3)
+    h = host.ram(0, 3)
+    f = friend.ram(0, 3)
+    after = [frame_of(h) if h else None, frame_of(f) if f else None]
+    results["reset"] = {"before": before, "after_3s": after}
+    say(f"  frames before {before}, 3 s after RESET {after}")
+    if None in before or None in after or after[0] >= before[0] or after[1] >= before[1] or after[0] > 600:
+        fail(f"RESET GAME didn't restart the game for both: {results['reset']}")
+    if menu_shown(app):
+        fail("the menu stayed open after RESET GAME")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
@@ -733,6 +782,8 @@ def main():
         say("right player check")
         buttons_check(host, friend, pad_a, "A", 0)
         buttons_check(host, friend, pad_b, "B", 1)
+
+        game_tab(app, pad_a, host, friend)
 
         say(f"{MASH_SECONDS} s of random presses on both pads")
         results["sync"] = sync_round(host, friend, pad_a, pad_b, MASH_SECONDS, 7)

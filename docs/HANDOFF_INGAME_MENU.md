@@ -192,3 +192,19 @@ the PS button reaches Game Night while a game is in front (needs Jayden's real D
 - Debug aids kept in CI only: WER LocalDumps + cdb as crash debugger (couch-app.yml), cdb attached to each host
   RetroArch (`watch_host_crashes`, now only with `COUCH_TRACE_CRASHES=1`: attaching froze the host's start for
   ~30 s, run 41261525120), summary in the "Where RetroArch crashed" step.
+
+## GAME and CONTROLLER tabs (thread "Build the in-game menu GAME and CONTROLLER tabs", branch claude/project-thread-jqhe6j)
+Mockup IG4 (main-menu canvas) = the approved IG2 tabs minus what can't change while a game runs: game options (never
+settled which), swap players / hand pad to a friend (needs a restart), and rewind / fast forward switches count from
+the next game (RetroArch 1.22.2 has no command to switch them live). Jayden asked to pick 2026-11-01.
+- Volume: `volume.rs`. player/volume.txt (10-100%), `audio_volume` dB at start, then VOLUME_UP / VOLUME_DOWN (0.5 dB
+  each, command.c). Read in code: RetroArch skips its volume keys while its hidden menu is open and its window isn't
+  focused (runloop.c), so on your own it's applied ~0.7 s after the menu closes; Couch Play (pause_nonactive off) at
+  once. Game Night reads RetroArch's log ("Audio volume: -2.0 dB.") to know where it is and redoes lost steps.
+- Rewind / fast forward: hold LT / RT (`games::triggers`): xinput axes +4 / +5; dinput Xbox +2 / -2 (autoconfig
+  "Controller (Xbox One For Windows)"); Sony pads buttons 6 / 7 (autoconfig "Wireless Controller"). Off in Couch Play.
+  The menu's switch sends "ingame-console-setting" to the main window, which saves the console's setting.
+- Reset (Couch Play, host only, asks first): RESET ~0.6 s after the menu closes; RetroArch netplay sends the host's
+  reset to everyone (NETPLAY_CMD_RESET, netplay_frontend.c). Friends can't (RetroArch refuses a client's reset).
+- Found (Confirmed, code read): Settings › Controllers layouts are saved (settings.ts `mappings`/`presets`) but
+  `play_game` only gets the console's settings, so games use RetroArch's standard layout.

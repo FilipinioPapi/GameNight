@@ -386,6 +386,123 @@ def hold(pad, buttons, seconds):
     time.sleep(0.3)
 
 
+def ra_log():
+    log = CACHE / "player" / "logs" / "retroarch.log"
+    return log.read_text(errors="replace") if log.exists() else ""
+
+
+def last_volume():
+    """RetroArch's newest "Audio volume: X dB" log line, as a number (None before any change)."""
+    for line in reversed(ra_log().splitlines()):
+        if "volume: " in line:
+            try:
+                return float(line.split("volume: ")[1].split(" dB")[0])
+            except ValueError:
+                return None
+    return None
+
+
+def trigger_hold(pad, left, seconds):
+    """Holds LT (left) or RT and returns (frame before, frame after)."""
+    a = frame()
+    (pad.left_trigger if left else pad.right_trigger)(value=255)
+    pad.update()
+    time.sleep(seconds)
+    b = frame()
+    (pad.left_trigger if left else pad.right_trigger)(value=0)
+    pad.update()
+    time.sleep(0.4)
+    return a, b
+
+
+def game_tab(app, pad, check, shown):
+    """GAME and CONTROLLER tabs (board IG4): volume (changes when the menu closes on your own), hold LT to rewind,
+    hold RT to fast forward, switching rewind off is saved for the console's next game."""
+    say("\n--- GAME tab: volume 100% -> 80%, then back to the game")
+    before = len(ingame_lines())
+    press(pad, B.XUSB_GAMEPAD_GUIDE)
+    time.sleep(1.5)
+    check(shown(), "the menu opens for the GAME tab")
+    for _ in range(2):
+        press(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        time.sleep(0.4)
+    press(pad, B.XUSB_GAMEPAD_DPAD_LEFT)
+    time.sleep(0.4)
+    press(pad, B.XUSB_GAMEPAD_DPAD_LEFT)
+    time.sleep(0.8)
+    screenshot("ingame-7-game-tab-volume")
+    press(pad, B.XUSB_GAMEPAD_B)
+    ok = False
+    for _ in range(20):
+        time.sleep(0.5)
+        if last_volume() == -2.0:
+            ok = True
+            break
+    new = ingame_lines()[before:]
+    for line in new:
+        say(f"    | {line}")
+    say(f"    RetroArch's volume lines: " + " / ".join(l.strip() for l in ra_log().splitlines() if "volume: " in l)[-400:])
+    check(sum("action volume down" in l for l in new) == 2, "left twice on VOLUME asks for 2 steps down")
+    check(ok, f"the game's volume is 80% (-2.0 dB) once the menu closed (RetroArch's log says {last_volume()})")
+    vol = Path(os.environ["APPDATA"]) / "xyz.jjsnas.gamenight" / "player" / "volume.txt"
+    say(f"    volume.txt: {vol.read_text().strip() if vol.exists() else '(none)'}")
+    check(vol.exists() and vol.read_text().strip() == "80", "80% is saved for the next game")
+    check(moving(), "the game carries on after the GAME tab")
+
+    say("\n--- hold RT: fast forward")
+    a, b = trigger_hold(pad, False, 2.0)
+    time.sleep(0.5)
+    c = frame()
+    time.sleep(2.0)
+    d = frame()
+    say(f"    frames: RT held 2 s {a} -> {b}; nothing held 2 s {c} -> {d}")
+    if None not in (a, b, c, d):
+        check((b - a) > 1.3 * (d - c), f"holding RT runs the game faster ({b - a} frames vs {d - c} normally)")
+    else:
+        check(False, "the test game's frame number could be read for fast forward")
+
+    say("\n--- hold LT: rewind")
+    a, b = trigger_hold(pad, True, 1.5)
+    say(f"    frames: LT held 1.5 s {a} -> {b}")
+    check(None not in (a, b) and b < a, f"holding LT rewinds the game (frame {a} -> {b})")
+    check(moving(), "the game carries on after rewinding")
+
+    say("\n--- GAME tab: rewind off for the next game, CONTROLLER tab shows the pad")
+    before = len(ingame_lines())
+    press(pad, B.XUSB_GAMEPAD_GUIDE)
+    time.sleep(1.5)
+    for _ in range(2):
+        press(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+        time.sleep(0.4)
+    press(pad, B.XUSB_GAMEPAD_DPAD_DOWN)
+    time.sleep(0.4)
+    press(pad, B.XUSB_GAMEPAD_A)
+    time.sleep(1.0)
+    screenshot("ingame-8-game-tab-rewind-off")
+    press(pad, B.XUSB_GAMEPAD_RIGHT_SHOULDER)
+    time.sleep(0.8)
+    screenshot("ingame-9-controller-tab")
+    new = ingame_lines()[before:]
+    for line in new:
+        say(f"    | {line}")
+    check(any("action rewind off" in l for l in new), "A on REWIND switches it off")
+    store = Path(os.environ["APPDATA"]) / "xyz.jjsnas.gamenight" / "settings.json"
+    saved = None
+    for _ in range(10):
+        try:
+            saved = json.loads(store.read_text())["settings"]["consoles"]["nes"]["rewind"]
+            break
+        except Exception:
+            time.sleep(0.5)
+    say(f"    settings.json nes rewind: {saved}")
+    check(saved is False, "rewind off is saved in Settings for the console's next game")
+    press(pad, B.XUSB_GAMEPAD_B)
+    time.sleep(1.5)
+    check(not shown(), "B closes the menu")
+    a, b = trigger_hold(pad, True, 1.0)
+    check(None not in (a, b) and b < a, f"rewind keeps working in this game (the switch counts from the next game): {a} -> {b}")
+
+
 def ingame():
     """On your own: the Xbox button and L3 + R3 open Game Night's menu over the game, which pauses it; B and the
     Xbox button close it and the game carries on; the look can change; Quit asks first, then goes back to Game Night."""
@@ -474,6 +591,8 @@ def ingame():
         time.sleep(1.5)
         check(not shown(), "the Xbox button closes the menu")
         check(moving(), "the game carries on")
+
+        game_tab(app, pad, check, shown)
 
         say("\n--- Quit to Library: asks first; Keep playing; then Yes")
         press(pad, G)

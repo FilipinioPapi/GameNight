@@ -185,7 +185,7 @@ def test_rejoin_gets_seat_back(book):
     book.join(code, person(2), "play")
     for _ in range(11):     # 55 s: person 1 is silent, the others keep beating
         book.clock_.t += 5
-        beat(book, code, person(0))
+        beat(book, code, person(0), person(2))
     assert book.lookup(code, "100")["seats"][1]["status"] == "held"
     book.join(code, person(3), "play")        # takes seat 4, not the held seat 2
     v = book.join(code, person(1), "play")

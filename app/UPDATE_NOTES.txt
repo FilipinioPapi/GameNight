@@ -1,9 +1,12 @@
-# 0.3.6
-Couch Play: the game now sits inside Game Night's window, right in the lobby's box. No more flicker, and it no longer covers the seat list
-Game Night opens full screen, like a console. Press F11 to switch to a window and back
+# 0.3.7
 New: Game Night's own game menu. Press the Xbox or PS button in any game (or hold both sticks in, L3 + R3)
 On your own it pauses the game: resume, save, load, restart, change the look, or quit to the Library (it asks first)
 In Couch Play your friends keep playing while your menu is open: back to the lobby, full screen, refresh game, play or watch, leave
 Pause for everyone: anyone playing can pause the game for the whole lobby, and everyone sees who paused it
 Refresh game: if your controller stops working in a game, it saves your spot, restarts the game and puts you right back where you were
 RetroArch's own menus are gone for good: everything is in Game Night's menu. No controller button combo quits a game any more (Esc still does)
+Games now start cleanly, with none of the emulator's pop-up messages (loading, controller connected, player joined)
+New looks for your games: three lighter old-TV (CRT) looks and four smoothing looks, chosen per console in Settings. Each PC uses its own look, so friends never go out of sync
+A bezel around your games: a dark TV frame by default, or a console photo or a controller that lights up (Settings, per console), with sharp whole-pixel scaling. Bezels show in Couch Play too
+Library: every cover shows whole, in its real box shape per console
+Safer online: Game Night now stops other computers on your network from reaching the game player. Windows asks for permission once while installing this update

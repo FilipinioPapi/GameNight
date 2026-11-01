@@ -341,6 +341,10 @@ def watch_host_crashes(stop):
     """CI only: Windows saved no crash dump for the host's RetroArch (runs 41243488319, 41245117334), so attach
     Microsoft's debugger (cdb) to each host RetroArch the app starts. On a crash it writes the call stack to
     host-cdb-<process>.txt in the results."""
+    # Off unless asked: attaching stops the host's RetroArch while cdb starts up (run 41261525120: the game
+    # window was placed 32 s late and the friend's join timed out). The crash it found (GET_STATUS) is fixed.
+    if os.environ.get("COUCH_TRACE_CRASHES") != "1":
+        return
     if not CDB.exists():
         say("  (no cdb on this machine: the host's crashes won't be traced)")
         return

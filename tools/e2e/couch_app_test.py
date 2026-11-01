@@ -205,6 +205,8 @@ class Friend(Ask):
             "network_cmd_enable": "true", "network_cmd_port": str(self.cmd_port),
             "netplay_public_announce": "false", "netplay_nat_traversal": "false", "netplay_use_mitm_server": "false",
             "netplay_check_frames": "0", "netplay_nickname": "Friend", "netplay_allow_pausing": "true",
+            # Like the friend's Game Night (display.rs): the hidden menu never pauses the game by itself.
+            "menu_pause_libretro": "false",
             f"netplay_request_device_p{seat}": "true",
             "video_driver": "d3d11", "video_fullscreen": "false", "video_scale": "2",
             "video_window_save_positions": "true", "video_windowed_position_x": "1600",

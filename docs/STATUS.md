@@ -87,8 +87,10 @@ Strongly inferred, Unknown.
   firewall rule that keeps other PCs off Game Night's RetroArch (Jayden's choice; proven in firewall.yml).
 - Built (branch claude/project-thread-rhmybd): the in-game menu (Xbox / PS button or hold L3 + R3), RetroArch's own
   quick menu hidden, "Back to lobby" in the menu, friends' "Pause for everyone" through the server, bezels in Couch
-  Play. Being proven on GitHub's Windows machine. Ships in the same release as the lobby and bezel work (Jayden is
-  holding the release). Waiting on Jayden after merge: update the Game Night container in Unraid.
+  Play. Proven on GitHub's Windows machine (menu, Back to lobby, Refresh, bezel, host's and friend's pause for
+  everyone held 15-20 s and back in sync). Ships in the same release as the lobby and bezel work (Jayden is
+  holding the release). Waiting on Jayden after merge: update the Game Night container in Unraid (the server now
+  times pauses: `paused.ago`, `resumed_ago`). Not built yet: the GAME and CONTROLLER tabs of the menu.
   Details: `docs/HANDOFF_INGAME_MENU.md`.
 
 ## Hide non-game files from game lists (thread "Hide non-game files from game lists")

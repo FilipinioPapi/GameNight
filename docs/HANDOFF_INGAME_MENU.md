@@ -169,10 +169,26 @@ the PS button reaches Game Night while a game is in front (needs Jayden's real D
 - Confirmed: a command sent right after MENU_TOGGLE can be lost (Quit, Refresh's SAVE_STATE, bezel page flips).
   `ingame::ra_menu` tracks RetroArch's hidden menu per command port; `ra_menu_settled()` is false for 0.5 s after a
   toggle; Refresh waits and re-sends SAVE_STATE once; bezel flips wait and are re-checked every second.
-- Confirmed: the host pausing with its hidden menu CLOSED left netplay stuck and out of sync after resuming (run
-  41247795649); with the menu open it came back fine even after 8 s (run 41249302754). So the host always pauses for
-  everyone from inside its hidden menu (`ingame::pause_for_everyone`, `PAUSE_HOLD` keeps that menu open until resume).
+- Confirmed (in-game menu test part 3, 20 s pauses through the nyc relay, run 41253096478): RetroArch 1.22.2 netplay
+  only survives a long pause when EVERY copy pauses inside its own hidden menu (MENU_TOGGLE then PAUSE_TOGGLE), so
+  netplay never sees a pause. The host alone (menu open: friend dropped after ~10 s; menu closed: stuck after resume)
+  and RetroArch's own netplay pause (both copies, either order) all broke. Source: netplay_frontend.c stall limits
+  (host 5 s, client 10 s) and runloop.c (in the menu, PAUSE isn't passed to netplay).
+- Confirmed (run 41254795377): friends 2.5 s after the host both times came back, even after 90 s; a friend resuming
+  2.5 s BEFORE the host was dropped. So: every PC follows the server's pause (`couch.rs follow_pause`), the host at
+  once, everyone else at `FOLLOW_AFTER` (3.5 s) after the change; the server's lobby view gives `paused.ago` and
+  `resumed_ago` (needs the server update). `ingame::pause_for_everyone` applies the newest wish once, in turn;
+  `PAUSE_HOLD` keeps the hidden menu open until resume. With the OLD server (no `ago`), everyone acts at once
+  (works only when friends happen to hear it after the host).
 - Measured: with the host's menu open the game runs slower on GitHub's machine (software graphics): about 50 to 36
   frames a second in full screen. Unknown on a real graphics card; check with Jayden's PC.
+- Confirmed (Couch Play app test run 41256780032): Game Night's own relay bridge (`relay.rs`) closed the friend's
+  link during a pause (silent for 7 s). It now skips its silence rules while this PC holds a pause for everyone and
+  for 8 s after resuming (`Limits::hold` = `ingame::paused_for_everyone`); a new RetroArch forgets old pauses
+  (`ingame::pause_reset`).
+- Confirmed (run 41263774912): host pause and friend pause, 20 s and 15 s, both come back with the right players
+  and in sync. The test's pretend friend must use `menu_pause_libretro = false` like a real friend's Game Night
+  (with RetroArch's default the host stayed frozen after resuming, run 41262669675).
 - Debug aids kept in CI only: WER LocalDumps + cdb as crash debugger (couch-app.yml), cdb attached to each host
-  RetroArch (`watch_host_crashes`), summary in the "Where RetroArch crashed" step.
+  RetroArch (`watch_host_crashes`, now only with `COUCH_TRACE_CRASHES=1`: attaching froze the host's start for
+  ~30 s, run 41261525120), summary in the "Where RetroArch crashed" step.

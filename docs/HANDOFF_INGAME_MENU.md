@@ -210,3 +210,9 @@ Jayden (0.3.7, real Xbox pad): after the menu he couldn't control the game, and 
 - Proof: in-game menu test part "guide" (Xbox button no longer opens RetroArch's menu; a late toggle leaves it open),
   `pad_test.py ingame` and `couch_app_test.py` (B / Xbox don't close, the A held on RESUME never reaches the game,
   control comes back). Unknown until Jayden tries: his real pad and DualSense (PS button) with Steam open.
+- Also found and fixed in the same PR (controller test screenshots, runs 41329637723 / 41331233845): the menu opened
+  with RESTART GAME highlighted because the resting mouse pointer sat over that row (WebView2 reports a pointer
+  "entering" a row when the menu appears). Rows now follow the mouse only when it really moves. The page also acts
+  on each "pad" event straight away (not only on animation frames), and ingame.txt notes its frame count.
+- Proven (all green on 7330560): Windows app test (pad_test ingame), Couch Play app test (A held on RESUME: host
+  game 0000; control back), in-game menu test incl. part "guide" (run 41328553309).
